@@ -4,8 +4,11 @@
  */
 
 #include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/phy/phy.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/usb/pd.h>
 #include "sm8250.dtsi"
 #include "pm8150.dtsi"
@@ -34,33 +37,12 @@
 		serial0 = &uart6;
 	};
 
-	chosen {
-		#address-cells = <2>;
-		#size-cells = <2>;
-		ranges;
-
-		framebuffer: framebuffer@9c000000 {
-			compatible = "simple-framebuffer";
-			reg = <0x0 0x9c000000 0x0 0x2300000>;
-			width = <1600>;
-			height = <2560>;
-			stride = <(1600 * 4)>;
-			format = "a8r8g8b8";
-		};
-	};
-
-	battery_l: battery-l {
+	battery: battery {
 		compatible = "simple-battery";
 		voltage-min-design-microvolt = <3870000>;
-		energy-full-design-microwatt-hours = <16600000>;
-		charge-full-design-microamp-hours = <4300000>;
-	};
-
-	battery_r: battery-r {
-		compatible = "simple-battery";
-		voltage-min-design-microvolt = <3870000>;
-		energy-full-design-microwatt-hours = <16600000>;
-		charge-full-design-microamp-hours = <4300000>;
+		voltage-max-design-microvolt = <4500000>;
+		energy-full-design-microwatt-hours = <33200000>;
+		charge-full-design-microamp-hours = <8600000>;
 	};
 
 	bl_vddpos_5p5: bl-vddpos-regulator {
@@ -202,11 +184,6 @@
 
 		cdsp_secure_heap: cdsp-secure-heap@8e100000 {
 			reg = <0x0 0x8e100000 0x0 0x4600000>;
-			no-map;
-		};
-
-		cont_splash_mem: cont-splash@9c000000 {
-			reg = <0x0 0x9c000000 0x0 0x2300000>;
 			no-map;
 		};
 
@@ -567,7 +544,154 @@
 	fuel-gauge@55 {
 		compatible = "ti,bq27z561";
 		reg = <0x55>;
-		monitored-battery = <&battery_r>;
+		monitored-battery = <&battery>;
+		power-supplies = <&bq25970_slave>;
+	};
+};
+
+&i2c1 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	cs35l41_brh: speaker-amp@40 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x40>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <7 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "BRH";
+		#sound-dai-cells = <1>;
+	};
+
+	cs35l41_blh: speaker-amp@41 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x41>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <67 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "BLH";
+		#sound-dai-cells = <1>;
+	};
+
+	cs35l41_brl: speaker-amp@42 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x42>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <100 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 69 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "BRL";
+		#sound-dai-cells = <1>;
+	};
+
+	cs35l41_bll: speaker-amp@43 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x43>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <126 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 49 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "BLL";
+		#sound-dai-cells = <1>;
+	};
+};
+
+&i2c3 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	cs35l41_trh: speaker-amp@40 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x40>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <27 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 50 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "TRH";
+		#sound-dai-cells = <1>;
+	};
+
+	cs35l41_tlh: speaker-amp@41 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x41>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <92 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 78 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "TLH";
+		#sound-dai-cells = <1>;
+	};
+
+	cs35l41_tll: speaker-amp@42 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x42>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <112 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "TLL";
+		#sound-dai-cells = <1>;
+	};
+
+	cs35l41_trl: speaker-amp@43 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x43>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <129 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 144 GPIO_ACTIVE_HIGH>;
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		sound-name-prefix = "TRL";
+		#sound-dai-cells = <1>;
 	};
 };
 
@@ -595,7 +719,100 @@
 	fuel-gauge@55 {
 		compatible = "ti,bq27z561";
 		reg = <0x55>;
-		monitored-battery = <&battery_l>;
+		monitored-battery = <&battery>;
+		power-supplies = <&bq25970_master>;
+	};
+};
+
+&i2c15 {
+	clock-frequency = <400000>;
+	status = "ok";
+
+	bq25970_master: bq25970-master@65 {
+		compatible = "ti,bq2597x-master";
+		reg = <0x65>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <68 0x2002>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bq2597x_master_int_default>;
+		/*ti,bq2597x,bat-ovp-disable;*/
+		ti,bq2597x,bat-ovp-alarm-disable;
+		ti,bq2597x,bat-ocp-disable;
+		ti,bq2597x,bat-ocp-alarm-disable;
+		ti,bq2597x,bat-ucp-alarm-disable;
+		ti,bq2597x,bat-ucp-disable;
+		/*ti,bq2597x,bus-ovp-alarm-disable;
+		ti,bq2597x,bus-ocp-disable;
+		ti,bq2597x,bus-ocp-alarm-disable;*/
+		ti,bq2597x,bat-therm-disable;
+		ti,bq2597x,bus-therm-disable;
+		ti,bq2597x,die-therm-disable;
+		ti,bq2597x,bat-ovp-threshold = <4550>;
+		ti,bq2597x,bat-ovp-alarm-threshold = <4525>;
+		//ti,bq2597x,bat-ocp-threshold = <8000>;
+		//ti,bq2597x,bat-ocp-alarm-threshold = <7500>;
+		ti,bq2597x,bus-ovp-threshold = <12000>;
+		ti,bq2597x,bus-ovp-alarm-threshold = <11000>;
+		ti,bq2597x,bus-ocp-threshold = <3800>;
+		ti,bq2597x,bus-ocp-alarm-threshold = <3500>;
+
+		//ti,bq2597x,bat-ucp-alarm-threshold = <2000>;
+		ti,bq2597x,bat-therm-threshold = <0x15>;/*4.1%*/
+		ti,bq2597x,bus-therm-threshold = <0x15>;/*4.1%*/
+		ti,bq2597x,die-therm-threshold = <145>;
+		ti,bq2597x,ac-ovp-threshold = <14>;
+		//ti,bq2597x,sense-resistor-mohm = <2>;
+
+		sc8551,ac-ovp-threshold = <14>;
+	};
+
+	bq25970_slave: bq25970-slave@66 {
+		compatible = "ti,bq2597x-slave";
+		reg = <0x66>;
+		/*
+		interrupt-parent = <&tlmm>;
+		interrupts = <1 2>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bq2597x_int_default>;
+		*/
+		/*ti,bq2597x,bat-ovp-disable;*/
+		ti,bq2597x,bat-ovp-alarm-disable;
+		ti,bq2597x,bat-ocp-disable;
+		ti,bq2597x,bat-ocp-alarm-disable;
+		ti,bq2597x,bat-ucp-alarm-disable;
+		ti,bq2597x,bat-ucp-disable;
+		/*ti,bq2597x,bus-ovp-alarm-disable;
+		ti,bq2597x,bus-ocp-disable;
+		ti,bq2597x,bus-ocp-alarm-disable;
+		*/
+		ti,bq2597x,bat-therm-disable;
+		ti,bq2597x,bus-therm-disable;
+		ti,bq2597x,die-therm-disable;
+		ti,bq2597x,bat-ovp-threshold = <4550>;
+		ti,bq2597x,bat-ovp-alarm-threshold = <4525>;
+		//ti,bq2597x,bat-ocp-threshold = <8000>;
+		//ti,bq2597x,bat-ocp-alarm-threshold = <7500>;
+		ti,bq2597x,bus-ovp-threshold = <12000>;
+		ti,bq2597x,bus-ovp-alarm-threshold = <11000>;
+		ti,bq2597x,bus-ocp-threshold = <3500>;
+		ti,bq2597x,bus-ocp-alarm-threshold = <3000>;
+		//ti,bq2597x,bat-ucp-alarm-threshold = <2000>;
+		ti,bq2597x,bat-therm-threshold = <0x15>;/*4.1%*/
+		ti,bq2597x,bus-therm-threshold = <0x15>;/*4.1%*/
+		ti,bq2597x,die-therm-threshold = <125>;
+		ti,bq2597x,ac-ovp-threshold = <14>;
+		//ti,bq2597x,sense-resistor-mohm = <2>;
+
+		sc8551,ac-ovp-threshold = <13>;
+	};
+};
+
+&lpass_tlmm {
+	keyboard_en_state: keyboard-default-state {
+		pins = "gpio9";
+		function = "i2s1_data";
+		drive-strength = <8>;
+		bias-pull-up;
 	};
 };
 
@@ -703,6 +920,11 @@
 	};
 };
 
+&pm8150b_charger {
+	monitored-battery = <&battery>;
+	status = "okay";
+};
+
 &pm8150_gpios {
 	vol_up_n: vol-up-n-state {
 		pins = "gpio6";
@@ -721,6 +943,7 @@
 		compatible = "usb-c-connector";
 
 		op-sink-microwatt = <10000000>;
+		try-power-role = "sink";
 		power-role = "dual";
 		data-role = "dual";
 		self-powered;
@@ -734,7 +957,7 @@
 				       PDO_FIXED_DUAL_ROLE |
 				       PDO_FIXED_USB_COMM |
 				       PDO_FIXED_DATA_SWAP)
-				       PDO_VAR(5000, 12000, 5000)>;
+				       PDO_VAR(5000, 9000, 3000)>;
 
 		ports {
 			#address-cells = <1>;
@@ -762,6 +985,19 @@
 	mode-recovery = <0x1>;
 };
 
+&pm8150l_flash {
+	status = "okay";
+
+	led-0 {
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_WHITE>;
+		led-sources = <1>;
+		led-max-microamp = <200000>;
+		flash-max-microamp = <1500000>;
+		flash-max-timeout-us = <1280000>;
+	};
+};
+
 &pon_pwrkey {
 	status = "okay";
 };
@@ -769,6 +1005,16 @@
 &pon_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
 	status = "okay";
+};
+
+&qup_spi4_cs_gpio {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&qup_spi4_data_clk {
+	drive-strength = <6>;
+	bias-disable;
 };
 
 &qupv3_id_0 {
@@ -783,9 +1029,83 @@
 	status = "okay";
 };
 
+&q6afedai {
+	dai@56 {
+		reg = <TERTIARY_TDM_RX_0>;
+		qcom,tdm-sync-mode = <0>;
+		qcom,tdm-sync-src = <1>;
+		qcom,tdm-data-out = <0>;
+		qcom,tdm-invert-sync = <1>;
+		qcom,tdm-data-delay = <1>;
+		qcom,tdm-data-align = <0>;
+	};
+};
+
+&q6asmdai {
+	dai@0 {
+		reg = <0>;
+	};
+};
+
 &slpi {
 	firmware-name = "qcom/sm8250/xiaomi/elish/slpi.mbn";
 	status = "okay";
+};
+
+&sound {
+	compatible = "qcom,sm8250-sndcard";
+	model = "Xiaomi Mi Pad 5 Pro";
+	pinctrl-names = "default";
+	pinctrl-0 = <&tert_tdm_active>;
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+
+		cpu {
+			sound-dai = <&q6asmdai  MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	speaker-dai-link {
+		link-name = "Tertiary TDM Playback";
+
+		cpu {
+			sound-dai = <&q6afedai TERTIARY_TDM_RX_0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&cs35l41_tlh 0>, <&cs35l41_tll 0>,
+			            <&cs35l41_trh 0>, <&cs35l41_trl 0>,
+			            <&cs35l41_blh 0>, <&cs35l41_bll 0>,
+			            <&cs35l41_brh 0>, <&cs35l41_brl 0>;
+		};
+	};
+};
+
+&spi4 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&qup_spi4_data_clk &qup_spi4_cs_gpio>;
+	cs-gpios = <&tlmm 11 GPIO_ACTIVE_LOW>;
+	touchscreen: touchscreen@0 {
+		compatible = "novatek,NVT-ts-spi";
+		reg = <0>; //Same as CS ID
+		status = "disabled";
+
+		spi-max-frequency = <19200000>;	//4800000,9600000,15000000,19200000
+		novatek,irq-gpio = <&tlmm 39 0x2001>;
+
+		novatek,pen-support;
+		novatek,wgp-stylus;
+
+		/*  523 */
+		novatek,swrst-n8-addr = <0x03F0FE>;
+		novatek,spi-rd-fast-addr = <0x03F310>;
+	};
 };
 
 &tlmm {
@@ -805,6 +1125,54 @@
 		drive-strength = <16>;
 		output-low;
 		bias-pull-up;
+	};
+
+	tert_tdm_active: tert-tdm-active-state {
+		sck-pins {
+			pins = "gpio133";
+			function = "mi2s2_sck";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+
+		din-pins {
+			pins = "gpio134";
+			function = "mi2s2_data0";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio135";
+			function = "mi2s2_ws";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+
+		dout-pins {
+			pins = "gpio137";
+			function = "mi2s2_data1";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	keyboard_vdd_pin: keyboard-vdd-state {
+		pins = "gpio127";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+		output-high;
+	};
+
+	bq2597x_master_int_default: bq2597x-master-int-default {
+		pins = "gpio68";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		input-enable;
 	};
 };
 
@@ -847,6 +1215,29 @@
 
 &usb_1_dwc3_hs_out {
 	remote-endpoint = <&pm8150b_hs_in>;
+};
+
+&usb_2 {
+	/* USB 2.0 only */
+	qcom,select-utmi-as-pipe-clk;
+	status = "okay";
+};
+
+&usb_2_dwc3 {
+	dr_mode = "host";
+	maximum-speed = "high-speed";
+	/* Remove USB3 phy */
+	phys = <&usb_2_hsphy>;
+	phy-names = "usb2-phy";
+};
+
+&usb_2_hsphy {
+	vdda-pll-supply = <&vreg_l5a_0p88>;
+	vdda18-supply = <&vreg_l12a_1p8>;
+	vdda33-supply = <&vreg_l2a_3p1>;
+	status = "okay";
+	pinctrl-0 = <&keyboard_en_state>, <&keyboard_vdd_pin>;
+	pinctrl-names = "default";
 };
 
 &ufs_mem_hc {
