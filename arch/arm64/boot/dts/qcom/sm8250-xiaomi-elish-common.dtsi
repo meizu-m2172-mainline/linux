@@ -772,6 +772,16 @@
 	status = "okay";
 };
 
+&qup_spi4_cs_gpio {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&qup_spi4_data_clk {
+	drive-strength = <6>;
+	bias-disable;
+};
+
 &qupv3_id_0 {
 	status = "okay";
 };
@@ -787,6 +797,28 @@
 &slpi {
 	firmware-name = "qcom/sm8250/xiaomi/elish/slpi.mbn";
 	status = "okay";
+};
+
+&spi4 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&qup_spi4_data_clk &qup_spi4_cs_gpio>;
+	cs-gpios = <&tlmm 11 GPIO_ACTIVE_LOW>;
+	touchscreen: touchscreen@0 {
+		compatible = "novatek,NVT-ts-spi";
+		reg = <0>; //Same as CS ID
+		status = "disabled";
+
+		spi-max-frequency = <19200000>;	//4800000,9600000,15000000,19200000
+		novatek,irq-gpio = <&tlmm 39 0x2001>;
+
+		novatek,pen-support;
+		novatek,wgp-stylus;
+
+		/*  523 */
+		novatek,swrst-n8-addr = <0x03F0FE>;
+		novatek,spi-rd-fast-addr = <0x03F310>;
+	};
 };
 
 &tlmm {
