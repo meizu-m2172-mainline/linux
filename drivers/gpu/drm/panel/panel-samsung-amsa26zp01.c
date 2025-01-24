@@ -173,6 +173,10 @@ static int samsung_amsa26zp01_bl_update_status(struct backlight_device *bl)
 	struct mipi_dsi_device *dsi = bl_get_data(bl);
 	u16 brightness = backlight_get_brightness(bl);
 	int ret;
+	// u8 payload_hbm_on[1] = { 0xE0 };	/* HBM Mode */
+	// u8 payload_hbm_off[1] = { 0x28 }; /* 0x20:Normal mode + Smooth dimming off; 0x28: Normal mode + Smooth dimming on */
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
+	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x53, 0x28);
 
 	ret = mipi_dsi_dcs_set_display_brightness(dsi, brightness);
 	if (ret < 0)
