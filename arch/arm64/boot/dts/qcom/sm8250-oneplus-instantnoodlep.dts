@@ -639,7 +639,7 @@
     status = "okay";
 
     smart_battery: fuel-gauge@55 {
-        compatible = "ti,bq27541";
+        compatible = "ti,bq27411";
         reg = <0x55>;
         monitored-battery = <&battery>;
     };
