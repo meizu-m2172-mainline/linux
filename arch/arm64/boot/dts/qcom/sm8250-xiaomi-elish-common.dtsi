@@ -37,18 +37,12 @@
 		serial0 = &uart6;
 	};
 
-	battery_l: battery-l {
+	battery: battery {
 		compatible = "simple-battery";
 		voltage-min-design-microvolt = <3870000>;
-		energy-full-design-microwatt-hours = <16600000>;
-		charge-full-design-microamp-hours = <4300000>;
-	};
-
-	battery_r: battery-r {
-		compatible = "simple-battery";
-		voltage-min-design-microvolt = <3870000>;
-		energy-full-design-microwatt-hours = <16600000>;
-		charge-full-design-microamp-hours = <4300000>;
+		voltage-max-design-microvolt = <4500000>;
+		energy-full-design-microwatt-hours = <33200000>;
+		charge-full-design-microamp-hours = <8600000>;
 	};
 
 	bl_vddpos_5p5: bl-vddpos-regulator {
@@ -551,7 +545,8 @@
 	fuel-gauge@55 {
 		compatible = "ti,bq27z561";
 		reg = <0x55>;
-		monitored-battery = <&battery_r>;
+		monitored-battery = <&battery>;
+		power-supplies = <&bq25970_slave>;
 	};
 };
 
@@ -725,7 +720,8 @@
 	fuel-gauge@55 {
 		compatible = "ti,bq27z561";
 		reg = <0x55>;
-		monitored-battery = <&battery_l>;
+		monitored-battery = <&battery>;
+		power-supplies = <&bq25970_master>;
 	};
 };
 
@@ -733,7 +729,7 @@
 	clock-frequency = <400000>;
 	status = "ok";
 
-	bq25970-master@65 {
+	bq25970_master: bq25970-master@65 {
 		compatible = "ti,bq2597x-master";
 		reg = <0x65>;
 		interrupt-parent = <&tlmm>;
@@ -771,7 +767,7 @@
 		sc8551,ac-ovp-threshold = <14>;
 	};
 
-	bq25970-slave@66 {
+	bq25970_slave: bq25970-slave@66 {
 		compatible = "ti,bq2597x-slave";
 		reg = <0x66>;
 		/*
@@ -925,6 +921,11 @@
 	};
 };
 
+&pm8150b_charger {
+	monitored-battery = <&battery>;
+	status = "okay";
+};
+
 &pm8150_gpios {
 	vol_up_n: vol-up-n-state {
 		pins = "gpio6";
@@ -943,6 +944,7 @@
 		compatible = "usb-c-connector";
 
 		op-sink-microwatt = <10000000>;
+		try-power-role = "sink";
 		power-role = "dual";
 		data-role = "dual";
 		self-powered;
