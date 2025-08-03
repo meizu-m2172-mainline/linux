@@ -332,7 +332,7 @@ static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
 		return rc;
 	}
 
-	*val = (stat & USBIN_PLUGIN_RT_STS_BIT);
+	*val = (stat & USBIN_PLUGIN_RT_STS_BIT) ? 1 : 0;
 	return 0;
 }
 
@@ -710,7 +710,7 @@ static irqreturn_t smb5_handle_wdog_bark(int irq, void *data)
 }
 
 static const struct power_supply_desc smb5_psy_desc = {
-	.name = "pmi8998_charger",
+	.name = "pm8150b_charger",
 	.type = POWER_SUPPLY_TYPE_USB,
 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
