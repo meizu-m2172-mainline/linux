@@ -747,6 +747,50 @@
 	monitored-battery = <&battery>;
 };
 
+&pm8150b_typec {
+       vdd-pdphy-supply = <&vreg_l2a_3p1>;
+       status = "okay";
+
+       connector {
+               compatible = "usb-c-connector";
+
+               op-sink-microwatt = <10000000>;
+               power-role = "dual";
+               data-role = "dual";
+               self-powered;
+
+               source-pdos = <PDO_FIXED(5000, 3000,
+                                        PDO_FIXED_DUAL_ROLE |
+                                        PDO_FIXED_USB_COMM |
+                                        PDO_FIXED_DATA_SWAP)>;
+
+               sink-pdos = <PDO_FIXED(5000, 3000,
+                                      PDO_FIXED_DUAL_ROLE |
+                                      PDO_FIXED_USB_COMM |
+                                      PDO_FIXED_DATA_SWAP)>;
+
+               ports {
+                       #address-cells = <1>;
+                       #size-cells = <0>;
+
+                       port@0 {
+                               reg = <0>;
+
+                               pm8150b_hs_in: endpoint {
+                                       remote-endpoint = <&usb_1_dwc3_hs_out>;
+                               };
+                       };
+               };
+       };
+};
+
+// downstream uses otg-use_external_boost which do not enable bellow
+&pm8150b_vbus {
+       regulator-min-microamp = <500000>;
+       regulator-max-microamp = <3000000>;
+       status = "okay";
+};
+
 &pon_pwrkey {
 	status = "okay";
 };
@@ -853,17 +897,12 @@
 };
 
 &usb_1 {
-	/* USB 2.0 only */
-	qcom,select-utmi-as-pipe-clk;
 	status = "okay";
 };
 
 &usb_1_dwc3 {
-	dr_mode = "peripheral";
-	maximum-speed = "high-speed";
-	/* Remove USB3 phy */
-	phys = <&usb_1_hsphy>;
-	phy-names = "usb2-phy";
+	dr_mode = "otg";
+	usb-role-switch;
 };
 
 &usb_1_hsphy {
@@ -871,6 +910,16 @@
 	vdda18-supply = <&vreg_l12a_1p8>;
 	vdda33-supply = <&vreg_l2a_3p1>;
 	status = "okay";
+};
+
+&usb_1_dwc3_hs_out {
+       remote-endpoint = <&pm8150b_hs_in>;
+};
+
+&usb_1_qmpphy {
+       status = "okay";
+       vdda-phy-supply = <&vreg_l9a_1p2>;
+       vdda-pll-supply = <&vreg_l18a_0p92>;
 };
 
 &usb_2 {
