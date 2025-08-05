@@ -742,6 +742,11 @@
 	};
 };
 
+&pm8150b_charger {
+	status = "okay";
+	monitored-battery = <&battery>;
+};
+
 &pon_pwrkey {
 	status = "okay";
 };

@@ -318,6 +318,7 @@ static enum power_supply_property smb5_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_USB_TYPE,
+	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 };
 
 static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
@@ -385,6 +386,18 @@ static int smb5_apsd_get_charger_type(struct smb5_chip *chip, int *val)
 		*val = POWER_SUPPLY_USB_TYPE_SDP;
 	}
 
+	return 0;
+}
+
+static int smb5_get_prop_charging_enabled(struct smb5_chip *chip, int *val)
+{
+	unsigned int charging_enabled;
+	int rc = regmap_read(chip->regmap, chip->base + CHARGING_ENABLE_CMD, &charging_enabled);
+	if (rc < 0) {
+		dev_err(chip->dev, "Failed to read charging enabled status, rc = %d", rc);
+		return rc;
+	}
+	*val = charging_enabled & CHARGING_ENABLE_CMD_BIT ? 1 : 0;
 	return 0;
 }
 
@@ -459,6 +472,12 @@ static int smb5_set_current_limit(struct smb5_chip *chip, unsigned int val)
 
 	return regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
 		val_raw);
+}
+
+static int smb5_set_prop_charging_enabled(struct smb5_chip *chip, unsigned int val)
+{
+	return regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
+					CHARGING_ENABLE_CMD_BIT, val ? CHARGING_ENABLE_CMD_BIT : 0);
 }
 
 static void smb5_status_change_work(struct work_struct *work)
@@ -600,6 +619,8 @@ static int smb5_get_property(struct power_supply *psy,
 		return smb5_get_prop_health(chip, &val->intval);
 	case POWER_SUPPLY_PROP_USB_TYPE:
 		return smb5_apsd_get_charger_type(chip, &val->intval);
+	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
+		return smb5_get_prop_charging_enabled(chip, &val->intval);
 	default:
 		dev_err(chip->dev, "invalid property: %d\n", psp);
 		return -EINVAL;
@@ -615,6 +636,8 @@ static int smb5_set_property(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		return smb5_set_current_limit(chip, val->intval);
+	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
+		return smb5_set_prop_charging_enabled(chip, val->intval);
 	default:
 		dev_err(chip->dev, "No setter for property: %d\n", psp);
 		return -EINVAL;
@@ -626,6 +649,7 @@ static int smb5_property_is_writable(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
 		return 1;
 	default:
 		return 0;
