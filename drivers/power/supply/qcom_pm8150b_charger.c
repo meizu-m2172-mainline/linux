@@ -879,7 +879,7 @@ static int smb5_probe(struct platform_device *pdev)
 		return rc;
 
 	supply_config.drv_data = chip;
-	supply_config.of_node = pdev->dev.of_node;
+	supply_config.fwnode = pdev->dev.fwnode;
 
 	desc = devm_kzalloc(chip->dev, sizeof(smb5_psy_desc), GFP_KERNEL);
 	if (!desc)
