@@ -21,3 +21,13 @@
 	firmware-name = "novatek/novatek_nt36523_k81_fw01.bin";
 	status = "okay";
 };
+
+&pcie2 {
+	status = "okay";
+};
+
+&pcie2_phy {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+};
