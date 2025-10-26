@@ -652,6 +652,14 @@ config SND_SOC_AUDIO_IIO_AUX
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-soc-audio-iio-aux.
 
+config SND_SOC_SMARTPA_AW882xx
+	tristate "Smart PA AW882xx series"
+	depends on I2C
+	select REGMAP_I2C
+	select GPIOLIB
+	help
+	  Enable support for Awinic AW882xx series Smart PA amplifiers.
+
 config SND_SOC_AW8738
 	tristate "Awinic AW8738 Audio Amplifier"
 	select GPIOLIB

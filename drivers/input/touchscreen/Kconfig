@@ -12,6 +12,8 @@ menuconfig INPUT_TOUCHSCREEN
 
 if INPUT_TOUCHSCREEN
 
+source "drivers/input/touchscreen/focaltech_touch/Kconfig"
+
 source "drivers/input/touchscreen/nt36523/Kconfig"
 
 config TOUCHSCREEN_88PM860X

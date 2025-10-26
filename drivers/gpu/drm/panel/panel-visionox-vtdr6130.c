@@ -145,6 +145,7 @@ static int visionox_vtdr6130_prepare(struct drm_panel *panel)
 	struct visionox_vtdr6130 *ctx = to_visionox_vtdr6130(panel);
 	int ret;
 
+	dev_dbg(&ctx->dsi->dev, "prepare: enabling regulators\n");
 	ret = regulator_bulk_enable(ARRAY_SIZE(visionox_vtdr6130_supplies),
 				    ctx->supplies);
 	if (ret < 0)
@@ -160,6 +161,7 @@ static int visionox_vtdr6130_prepare(struct drm_panel *panel)
 		return ret;
 	}
 
+	dev_info(&ctx->dsi->dev, "prepare: panel powered and initialized\n");
 	return 0;
 }
 
@@ -267,6 +269,10 @@ static int visionox_vtdr6130_probe(struct mipi_dsi_device *dsi)
 	ctx->dsi = dsi;
 	mipi_dsi_set_drvdata(dsi, ctx);
 
+	dev_info(dev, "visionox_vtdr6130: probing panel driver\n");
+    dev_info(dev, "DSI config: lanes=%d format=%d mode_flags=0x%x\n",
+             dsi->lanes, dsi->format, dsi->mode_flags);
+
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_NO_EOT_PACKET |
@@ -289,6 +295,8 @@ static int visionox_vtdr6130_probe(struct mipi_dsi_device *dsi)
 		drm_panel_remove(&ctx->panel);
 		return ret;
 	}
+
+	dev_info(dev, "visionox_vtdr6130: attached to DSI host, panel registered\n");
 
 	return 0;
 }

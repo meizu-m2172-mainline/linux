@@ -1860,6 +1860,9 @@ static int qca_setup(struct hci_uart *hu)
 	struct qca_serdev *qcadev;
 	const char *soc_name;
 
+	pr_info("QCA: qca_uart_setup called, firmware_name=%s\n",
+        firmware_name ? firmware_name : "<NULL>");
+
 	ret = qca_check_speeds(hu);
 	if (ret)
 		return ret;
@@ -1964,6 +1967,10 @@ retry:
 	/* Setup patch / NVM configurations */
 	ret = qca_uart_setup(hdev, qca_baudrate, soc_type, ver,
 			firmware_name);
+
+	pr_info("QCA: qca_uart_setup called, firmware_name=%s\n",
+        firmware_name ? firmware_name : "<NULL>");
+
 	if (!ret) {
 		clear_bit(QCA_IBS_DISABLED, &qca->flags);
 		qca_debugfs_init(hdev);

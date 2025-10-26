@@ -225,6 +225,8 @@ source "drivers/media/radio/si4713/Kconfig"
 
 source "drivers/media/radio/wl128x/Kconfig"
 
+source "drivers/media/radio/rtc6226/Kconfig"
+
 #
 # ISA drivers configuration
 #

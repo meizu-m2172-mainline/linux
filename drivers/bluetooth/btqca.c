@@ -36,6 +36,21 @@ int qca_read_soc_version(struct hci_dev *hdev, struct qca_btsoc_version *ver,
 		rtype = EDL_PATCH_VER_REQ_CMD;
 	}
 
+	pr_info("==========================CUT HERE=========================\n");
+	pr_info("hdev details: \n");
+	pr_info("ID: %d, Name: %s, Bus: %d\n", hdev->id, hdev->name, hdev->bus);
+	pr_info("Address: %pMR, Public Address: %pMR, Random Address: %pMR\n", 
+			&hdev->bdaddr, &hdev->public_addr, &hdev->random_addr);
+	pr_info("Manufacturer: 0x%4.4x, LMP Version: 0x%2.2x, HCI Version: 0x%2.2x\n",
+			hdev->manufacturer, hdev->lmp_ver, hdev->hci_ver);
+	pr_info("Features (page 1): %*ph\n", sizeof(hdev->features[1]), hdev->features[1]);
+	pr_info("LE Max Tx Length: %u, LE Max Rx Length: %u\n", hdev->le_max_tx_len, hdev->le_max_rx_len);
+
+	pr_info("__hci_cmd_sync_ev parameters:\n");
+	pr_info("Opcode: 0x%4.4x, Length: %d, Command: 0x%2.2x, Event Type: 0x%2.2x, Timeout: %d\n",
+			EDL_PATCH_CMD_OPCODE, EDL_PATCH_CMD_LEN, cmd, event_type, HCI_INIT_TIMEOUT);
+	pr_info("===========================================================\n");
+
 	cmd = EDL_PATCH_VER_REQ_CMD;
 	skb = __hci_cmd_sync_ev(hdev, EDL_PATCH_CMD_OPCODE, EDL_PATCH_CMD_LEN,
 				&cmd, event_type, HCI_INIT_TIMEOUT);
