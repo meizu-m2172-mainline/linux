@@ -86,8 +86,9 @@
 	qca6390-pmu {
 		compatible = "qcom,qca6390-pmu";
 
-		pinctrl-names = "default";
-		pinctrl-0 = <&bt_en_state>, <&wlan_en_state>;
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&bt_en_active>, <&wlan_en_active>;
+		pinctrl-1 = <&bt_en_sleep>, <&wlan_en_sleep>;
 
 		vddaon-supply = <&vreg_s6a_0p95>;
 		vddpmu-supply = <&vreg_s6a_0p95>;
@@ -1111,7 +1112,7 @@
 &tlmm {
 	gpio-reserved-ranges = <40 4>;
 
-	bt_en_state: bt-default-state {
+	bt_en_active: bt-default-state {
 		pins = "gpio21";
 		function = "gpio";
 		drive-strength = <16>;
@@ -1119,12 +1120,28 @@
 		bias-pull-up;
 	};
 
-	wlan_en_state: wlan-default-state {
+	bt_en_sleep: bt-sleep-state {
+		pins = "gpio21";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
+	};
+
+	wlan_en_active: wlan-default-state {
 		pins = "gpio20";
 		function = "gpio";
 		drive-strength = <16>;
 		output-low;
 		bias-pull-up;
+	};
+
+	wlan_en_sleep: wlan-sleep-state {
+		pins = "gpio20";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
 	};
 
 	tert_tdm_active: tert-tdm-active-state {
