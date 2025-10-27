@@ -1199,6 +1199,9 @@
 	bluetooth {
 		compatible = "qcom,qca6390-bt";
 
+		enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
 		vddbtcmx-supply = <&vreg_pmu_btcmx_0p85>;
