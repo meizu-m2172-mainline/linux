@@ -101,6 +101,7 @@
 
 		wlan-enable-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>;
 		bt-enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
 
 		regulators {
 			vreg_pmu_rfa_cmn: ldo0 {
