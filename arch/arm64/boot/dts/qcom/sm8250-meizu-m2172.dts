@@ -1016,8 +1016,8 @@
 };
 
 &pcie0 {
-	perst-gpios = <&tlmm 79 GPIO_ACTIVE_HIGH>;
-	wake-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
+	// perst-gpios = <&tlmm 79 GPIO_ACTIVE_HIGH>;
+	// wake-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
 	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
 	// vdda-supply = <&vreg_l12a_1p8>;
 	status = "okay";
