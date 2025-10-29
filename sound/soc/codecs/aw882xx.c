@@ -63,7 +63,7 @@
 
 
 #define AWINIC_CALI_FILE  "aw_cali.bin"
-//#define CONFIG_AW882XX_DSP
+// #define CONFIG_AW882XX_DSP
 #ifdef CONFIG_AW882XX_DSP
 extern int aw_send_afe_cal_apr(uint32_t param_id, void *buf,int cmd_size, bool write);
 extern int aw_send_rx_module_enable(void *buf, int cmd_size);
@@ -2777,7 +2777,8 @@ static void aw882xx_i2c_remove(struct i2c_client *i2c)
 
 	pr_info("%s: enter\n", __func__);
 	
-	misc_deregister(&aw882xx_misc);
+	if (aw882xx->profile.channel == 0)
+		misc_deregister(&aw882xx_misc);
 	
 	if (gpio_is_valid(aw882xx->irq_gpio) && gpio_to_irq(aw882xx->irq_gpio))
 		devm_free_irq(&i2c->dev, gpio_to_irq(aw882xx->irq_gpio), aw882xx);
