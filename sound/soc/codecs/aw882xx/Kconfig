@@ -1,0 +1,16 @@
+#
+# awinic aw882xx
+#
+
+config SND_SOC_AW882xx
+	tristate "Soc Audio for awinic aw882xx"
+	depends on I2C
+	select CRC32
+	select REGMAP_I2C
+	select GPIOLIB
+	select SND_SOC_AW88395_LIB
+	help
+	  this option enables support for aw88395 Smart PA.
+	  The Awinic AW88395 is an I2S/TDM input, high efficiency
+	  digital Smart K audio amplifier with an integrated 10V
+	  smart boost convert.
