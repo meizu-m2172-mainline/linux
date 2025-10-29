@@ -3,6 +3,7 @@
 #define LINUX_EXPORTFS_H 1
 
 #include <linux/types.h>
+#include <linux/path.h>
 
 struct dentry;
 struct iattr;
@@ -122,6 +123,12 @@ enum fid_type {
 	FILEID_BCACHEFS_WITH_PARENT = 0xb2,
 
 	/*
+	 *
+	 * 64 bit namespace identifier, 32 bit namespace type, 32 bit inode number.
+	 */
+	FILEID_NSFS = 0xf1,
+
+	/*
 	 * 64 bit unique kernfs id
 	 */
 	FILEID_KERNFS = 0xfe,
@@ -154,6 +161,17 @@ struct fid {
  		} udf;
 		DECLARE_FLEX_ARRAY(__u32, raw);
 	};
+};
+
+enum handle_to_path_flags {
+	HANDLE_CHECK_PERMS   = (1 << 0),
+	HANDLE_CHECK_SUBTREE = (1 << 1),
+};
+
+struct handle_to_path_ctx {
+	struct path root;
+	enum handle_to_path_flags flags;
+	unsigned int fh_flags;
 };
 
 #define EXPORT_FH_CONNECTABLE	0x1 /* Encode file handle with parent */
@@ -218,18 +236,24 @@ struct fid {
  *    directory.  The name should be stored in the @name (with the
  *    understanding that it is already pointing to a %NAME_MAX+1 sized
  *    buffer.   get_name() should return %0 on success, a negative error code
- *    or error.  @get_name will be called without @parent->i_mutex held.
+ *    or error.  @get_name will be called without @parent->i_rwsem held.
  *
  * get_parent:
  *    @get_parent should find the parent directory for the given @child which
  *    is also a directory.  In the event that it cannot be found, or storage
  *    space cannot be allocated, a %ERR_PTR should be returned.
  *
+ * permission:
+ *    Allow filesystems to specify a custom permission function.
+ *
+ * open:
+ *    Allow filesystems to specify a custom open function.
+ *
  * commit_metadata:
  *    @commit_metadata should commit metadata changes to stable storage.
  *
  * Locking rules:
- *    get_parent is called with child->d_inode->i_mutex down
+ *    get_parent is called with child->d_inode->i_rwsem down
  *    get_name is not (which is possibly inconsistent)
  */
 
@@ -251,6 +275,8 @@ struct export_operations {
 			  bool write, u32 *device_generation);
 	int (*commit_blocks)(struct inode *inode, struct iomap *iomaps,
 			     int nr_iomaps, struct iattr *iattr);
+	int (*permission)(struct handle_to_path_ctx *ctx, unsigned int oflags);
+	struct file * (*open)(const struct path *path, unsigned int oflags);
 #define	EXPORT_OP_NOWCC			(0x1) /* don't collect v3 wcc data */
 #define	EXPORT_OP_NOSUBTREECHK		(0x2) /* no subtree checking */
 #define	EXPORT_OP_CLOSE_BEFORE_UNLINK	(0x4) /* close files before unlink */
@@ -259,9 +285,21 @@ struct export_operations {
 						  atomic attribute updates
 						*/
 #define EXPORT_OP_FLUSH_ON_CLOSE	(0x20) /* fs flushes file data on close */
-#define EXPORT_OP_ASYNC_LOCK		(0x40) /* fs can do async lock request */
+#define EXPORT_OP_NOLOCKS		(0x40) /* no file locking support */
 	unsigned long	flags;
 };
+
+/**
+ * exportfs_cannot_lock() - check if export implements file locking
+ * @export_ops:	the nfs export operations to check
+ *
+ * Returns true if the export does not support file locking.
+ */
+static inline bool
+exportfs_cannot_lock(const struct export_operations *export_ops)
+{
+	return export_ops->flags & EXPORT_OP_NOLOCKS;
+}
 
 extern int exportfs_encode_inode_fh(struct inode *inode, struct fid *fid,
 				    int *max_len, struct inode *parent,
@@ -288,6 +326,17 @@ static inline bool exportfs_can_encode_fh(const struct export_operations *nop,
 	 */
 	if (fh_flags & EXPORT_FH_FID)
 		return exportfs_can_encode_fid(nop);
+
+	/* Normal file handles cannot be created without export ops */
+	if (!nop)
+		return false;
+
+	/*
+	 * If a connectable file handle was requested, we need to make sure that
+	 * filesystem can also decode connected file handles.
+	 */
+	if ((fh_flags & EXPORT_FH_CONNECTABLE) && !nop->fh_to_parent)
+		return false;
 
 	/*
 	 * If a decodeable file handle was requested, we need to make sure that

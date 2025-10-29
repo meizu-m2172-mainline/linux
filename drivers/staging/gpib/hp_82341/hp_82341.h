@@ -26,44 +26,6 @@ struct hp_82341_priv {
 	enum hp_82341_hardware_version hw_version;
 };
 
-// interfaces
-extern gpib_interface_t hp_82341_interface;
-
-// interface functions
-int hp_82341_accel_read(gpib_board_t *board, uint8_t *buffer, size_t length, int *end,
-			size_t *bytes_read);
-int hp_82341_accel_write(gpib_board_t *board, uint8_t *buffer, size_t length, int send_eoi,
-			 size_t *bytes_written);
-int hp_82341_read(gpib_board_t *board, uint8_t *buffer, size_t length, int *end,
-		  size_t *bytes_read);
-int hp_82341_write(gpib_board_t *board, uint8_t *buffer, size_t length, int send_eoi,
-		   size_t *bytes_written);
-int hp_82341_command(gpib_board_t *board, uint8_t *buffer, size_t length, size_t *bytes_written);
-int hp_82341_take_control(gpib_board_t *board, int synchronous);
-int hp_82341_go_to_standby(gpib_board_t *board);
-void hp_82341_request_system_control(gpib_board_t *board, int request_control);
-void hp_82341_interface_clear(gpib_board_t *board, int assert);
-void hp_82341_remote_enable(gpib_board_t *board, int enable);
-int hp_82341_enable_eos(gpib_board_t *board, uint8_t eos_byte, int
-			compare_8_bits);
-void hp_82341_disable_eos(gpib_board_t *board);
-unsigned int hp_82341_update_status(gpib_board_t *board, unsigned int clear_mask);
-int hp_82341_primary_address(gpib_board_t *board, unsigned int address);
-int hp_82341_secondary_address(gpib_board_t *board, unsigned int address, int
-			enable);
-int hp_82341_parallel_poll(gpib_board_t *board, uint8_t *result);
-void hp_82341_parallel_poll_configure(gpib_board_t *board, uint8_t config);
-void hp_82341_parallel_poll_response(gpib_board_t *board, int ist);
-void hp_82341_serial_poll_response(gpib_board_t *board, uint8_t status);
-void hp_82341_return_to_local(gpib_board_t *board);
-
-// interrupt service routines
-irqreturn_t hp_82341_interrupt(int irq, void *arg);
-
-// utility functions
-int hp_82341_allocate_private(gpib_board_t *board);
-void hp_82341_free_private(gpib_board_t *board);
-
 static const int hp_82341_region_iosize = 0x8;
 static const int hp_82341_num_io_regions = 4;
 static const int hp_82341_fifo_size = 0xffe;
@@ -103,7 +65,7 @@ enum config_control_status_bits {
 	IRQ_SELECT_MASK = 0x7,
 	DMA_CONFIG_MASK = 0x18,
 	ENABLE_DMA_CONFIG_BIT = 0x20,
-	XILINX_READY_BIT = 0x40,	//read only
+	XILINX_READY_BIT = 0x40,	// read only
 	DONE_PGL_BIT = 0x80
 };
 
@@ -132,7 +94,7 @@ static inline unsigned int IRQ_SELECT_BITS(int irq)
 };
 
 enum mode_control_status_bits {
-	SLOT8_BIT = 0x1,	// read only
+	SLOT8_BIT = 0x1,		// read only
 	ACTIVE_CONTROLLER_BIT = 0x2,	// read only
 	ENABLE_DMA_BIT = 0x4,
 	SYSTEM_CONTROLLER_BIT = 0x8,
@@ -144,12 +106,12 @@ enum mode_control_status_bits {
 enum monitor_bits {
 	MONITOR_INTERRUPT_PENDING_BIT = 0x1,	// read only
 	MONITOR_CLEAR_HOLDOFF_BIT = 0x2,	// write only
-	MONITOR_PPOLL_BIT = 0x4,	// write clear
-	MONITOR_SRQ_BIT = 0x8,	// write clear
-	MONITOR_IFC_BIT = 0x10,	// write clear
-	MONITOR_REN_BIT = 0x20,	// write clear
-	MONITOR_END_BIT = 0x40,	// write clear
-	MONITOR_DAV_BIT = 0x80	// write clear
+	MONITOR_PPOLL_BIT = 0x4,		// write clear
+	MONITOR_SRQ_BIT = 0x8,			// write clear
+	MONITOR_IFC_BIT = 0x10,			// write clear
+	MONITOR_REN_BIT = 0x20,			// write clear
+	MONITOR_END_BIT = 0x40,			// write clear
+	MONITOR_DAV_BIT = 0x80			// write clear
 };
 
 enum interrupt_enable_bits {
@@ -161,36 +123,36 @@ enum interrupt_enable_bits {
 };
 
 enum event_status_bits {
-	TI_INTERRUPT_EVENT_BIT = 0x1,	//write clear
+	TI_INTERRUPT_EVENT_BIT = 0x1,		// write clear
 	INTERRUPT_PENDING_EVENT_BIT = 0x2,	// read only
-	POINTERS_EQUAL_EVENT_BIT = 0x4,	//write clear
-	BUFFER_END_EVENT_BIT = 0x10,	//write clear
+	POINTERS_EQUAL_EVENT_BIT = 0x4,		// write clear
+	BUFFER_END_EVENT_BIT = 0x10,		// write clear
 	TERMINAL_COUNT_EVENT_BIT = 0x20,	// write clear
 	DMA_TERMINAL_COUNT_EVENT_BIT = 0x80,	// write clear
 };
 
 enum event_enable_bits {
-	ENABLE_TI_INTERRUPT_EVENT_BIT = 0x1,	//write clear
-	ENABLE_POINTERS_EQUAL_EVENT_BIT = 0x4,	//write clear
-	ENABLE_BUFFER_END_EVENT_BIT = 0x10,	//write clear
-	ENABLE_TERMINAL_COUNT_EVENT_BIT = 0x20,	// write clear
+	ENABLE_TI_INTERRUPT_EVENT_BIT = 0x1,		// write clear
+	ENABLE_POINTERS_EQUAL_EVENT_BIT = 0x4,		// write clear
+	ENABLE_BUFFER_END_EVENT_BIT = 0x10,		// write clear
+	ENABLE_TERMINAL_COUNT_EVENT_BIT = 0x20,		// write clear
 	ENABLE_DMA_TERMINAL_COUNT_EVENT_BIT = 0x80,	// write clear
 };
 
 enum stream_status_bits {
-	HALTED_STATUS_BIT = 0x1,	//read
-	RESTART_STREAM_BIT = 0x1	//write
+	HALTED_STATUS_BIT = 0x1,	// read
+	RESTART_STREAM_BIT = 0x1	// write
 };
 
 enum buffer_control_bits {
 	DIRECTION_GPIB_TO_HOST_BIT = 0x20,	// transfer direction (set for gpib to host)
-	ENABLE_TI_BUFFER_BIT = 0x40,	//enable fifo
-	FAST_WR_EN_BIT = 0x80,	// 350 ns t1 delay?
+	ENABLE_TI_BUFFER_BIT = 0x40,		// enable fifo
+	FAST_WR_EN_BIT = 0x80,			// 350 ns t1 delay?
 };
 
 // registers accessible through isapnp chip on 82341d
 enum hp_82341d_pnp_registers {
-	PIO_DATA_REG = 0x20,	//read/write pio data lines
+	PIO_DATA_REG = 0x20,		// read/write pio data lines
 	PIO_DIRECTION_REG = 0x21,	// set pio data line directions (set for input)
 };
 
@@ -201,7 +163,3 @@ enum hp_82341d_pnp_pio_bits {
 	HP_82341D_LEGACY_MODE_BIT = 0x4,
 	HP_82341D_NOT_PROG_BIT = 0x8,	// clear to reinitialize xilinx
 };
-
-unsigned short read_and_clear_event_status(gpib_board_t *board);
-int read_transfer_counter(struct hp_82341_priv *hp_priv);
-void set_transfer_counter(struct hp_82341_priv *hp_priv, int count);

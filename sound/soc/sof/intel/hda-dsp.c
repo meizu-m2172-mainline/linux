@@ -870,7 +870,7 @@ static int hda_resume(struct snd_sof_dev *sdev, bool runtime_resume)
 	snd_sof_pci_update_bits(sdev, PCI_TCSEL, 0x07, 0);
 
 	/* reset and start hda controller */
-	ret = hda_dsp_ctrl_init_chip(sdev);
+	ret = hda_dsp_ctrl_init_chip(sdev, false);
 	if (ret < 0) {
 		dev_err(sdev->dev,
 			"error: failed to start controller after resume\n");
@@ -991,6 +991,10 @@ int hda_dsp_runtime_suspend(struct snd_sof_dev *sdev)
 	if (!sdev->dspless_mode_selected) {
 		/* cancel any attempt for DSP D0I3 */
 		cancel_delayed_work_sync(&hda->d0i3_work);
+
+		/* Cancel the microphone privacy work if mic privacy is active */
+		if (hda->mic_privacy.active)
+			cancel_work_sync(&hda->mic_privacy.work);
 	}
 
 	/* stop hda controller and power dsp off */
@@ -1017,6 +1021,10 @@ int hda_dsp_suspend(struct snd_sof_dev *sdev, u32 target_state)
 	if (!sdev->dspless_mode_selected) {
 		/* cancel any attempt for DSP D0I3 */
 		cancel_delayed_work_sync(&hda->d0i3_work);
+
+		/* Cancel the microphone privacy work if mic privacy is active */
+		if (hda->mic_privacy.active)
+			cancel_work_sync(&hda->mic_privacy.work);
 	}
 
 	if (target_state == SOF_DSP_PM_D0) {

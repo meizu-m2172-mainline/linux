@@ -67,7 +67,7 @@ struct device_node {
 #endif
 };
 
-#define MAX_PHANDLE_ARGS 16
+#define MAX_PHANDLE_ARGS NR_FWNODE_REFERENCE_ARGS
 struct of_phandle_args {
 	struct device_node *np;
 	int args_count;
@@ -301,6 +301,8 @@ extern struct device_node *of_get_compatible_child(const struct device_node *par
 					const char *compatible);
 extern struct device_node *of_get_child_by_name(const struct device_node *node,
 					const char *name);
+extern struct device_node *of_get_available_child_by_name(const struct device_node *node,
+							  const char *name);
 
 /* cache lookup */
 extern struct device_node *of_find_next_cache_node(const struct device_node *);
@@ -311,8 +313,12 @@ extern struct device_node *of_find_node_with_property(
 extern struct property *of_find_property(const struct device_node *np,
 					 const char *name,
 					 int *lenp);
+extern bool of_property_read_bool(const struct device_node *np, const char *propname);
 extern int of_property_count_elems_of_size(const struct device_node *np,
 				const char *propname, int elem_size);
+extern int of_property_read_u16_index(const struct device_node *np,
+				       const char *propname,
+				       u32 index, u16 *out_value);
 extern int of_property_read_u32_index(const struct device_node *np,
 				       const char *propname,
 				       u32 index, u32 *out_value);
@@ -397,7 +403,6 @@ extern int of_phandle_iterator_args(struct of_phandle_iterator *it,
 				    uint32_t *args,
 				    int size);
 
-extern void of_alias_scan(void * (*dt_alloc)(u64 size, u64 align));
 extern int of_alias_get_id(const struct device_node *np, const char *stem);
 extern int of_alias_get_highest_id(const char *stem);
 
@@ -545,6 +550,13 @@ static inline struct device_node *of_get_next_child(
 	return NULL;
 }
 
+static inline struct device_node *of_get_next_child_with_prefix(
+	const struct device_node *node, struct device_node *prev,
+	const char *prefix)
+{
+	return NULL;
+}
+
 static inline struct device_node *of_get_next_available_child(
 	const struct device_node *node, struct device_node *prev)
 {
@@ -572,6 +584,13 @@ static inline struct device_node *of_get_compatible_child(const struct device_no
 }
 
 static inline struct device_node *of_get_child_by_name(
+					const struct device_node *node,
+					const char *name)
+{
+	return NULL;
+}
+
+static inline struct device_node *of_get_available_child_by_name(
 					const struct device_node *node,
 					const char *name)
 {
@@ -615,8 +634,20 @@ static inline struct device_node *of_find_compatible_node(
 	return NULL;
 }
 
+static inline bool of_property_read_bool(const struct device_node *np,
+					const char *propname)
+{
+	return false;
+}
+
 static inline int of_property_count_elems_of_size(const struct device_node *np,
 			const char *propname, int elem_size)
+{
+	return -ENOSYS;
+}
+
+static inline int of_property_read_u16_index(const struct device_node *np,
+			const char *propname, u32 index, u16 *out_value)
 {
 	return -ENOSYS;
 }
@@ -902,12 +933,6 @@ static inline const void *of_device_get_match_data(const struct device *dev)
 #define of_node_cmp(s1, s2)		strcasecmp((s1), (s2))
 #endif
 
-static inline int of_prop_val_eq(const struct property *p1, const struct property *p2)
-{
-	return p1->length == p2->length &&
-	       !memcmp(p1->value, p2->value, (size_t)p1->length);
-}
-
 #define for_each_property_of_node(dn, pp) \
 	for (pp = dn->properties; pp != NULL; pp = pp->next)
 
@@ -1109,7 +1134,7 @@ static inline bool of_phandle_args_equal(const struct of_phandle_args *a1,
  * Search for a property in a device node and count the number of u8 elements
  * in it.
  *
- * Return: The number of elements on sucess, -EINVAL if the property does
+ * Return: The number of elements on success, -EINVAL if the property does
  * not exist or its length does not match a multiple of u8 and -ENODATA if the
  * property does not have a value.
  */
@@ -1128,7 +1153,7 @@ static inline int of_property_count_u8_elems(const struct device_node *np,
  * Search for a property in a device node and count the number of u16 elements
  * in it.
  *
- * Return: The number of elements on sucess, -EINVAL if the property does
+ * Return: The number of elements on success, -EINVAL if the property does
  * not exist or its length does not match a multiple of u16 and -ENODATA if the
  * property does not have a value.
  */
@@ -1147,7 +1172,7 @@ static inline int of_property_count_u16_elems(const struct device_node *np,
  * Search for a property in a device node and count the number of u32 elements
  * in it.
  *
- * Return: The number of elements on sucess, -EINVAL if the property does
+ * Return: The number of elements on success, -EINVAL if the property does
  * not exist or its length does not match a multiple of u32 and -ENODATA if the
  * property does not have a value.
  */
@@ -1166,7 +1191,7 @@ static inline int of_property_count_u32_elems(const struct device_node *np,
  * Search for a property in a device node and count the number of u64 elements
  * in it.
  *
- * Return: The number of elements on sucess, -EINVAL if the property does
+ * Return: The number of elements on success, -EINVAL if the property does
  * not exist or its length does not match a multiple of u64 and -ENODATA if the
  * property does not have a value.
  */
@@ -1243,24 +1268,6 @@ static inline int of_property_read_string_index(const struct device_node *np,
 }
 
 /**
- * of_property_read_bool - Find a property
- * @np:		device node from which the property value is to be read.
- * @propname:	name of the property to be searched.
- *
- * Search for a boolean property in a device node. Usage on non-boolean
- * property types is deprecated.
- *
- * Return: true if the property exists false otherwise.
- */
-static inline bool of_property_read_bool(const struct device_node *np,
-					 const char *propname)
-{
-	const struct property *prop = of_find_property(np, propname, NULL);
-
-	return prop ? true : false;
-}
-
-/**
  * of_property_present - Test if a property is present in a node
  * @np:		device node to search for the property.
  * @propname:	name of the property to be searched.
@@ -1271,7 +1278,9 @@ static inline bool of_property_read_bool(const struct device_node *np,
  */
 static inline bool of_property_present(const struct device_node *np, const char *propname)
 {
-	return of_property_read_bool(np, propname);
+	struct property *prop = of_find_property(np, propname, NULL);
+
+	return prop ? true : false;
 }
 
 /**

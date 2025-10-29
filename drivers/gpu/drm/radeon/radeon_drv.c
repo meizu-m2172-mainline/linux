@@ -37,7 +37,7 @@
 #include <linux/mmu_notifier.h>
 #include <linux/pci.h>
 
-#include <drm/drm_client_setup.h>
+#include <drm/clients/drm_client_setup.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <drm/drm_fourcc.h>
@@ -110,9 +110,10 @@
  *   2.48.0 - TA_CS_BC_BASE_ADDR allowed on SI
  *   2.49.0 - DRM_RADEON_GEM_INFO ioctl returns correct vram_size/visible values
  *   2.50.0 - Allows unaligned shader loads on CIK. (needed by OpenGL)
+ *   2.51.0 - Add evergreen/cayman OpenGL 4.6 compatibility
  */
 #define KMS_DRIVER_MAJOR	2
-#define KMS_DRIVER_MINOR	50
+#define KMS_DRIVER_MINOR	51
 #define KMS_DRIVER_PATCHLEVEL	0
 
 int radeon_no_wb;
@@ -603,7 +604,6 @@ static const struct drm_driver kms_driver = {
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
-	.date = DRIVER_DATE,
 	.major = KMS_DRIVER_MAJOR,
 	.minor = KMS_DRIVER_MINOR,
 	.patchlevel = KMS_DRIVER_PATCHLEVEL,

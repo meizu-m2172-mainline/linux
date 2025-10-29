@@ -115,10 +115,8 @@ static unsigned long ftrace_lookup_module_stub(unsigned long ip, unsigned long a
 {
 	struct module *mod = NULL;
 
-	preempt_disable();
-	mod = __module_text_address(ip);
-	preempt_enable();
-
+	scoped_guard(rcu)
+		mod = __module_text_address(ip);
 	if (!mod)
 		pr_err("No module loaded at addr=%lx\n", ip);
 
@@ -490,8 +488,10 @@ int ftrace_init_nop(struct module *mod, struct dyn_ftrace *rec)
 		return ret;
 
 	/* Set up out-of-line stub */
-	if (IS_ENABLED(CONFIG_PPC_FTRACE_OUT_OF_LINE))
-		return ftrace_init_ool_stub(mod, rec);
+	if (IS_ENABLED(CONFIG_PPC_FTRACE_OUT_OF_LINE)) {
+		ret = ftrace_init_ool_stub(mod, rec);
+		goto out;
+	}
 
 	/* Nop-out the ftrace location */
 	new = ppc_inst(PPC_RAW_NOP());
@@ -521,6 +521,10 @@ int ftrace_init_nop(struct module *mod, struct dyn_ftrace *rec)
 	} else {
 		return -EINVAL;
 	}
+
+out:
+	if (!ret)
+		ret = ftrace_rec_set_nop_ops(rec);
 
 	return ret;
 }
@@ -658,7 +662,6 @@ void ftrace_graph_func(unsigned long ip, unsigned long parent_ip,
 		       struct ftrace_ops *op, struct ftrace_regs *fregs)
 {
 	unsigned long sp = arch_ftrace_regs(fregs)->regs.gpr[1];
-	int bit;
 
 	if (unlikely(ftrace_graph_is_dead()))
 		goto out;
@@ -666,14 +669,9 @@ void ftrace_graph_func(unsigned long ip, unsigned long parent_ip,
 	if (unlikely(atomic_read(&current->tracing_graph_pause)))
 		goto out;
 
-	bit = ftrace_test_recursion_trylock(ip, parent_ip);
-	if (bit < 0)
-		goto out;
-
-	if (!function_graph_enter(parent_ip, ip, 0, (unsigned long *)sp))
+	if (!function_graph_enter_regs(parent_ip, ip, 0, (unsigned long *)sp, fregs))
 		parent_ip = ppc_function_entry(return_to_handler);
 
-	ftrace_test_recursion_unlock(bit);
 out:
 	arch_ftrace_regs(fregs)->regs.link = parent_ip;
 }

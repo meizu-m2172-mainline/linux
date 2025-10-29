@@ -47,7 +47,8 @@
 
 #include "dcn10/dcn10_resource.h"
 
-#include "link.h"
+#include "link_service.h"
+
 #include "dce/dce_abm.h"
 #include "dce/dce_audio.h"
 #include "dce/dce_aux.h"
@@ -1151,6 +1152,7 @@ static struct resource_funcs dcn302_res_pool_funcs = {
 		.update_bw_bounding_box = dcn302_update_bw_bounding_box,
 		.patch_unknown_plane_state = dcn20_patch_unknown_plane_state,
 		.get_panel_config_defaults = dcn302_get_panel_config_defaults,
+		.get_vstartup_for_pipe = dcn10_get_vstartup_for_pipe
 };
 
 static struct dc_cap_funcs cap_funcs = {
@@ -1479,6 +1481,8 @@ static bool dcn302_resource_construct(
 
 	for (i = 0; i < dc->caps.max_planes; ++i)
 		dc->caps.planes[i] = plane_cap;
+
+	dc->caps.max_odm_combine_factor = 4;
 
 	dc->cap_funcs = cap_funcs;
 

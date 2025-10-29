@@ -14,6 +14,7 @@
 #include <linux/err.h>
 #include <linux/gfp_types.h>
 #include <linux/intel_tpmi.h>
+#include <linux/intel_vsec.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/kstrtox.h>
@@ -256,13 +257,13 @@ DEFINE_SHOW_STORE_ATTRIBUTE(plr_status);
 
 static int intel_plr_probe(struct auxiliary_device *auxdev, const struct auxiliary_device_id *id)
 {
-	struct intel_tpmi_plat_info *plat_info;
+	struct oobmsm_plat_info *plat_info;
 	struct dentry *dentry;
 	int i, num_resources;
 	struct resource *res;
 	struct tpmi_plr *plr;
 	void __iomem *base;
-	char name[16];
+	char name[17];
 	int err;
 
 	plat_info = tpmi_get_platform_data(auxdev);

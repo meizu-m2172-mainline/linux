@@ -228,7 +228,7 @@ def parse_tests(request: KunitParseRequest, metadata: kunit_json.Metadata, input
 		fake_test.counts.passed = 1
 
 		output: Iterable[str] = input_data
-		if request.raw_output == 'all':
+		if request.raw_output == 'all' or request.raw_output == 'full':
 			pass
 		elif request.raw_output == 'kunit':
 			output = kunit_parser.extract_tap_lines(output)
@@ -312,7 +312,16 @@ def massage_argv(argv: Sequence[str]) -> Sequence[str]:
 	return list(map(massage_arg, argv))
 
 def get_default_jobs() -> int:
-	return len(os.sched_getaffinity(0))
+	if sys.version_info >= (3, 13):
+		if (ncpu := os.process_cpu_count()) is not None:
+			return ncpu
+		raise RuntimeError("os.process_cpu_count() returned None")
+	 # See https://github.com/python/cpython/blob/b61fece/Lib/os.py#L1175-L1186.
+	if sys.platform != "darwin":
+		return len(os.sched_getaffinity(0))
+	if (ncpu := os.cpu_count()) is not None:
+		return ncpu
+	raise RuntimeError("os.cpu_count() returned None")
 
 def add_common_opts(parser: argparse.ArgumentParser) -> None:
 	parser.add_argument('--build_dir',
@@ -416,7 +425,7 @@ def add_parse_opts(parser: argparse.ArgumentParser) -> None:
 	parser.add_argument('--raw_output', help='If set don\'t parse output from kernel. '
 			    'By default, filters to just KUnit output. Use '
 			    '--raw_output=all to show everything',
-			     type=str, nargs='?', const='all', default=None, choices=['all', 'kunit'])
+			     type=str, nargs='?', const='all', default=None, choices=['all', 'full', 'kunit'])
 	parser.add_argument('--json',
 			    nargs='?',
 			    help='Prints parsed test results as JSON to stdout or a file if '

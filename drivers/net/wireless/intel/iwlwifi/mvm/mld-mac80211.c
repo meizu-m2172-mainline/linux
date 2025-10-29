@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright (C) 2022-2024 Intel Corporation
+ * Copyright (C) 2022-2025 Intel Corporation
  */
 #include "mvm.h"
 
@@ -17,6 +17,8 @@ static int iwl_mvm_mld_mac_add_interface(struct ieee80211_hw *hw,
 	iwl_mvm_mac_init_mvmvif(mvm, mvmvif);
 
 	mvmvif->mvm = mvm;
+
+	vif->driver_flags |= IEEE80211_VIF_REMOVE_AP_AFTER_DISASSOC;
 
 	/* Not much to do here. The stack will not allow interface
 	 * types or combinations that we didn't advertise, so we
@@ -148,19 +150,6 @@ static void iwl_mvm_mld_mac_remove_interface(struct ieee80211_hw *hw,
 
 	iwl_mvm_vif_dbgfs_rm_link(mvm, vif);
 
-	/* For AP/GO interface, the tear down of the resources allocated to the
-	 * interface is be handled as part of the stop_ap flow.
-	 */
-	if (vif->type == NL80211_IFTYPE_AP ||
-	    vif->type == NL80211_IFTYPE_ADHOC) {
-#ifdef CONFIG_NL80211_TESTMODE
-		if (vif == mvm->noa_vif) {
-			mvm->noa_vif = NULL;
-			mvm->noa_duration = 0;
-		}
-#endif
-	}
-
 	iwl_mvm_power_update_mac(mvm);
 
 	/* Before the interface removal, mac80211 would cancel the ROC, and the
@@ -208,32 +197,6 @@ static unsigned int iwl_mvm_mld_count_active_links(struct iwl_mvm_vif *mvmvif)
 	return n_active;
 }
 
-static void iwl_mvm_restart_mpdu_count(struct iwl_mvm *mvm,
-				       struct iwl_mvm_vif *mvmvif)
-{
-	struct ieee80211_sta *ap_sta = mvmvif->ap_sta;
-	struct iwl_mvm_sta *mvmsta;
-
-	lockdep_assert_held(&mvm->mutex);
-
-	if (!ap_sta)
-		return;
-
-	mvmsta = iwl_mvm_sta_from_mac80211(ap_sta);
-	if (!mvmsta->mpdu_counters)
-		return;
-
-	for (int q = 0; q < mvm->trans->num_rx_queues; q++) {
-		spin_lock_bh(&mvmsta->mpdu_counters[q].lock);
-		memset(mvmsta->mpdu_counters[q].per_link, 0,
-		       sizeof(mvmsta->mpdu_counters[q].per_link));
-		mvmsta->mpdu_counters[q].window_start = jiffies;
-		spin_unlock_bh(&mvmsta->mpdu_counters[q].lock);
-	}
-
-	IWL_DEBUG_INFO(mvm, "MPDU counters are cleared\n");
-}
-
 static int iwl_mvm_esr_mode_active(struct iwl_mvm *mvm,
 				   struct ieee80211_vif *vif)
 {
@@ -266,16 +229,6 @@ static int iwl_mvm_esr_mode_active(struct iwl_mvm *mvm,
 		mvmvif->primary_link = mvmvif->link_selection_primary;
 	else
 		mvmvif->primary_link = __ffs(vif->active_links);
-
-	/* Needed for tracking RSSI */
-	iwl_mvm_request_periodic_system_statistics(mvm, true);
-
-	/*
-	 * Restart the MPDU counters and the counting window, so when the
-	 * statistics arrive (which is where we look at the counters) we
-	 * will be at the end of the window.
-	 */
-	iwl_mvm_restart_mpdu_count(mvm, mvmvif);
 
 	iwl_dbg_tlv_time_point(&mvm->fwrt, IWL_FW_INI_TIME_ESR_LINK_UP,
 			       NULL);
@@ -323,7 +276,6 @@ __iwl_mvm_mld_assign_vif_chanctx(struct iwl_mvm *mvm,
 		ret = iwl_mvm_esr_mode_active(mvm, vif);
 		if (ret) {
 			IWL_ERR(mvm, "failed to activate ESR mode (%d)\n", ret);
-			iwl_mvm_request_periodic_system_statistics(mvm, false);
 			goto out;
 		}
 	}
@@ -388,20 +340,6 @@ static int iwl_mvm_mld_assign_vif_chanctx(struct ieee80211_hw *hw,
 {
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
 
-	/* update EMLSR mode */
-	if (ieee80211_vif_type_p2p(vif) != NL80211_IFTYPE_STATION) {
-		int ret;
-
-		ret = iwl_mvm_esr_non_bss_link(mvm, vif, link_conf->link_id,
-					       true);
-		/*
-		 * Don't activate this link if failed to exit EMLSR in
-		 * the BSS interface
-		 */
-		if (ret)
-			return ret;
-	}
-
 	guard(mvm)(mvm);
 	return __iwl_mvm_mld_assign_vif_chanctx(mvm, vif, link_conf, ctx, false);
 }
@@ -448,11 +386,6 @@ static int iwl_mvm_esr_mode_inactive(struct iwl_mvm *mvm,
 		if (ret)
 			break;
 	}
-
-	iwl_mvm_request_periodic_system_statistics(mvm, false);
-
-	/* Start a new counting window */
-	iwl_mvm_restart_mpdu_count(mvm, mvmvif);
 
 	iwl_dbg_tlv_time_point(&mvm->fwrt, IWL_FW_INI_TIME_ESR_LINK_DOWN,
 			       NULL);
@@ -525,10 +458,6 @@ static void iwl_mvm_mld_unassign_vif_chanctx(struct ieee80211_hw *hw,
 		iwl_mvm_add_link(mvm, vif, link_conf);
 	}
 	mutex_unlock(&mvm->mutex);
-
-	/* update EMLSR mode */
-	if (ieee80211_vif_type_p2p(vif) != NL80211_IFTYPE_STATION)
-		iwl_mvm_esr_non_bss_link(mvm, vif, link_conf->link_id, false);
 }
 
 static void
@@ -737,25 +666,6 @@ static int iwl_mvm_mld_mac_sta_state(struct ieee80211_hw *hw,
 					    &callbacks);
 }
 
-static bool iwl_mvm_esr_bw_criteria(struct iwl_mvm *mvm,
-				    struct ieee80211_vif *vif,
-				    struct ieee80211_bss_conf *link_conf)
-{
-	struct ieee80211_bss_conf *other_link;
-	int link_id;
-
-	/* Exit EMLSR if links don't have equal bandwidths */
-	for_each_vif_active_link(vif, other_link, link_id) {
-		if (link_id == link_conf->link_id)
-			continue;
-		if (link_conf->chanreq.oper.width ==
-		    other_link->chanreq.oper.width)
-			return true;
-	}
-
-	return false;
-}
-
 static void
 iwl_mvm_mld_link_info_changed_station(struct iwl_mvm *mvm,
 				      struct ieee80211_vif *vif,
@@ -790,14 +700,6 @@ iwl_mvm_mld_link_info_changed_station(struct iwl_mvm *mvm,
 		link_changes |= LINK_CONTEXT_MODIFY_HE_PARAMS;
 	}
 
-	if ((changes & BSS_CHANGED_BANDWIDTH) &&
-	    ieee80211_vif_link_active(vif, link_conf->link_id) &&
-	    mvmvif->esr_active &&
-	    !iwl_mvm_esr_bw_criteria(mvm, vif, link_conf))
-		iwl_mvm_exit_esr(mvm, vif,
-				 IWL_MVM_ESR_EXIT_BANDWIDTH,
-				 iwl_mvm_get_primary_link(vif));
-
 	/* if associated, maybe puncturing changed - we'll check later */
 	if (vif->cfg.assoc)
 		link_changes |= LINK_CONTEXT_MODIFY_EHT_PARAMS;
@@ -831,30 +733,6 @@ static bool iwl_mvm_mld_vif_have_valid_ap_sta(struct iwl_mvm_vif *mvmvif)
 	return false;
 }
 
-static void iwl_mvm_mld_vif_delete_all_stas(struct iwl_mvm *mvm,
-					    struct ieee80211_vif *vif)
-{
-	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
-	int i, ret;
-
-	if (test_bit(IWL_MVM_STATUS_IN_HW_RESTART, &mvm->status))
-		return;
-
-	for_each_mvm_vif_valid_link(mvmvif, i) {
-		struct iwl_mvm_vif_link_info *link = mvmvif->link[i];
-
-		if (!link)
-			continue;
-
-		iwl_mvm_sec_key_remove_ap(mvm, vif, link, i);
-		ret = iwl_mvm_mld_rm_sta_id(mvm, link->ap_sta_id);
-		if (ret)
-			IWL_ERR(mvm, "failed to remove AP station\n");
-
-		link->ap_sta_id = IWL_INVALID_STA;
-	}
-}
-
 static void iwl_mvm_mld_vif_cfg_changed_station(struct iwl_mvm *mvm,
 						struct ieee80211_vif *vif,
 						u64 changes)
@@ -881,8 +759,13 @@ static void iwl_mvm_mld_vif_cfg_changed_station(struct iwl_mvm *mvm,
 		if (vif->cfg.assoc) {
 			mvmvif->session_prot_connection_loss = false;
 
-			/* clear statistics to get clean beacon counter */
+			/*
+			 * Clear statistics to get clean beacon counter, and ask for
+			 * periodic statistics, as they are needed for link
+			 * selection and RX OMI decisions.
+			 */
 			iwl_mvm_request_statistics(mvm, true);
+			iwl_mvm_request_periodic_system_statistics(mvm, true);
 			iwl_mvm_sf_update(mvm, vif, false);
 			iwl_mvm_power_vif_assoc(mvm, vif);
 
@@ -930,6 +813,8 @@ static void iwl_mvm_mld_vif_cfg_changed_station(struct iwl_mvm *mvm,
 		} else if (iwl_mvm_mld_vif_have_valid_ap_sta(mvmvif)) {
 			iwl_mvm_mei_host_disassociated(mvm);
 
+			iwl_mvm_request_periodic_system_statistics(mvm, false);
+
 			/* If update fails - SF might be running in associated
 			 * mode while disassociated - which is forbidden.
 			 */
@@ -938,30 +823,17 @@ static void iwl_mvm_mld_vif_cfg_changed_station(struct iwl_mvm *mvm,
 				  !test_bit(IWL_MVM_STATUS_HW_RESTART_REQUESTED,
 					    &mvm->status),
 				  "Failed to update SF upon disassociation\n");
-
-			/* If we get an assert during the connection (after the
-			 * station has been added, but before the vif is set
-			 * to associated), mac80211 will re-add the station and
-			 * then configure the vif. Since the vif is not
-			 * associated, we would remove the station here and
-			 * this would fail the recovery.
-			 */
-			iwl_mvm_mld_vif_delete_all_stas(mvm, vif);
 		}
 
 		iwl_mvm_bss_info_changed_station_assoc(mvm, vif, changes);
 	}
 
 	if (changes & BSS_CHANGED_PS) {
+		iwl_mvm_smps_workaround(mvm, vif, false);
 		ret = iwl_mvm_power_update_mac(mvm);
 		if (ret)
 			IWL_ERR(mvm, "failed to update power mode\n");
 	}
-
-	if (changes & (BSS_CHANGED_MLD_VALID_LINKS | BSS_CHANGED_MLD_TTLM) &&
-	    ieee80211_vif_is_mld(vif) && mvmvif->authorized)
-		wiphy_delayed_work_queue(mvm->hw->wiphy,
-					 &mvmvif->mlo_int_scan_wk, 0);
 }
 
 static void
@@ -1317,91 +1189,6 @@ iwl_mvm_mld_can_neg_ttlm(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	return NEG_TTLM_RES_ACCEPT;
 }
 
-static int
-iwl_mvm_mld_mac_pre_channel_switch(struct ieee80211_hw *hw,
-				   struct ieee80211_vif *vif,
-				   struct ieee80211_channel_switch *chsw)
-{
-	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
-	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
-	int ret;
-
-	mutex_lock(&mvm->mutex);
-	if (mvmvif->esr_active) {
-		u8 primary = iwl_mvm_get_primary_link(vif);
-		int selected;
-
-		/* prefer primary unless quiet CSA on it */
-		if (chsw->link_id == primary && chsw->block_tx)
-			selected = iwl_mvm_get_other_link(vif, primary);
-		else
-			selected = primary;
-
-		/*
-		 * remembers to tell the firmware that this link can't tx
-		 * Note that this logic seems to be unrelated to esr, but it
-		 * really is needed only when esr is active. When we have a
-		 * single link, the firmware will handle all this on its own.
-		 * In multi-link scenarios, we can learn about the CSA from
-		 * another link and this logic is too complex for the firmware
-		 * to track.
-		 * Since we want to de-activate the link that got a CSA, we
-		 * need to tell the firmware not to send any frame on that link
-		 * as the firmware may not be aware that link is under a CSA
-		 * with mode=1 (no Tx allowed).
-		 */
-		if (chsw->block_tx && mvmvif->link[chsw->link_id])
-			mvmvif->link[chsw->link_id]->csa_block_tx = true;
-
-		iwl_mvm_exit_esr(mvm, vif, IWL_MVM_ESR_EXIT_CSA, selected);
-		mutex_unlock(&mvm->mutex);
-
-		/*
-		 * If we've not kept the link active that's doing the CSA
-		 * then we don't need to do anything else, just return.
-		 */
-		if (selected != chsw->link_id)
-			return 0;
-
-		mutex_lock(&mvm->mutex);
-	}
-
-	ret = iwl_mvm_pre_channel_switch(mvm, vif, chsw);
-	mutex_unlock(&mvm->mutex);
-
-	return ret;
-}
-
-#define IWL_MVM_MLD_UNBLOCK_ESR_NON_BSS_TIMEOUT (5 * HZ)
-
-static void iwl_mvm_mld_prep_add_interface(struct ieee80211_hw *hw,
-					   enum nl80211_iftype type)
-{
-	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
-	struct ieee80211_vif *bss_vif = iwl_mvm_get_bss_vif(mvm);
-	struct iwl_mvm_vif *mvmvif;
-	int ret;
-
-	IWL_DEBUG_MAC80211(mvm, "prep_add_interface: type=%u\n",
-			   type);
-
-	if (IS_ERR_OR_NULL(bss_vif) ||
-	    !(type == NL80211_IFTYPE_AP ||
-	      type == NL80211_IFTYPE_P2P_GO ||
-	      type == NL80211_IFTYPE_P2P_CLIENT))
-		return;
-
-	mvmvif = iwl_mvm_vif_from_mac80211(bss_vif);
-	ret = iwl_mvm_block_esr_sync(mvm, bss_vif,
-				     IWL_MVM_ESR_BLOCKED_TMP_NON_BSS);
-	if (ret)
-		return;
-
-	wiphy_delayed_work_queue(mvmvif->mvm->hw->wiphy,
-				 &mvmvif->unblock_esr_tmp_non_bss_wk,
-				 IWL_MVM_MLD_UNBLOCK_ESR_NON_BSS_TIMEOUT);
-}
-
 const struct ieee80211_ops iwl_mvm_mld_hw_ops = {
 	.tx = iwl_mvm_mac_tx,
 	.wake_tx_queue = iwl_mvm_mac_wake_tx_queue,
@@ -1455,7 +1242,7 @@ const struct ieee80211_ops iwl_mvm_mld_hw_ops = {
 	.tx_last_beacon = iwl_mvm_tx_last_beacon,
 
 	.channel_switch = iwl_mvm_channel_switch,
-	.pre_channel_switch = iwl_mvm_mld_mac_pre_channel_switch,
+	.pre_channel_switch = iwl_mvm_mac_pre_channel_switch,
 	.post_channel_switch = iwl_mvm_post_channel_switch,
 	.abort_channel_switch = iwl_mvm_abort_channel_switch,
 	.channel_switch_rx_beacon = iwl_mvm_channel_switch_rx_beacon,
@@ -1467,8 +1254,6 @@ const struct ieee80211_ops iwl_mvm_mld_hw_ops = {
 	.event_callback = iwl_mvm_mac_event_callback,
 
 	.sync_rx_queues = iwl_mvm_sync_rx_queues,
-
-	CFG80211_TESTMODE_CMD(iwl_mvm_mac_testmode_cmd)
 
 #ifdef CONFIG_PM_SLEEP
 	/* look at d3.c */
@@ -1498,5 +1283,4 @@ const struct ieee80211_ops iwl_mvm_mld_hw_ops = {
 	.change_sta_links = iwl_mvm_mld_change_sta_links,
 	.can_activate_links = iwl_mvm_mld_can_activate_links,
 	.can_neg_ttlm = iwl_mvm_mld_can_neg_ttlm,
-	.prep_add_interface = iwl_mvm_mld_prep_add_interface,
 };

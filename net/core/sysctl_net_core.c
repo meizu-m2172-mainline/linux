@@ -28,12 +28,14 @@
 #include <net/rps.h>
 
 #include "dev.h"
+#include "net-sysfs.h"
 
 static int int_3600 = 3600;
 static int min_sndbuf = SOCK_MIN_SNDBUF;
 static int min_rcvbuf = SOCK_MIN_RCVBUF;
 static int max_skb_frags = MAX_SKB_FRAGS;
 static int min_mem_pcpu_rsv = SK_MEMORY_PCPU_RESERVE;
+static int netdev_budget_usecs_min = 2 * USEC_PER_SEC / HZ;
 
 static int net_msg_warn;	/* Unused, but still a sysctl */
 
@@ -95,50 +97,40 @@ free_buf:
 
 #ifdef CONFIG_RPS
 
-static struct cpumask *rps_default_mask_cow_alloc(struct net *net)
-{
-	struct cpumask *rps_default_mask;
-
-	if (net->core.rps_default_mask)
-		return net->core.rps_default_mask;
-
-	rps_default_mask = kzalloc(cpumask_size(), GFP_KERNEL);
-	if (!rps_default_mask)
-		return NULL;
-
-	/* pairs with READ_ONCE in rx_queue_default_mask() */
-	WRITE_ONCE(net->core.rps_default_mask, rps_default_mask);
-	return rps_default_mask;
-}
+DEFINE_MUTEX(rps_default_mask_mutex);
 
 static int rps_default_mask_sysctl(const struct ctl_table *table, int write,
 				   void *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct net *net = (struct net *)table->data;
+	struct cpumask *mask;
 	int err = 0;
 
-	rtnl_lock();
+	mutex_lock(&rps_default_mask_mutex);
+	mask = net->core.rps_default_mask;
 	if (write) {
-		struct cpumask *rps_default_mask = rps_default_mask_cow_alloc(net);
-
+		if (!mask) {
+			mask = kzalloc(cpumask_size(), GFP_KERNEL);
+			net->core.rps_default_mask = mask;
+		}
 		err = -ENOMEM;
-		if (!rps_default_mask)
+		if (!mask)
 			goto done;
 
-		err = cpumask_parse(buffer, rps_default_mask);
+		err = cpumask_parse(buffer, mask);
 		if (err)
 			goto done;
 
-		err = rps_cpumask_housekeeping(rps_default_mask);
+		err = rps_cpumask_housekeeping(mask);
 		if (err)
 			goto done;
 	} else {
 		err = dump_cpumask(buffer, lenp, ppos,
-				   net->core.rps_default_mask ? : cpu_none_mask);
+				   mask ?: cpu_none_mask);
 	}
 
 done:
-	rtnl_unlock();
+	mutex_unlock(&rps_default_mask_mutex);
 	return err;
 }
 
@@ -200,7 +192,7 @@ static int rps_sock_flow_sysctl(const struct ctl_table *table, int write,
 			if (orig_sock_table) {
 				static_branch_dec(&rps_needed);
 				static_branch_dec(&rfs_needed);
-				kvfree_rcu_mightsleep(orig_sock_table);
+				kvfree_rcu(orig_sock_table, rcu);
 			}
 		}
 	}
@@ -238,7 +230,7 @@ static int flow_limit_cpu_sysctl(const struct ctl_table *table, int write,
 				     lockdep_is_held(&flow_limit_update_mutex));
 			if (cur && !cpumask_test_cpu(i, mask)) {
 				RCU_INIT_POINTER(sd->flow_limit, NULL);
-				kfree_rcu_mightsleep(cur);
+				kfree_rcu(cur, rcu);
 			} else if (!cur && cpumask_test_cpu(i, mask)) {
 				cur = kzalloc_node(len, GFP_KERNEL,
 						   cpu_to_node(i));
@@ -247,7 +239,7 @@ static int flow_limit_cpu_sysctl(const struct ctl_table *table, int write,
 					ret = -ENOMEM;
 					goto write_unlock;
 				}
-				cur->num_buckets = netdev_flow_limit_table_len;
+				cur->log_buckets = ilog2(netdev_flow_limit_table_len);
 				rcu_assign_pointer(sd->flow_limit, cur);
 			}
 		}
@@ -319,7 +311,7 @@ static int proc_do_dev_weight(const struct ctl_table *table, int write,
 	int ret, weight;
 
 	mutex_lock(&dev_weight_mutex);
-	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 	if (!ret && write) {
 		weight = READ_ONCE(weight_p);
 		WRITE_ONCE(net_hotdata.dev_rx_weight, weight * dev_weight_rx_bias);
@@ -412,6 +404,7 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_do_dev_weight,
+		.extra1         = SYSCTL_ONE,
 	},
 	{
 		.procname	= "dev_weight_rx_bias",
@@ -419,6 +412,7 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_do_dev_weight,
+		.extra1         = SYSCTL_ONE,
 	},
 	{
 		.procname	= "dev_weight_tx_bias",
@@ -426,6 +420,7 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_do_dev_weight,
+		.extra1         = SYSCTL_ONE,
 	},
 	{
 		.procname	= "netdev_max_backlog",
@@ -584,7 +579,7 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
+		.extra1		= &netdev_budget_usecs_min,
 	},
 	{
 		.procname	= "fb_tunnels_only_for_init_net",
