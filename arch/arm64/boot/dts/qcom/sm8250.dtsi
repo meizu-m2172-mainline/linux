@@ -858,6 +858,14 @@
 			reg = <0x0 0x8bf00000 0x0 0x4600000>;
 			no-map;
 		};
+
+		fastrpc_mem: fastrpc {
+			compatible = "shared-dma-pool";
+			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0x1000000>;
+			reusable;
+		};
 	};
 
 	smem {
@@ -3119,6 +3127,7 @@
 					qcom,non-secure-domain;
 					#address-cells = <1>;
 					#size-cells = <0>;
+					memory-region = <&fastrpc_mem>;
 
 					compute-cb@1 {
 						compatible = "qcom,fastrpc-compute-cb";
@@ -3821,6 +3830,7 @@
 					qcom,non-secure-domain;
 					#address-cells = <1>;
 					#size-cells = <0>;
+					memory-region = <&fastrpc_mem>;
 
 					compute-cb@1 {
 						compatible = "qcom,fastrpc-compute-cb";
@@ -6064,6 +6074,7 @@
 					qcom,non-secure-domain;
 					#address-cells = <1>;
 					#size-cells = <0>;
+					memory-region = <&fastrpc_mem>;
 
 					compute-cb@3 {
 						compatible = "qcom,fastrpc-compute-cb";
