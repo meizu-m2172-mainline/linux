@@ -49,7 +49,11 @@
 			// 	 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
 			// 	 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
 			// 	 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
-			//power-domains = <&dispcc MDSS_GDSC>;
+			// power-domains = <&dispcc MDSS_GDSC>;
+			// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+			// 		 <&gcc GCC_DISP_HF_AXI_CLK>,
+			// 		 <&dispcc DISP_CC_MDSS_MDP_CLK>,
+			// 		 <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
 		};
 	};
 
@@ -175,11 +179,11 @@
 			no-map;
 		};
 
-		// disp_rdump_region@9c000000 {
-		// 	reg = <0x00 0x9c000000 0x00 0x800000>;
-		// 	label = "disp_rdump_region";
-		// 	no-map;
-		// };
+		disp_rdump_region@9c000000 {
+			reg = <0x00 0x9c000000 0x00 0x800000>;
+			label = "disp_rdump_region";
+			no-map;
+		};
 
 		ramoops_region {
 			compatible = "ramoops";
@@ -720,14 +724,15 @@
 		compatible = "visionox,vtdr6130";
 		reg = <0>;
 
-		pinctrl-0 = <&sde_dsi_active &sde_te_active_sleep>;
-		pinctrl-1 = <&sde_dsi_sleep &sde_te_active_sleep>;
+		pinctrl-0 = <&sde_dsi_active>, <&sde_te_active_sleep>;
+		pinctrl-1 = <&sde_dsi_sleep>, <&sde_te_active_sleep>;
 		pinctrl-names = "default", "sleep";
 
 		vddio-supply = <&vreg_l14a_1p88>;
 		vci-supply = <&vreg_l11c_3p0>;
 		vdd-supply = <&vreg_l6a_1p2>;
-		reset-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
+		// reset-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
 
 		port {
 			panel_in: endpoint {
@@ -750,7 +755,7 @@
 &i2c1 {
 	status = "okay";
 	//clock-frequency = <400000>;
-	clock-frequency = <1000000>;
+	//clock-frequency = <1000000>;
 
 	nfc@28 {
 		compatible = "nxp,pn553",
@@ -1047,7 +1052,7 @@
 		focaltech,max-touch-number = <10>;
 		focaltech,display-coords = <0 0 1080 2400>;
 
-		//panel = <&panel>;
+		// panel = <&panel>;
 	};
 };
 
@@ -1200,19 +1205,19 @@
 &q6afedai {
 	dai@56 {
 		// reg = <TERTIARY_TDM_RX_0>;
-		// qcom,tdm-sync-mode = <0>;
-		// qcom,tdm-sync-src = <1>;
-		// qcom,tdm-data-out = <0>;
-		// qcom,tdm-invert-sync = <1>;
-		// qcom,tdm-data-delay = <1>;
-		// qcom,tdm-data-align = <0>;
+		qcom,tdm-sync-mode = <0>;
+		qcom,tdm-sync-src = <1>;
+		qcom,tdm-data-out = <0>;
+		qcom,tdm-invert-sync = <1>;
+		qcom,tdm-data-delay = <1>;
+		qcom,tdm-data-align = <0>;
 		reg = <TERTIARY_TDM_RX_0>;
-		qcom,tdm-sync-mode = <1>;     /* Sync mode: 1=secondary (for AW88261) */
-		qcom,tdm-sync-src = <1>;      /* Sync source: 1=internal */
-		qcom,tdm-data-out = <0>;      /* Data out: 0=enabled */
-		qcom,tdm-invert-sync = <0>;   /* Don't invert sync for AW88261 */
-		qcom,tdm-data-delay = <1>;    /* 1-bit data delay for proper alignment */
-		qcom,tdm-data-align = <0>;    /* No special alignment needed */
+		// qcom,tdm-sync-mode = <1>;     /* Sync mode: 1=secondary (for AW88261) */
+		// qcom,tdm-sync-src = <1>;      /* Sync source: 1=internal */
+		// qcom,tdm-data-out = <0>;      /* Data out: 0=enabled */
+		// qcom,tdm-invert-sync = <0>;   /* Don't invert sync for AW88261 */
+		// qcom,tdm-data-delay = <1>;    /* 1-bit data delay for proper alignment */
+		// qcom,tdm-data-align = <0>;    /* No special alignment needed */
 		// qcom,sd-lines = <0 1>;
 	};
 };
@@ -1222,27 +1227,6 @@
 	dai@0 {
 		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
 	};
-
-	dai@1 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
-	};
-
-	dai@2 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
-	};
-
-	dai@3 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
-	};
-
-	dai@4 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA5>;
-	};
-
-	dai@5 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA6>;
-	};
-
 };
 
 &vamacro {
@@ -1265,7 +1249,7 @@
 		link-name = "MultiMedia2";
 
 		cpu {
-			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
 		};
 	};
 
@@ -1415,12 +1399,34 @@
 	// 	output-high;
 	// };
 
+	// sde_dsi_active: sde_dsi_active-state {
+	// 	pins = "gpio128";
+	// 	function = "gpio";
+	// 	drive-strength = <8>;
+	// 	bias-disable;
+	// 	output-high;
+	// };
+
+	// sde_dsi_sleep: sde-dsi-sleep-state {
+	// 	pins = "gpio128";
+	// 	function = "gpio";
+	// 	drive-strength = <2>;
+	// 	bias-pull-down;
+	// 	output-high;
+	// };
+
+	// sde_te_active_sleep: sde_te_active-state {
+	// 	pins = "gpio66";
+	// 	function = "mdp_vsync";
+	// 	drive-strength = <2>;
+	// 	bias-pull-down;
+	// };
+
 	sde_dsi_active: sde_dsi_active-state {
 		pins = "gpio128";
 		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
-		output-high;
 	};
 
 	sde_dsi_sleep: sde-dsi-sleep-state {
@@ -1428,11 +1434,10 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
-		output-high;
 	};
 
 	sde_te_active_sleep: sde_te_active-state {
-		pins = "gpio66";
+		pins = "gpio67";
 		function = "mdp_vsync";
 		drive-strength = <2>;
 		bias-pull-down;
