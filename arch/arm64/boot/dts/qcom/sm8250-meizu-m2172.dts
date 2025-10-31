@@ -51,9 +51,9 @@
 			// 	 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
 			// power-domains = <&dispcc MDSS_GDSC>;
 			// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
-			// 		 <&gcc GCC_DISP_HF_AXI_CLK>,
-			// 		 <&dispcc DISP_CC_MDSS_MDP_CLK>,
-			// 		 <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
+			// 	 <&gcc GCC_DISP_HF_AXI_CLK>,
+			// 	 <&gcc GCC_DISP_SF_AXI_CLK>,
+			// 	 <&dispcc DISP_CC_MDSS_MDP_CLK>;
 		};
 	};
 
@@ -108,8 +108,9 @@
 	qca6390-pmu {
 		compatible = "qcom,qca6390-pmu";
 
-		pinctrl-names = "default";
+		pinctrl-names = "default", "sleep";
 		pinctrl-0 = <&bt_en_state>, <&wlan_en_state>;
+		pinctrl-1 = <&bt_en_sleep>, <&wlan_en_sleep>;
 
 		vddaon-supply = <&vreg_s6a_0p95>;
 		vddpmu-supply = <&vreg_s6a_0p95>;
@@ -179,11 +180,11 @@
 			no-map;
 		};
 
-		disp_rdump_region@9c000000 {
-			reg = <0x00 0x9c000000 0x00 0x800000>;
-			label = "disp_rdump_region";
-			no-map;
-		};
+		// disp_rdump_region@9c000000 {
+		// 	reg = <0x00 0x9c000000 0x00 0x800000>;
+		// 	label = "disp_rdump_region";
+		// 	no-map;
+		// };
 
 		ramoops_region {
 			compatible = "ramoops";
@@ -193,6 +194,27 @@
 			record-size = <0x80000>;
 		};	
 	};
+
+	// qca639x: qca639x {
+	// 	compatible = "qcom,qca6390";
+	// 	#power-domain-cells = <0>;
+ 
+	// 	vddaon-supply = <&vreg_s6a_0p95>;
+	// 	vddpmu-supply = <&vreg_s6a_0p95>;
+	// 	vddrfa1-supply = <&vreg_s6a_0p95>;
+	// 	vddrfa2-supply = <&vreg_s8c_1p35>;
+	// 	vddrfa3-supply = <&vreg_s5a_1p9>;
+	// 	vddpcie1-supply = <&vreg_s8c_1p35>;
+	// 	vddpcie2-supply = <&vreg_s5a_1p9>;
+	// 	vddio-supply = <&vreg_s4a_1p8>;
+
+	// 	pinctrl-names = "default", "sleep";
+	// 	pinctrl-0 = <&wlan_en_state>;
+	// 	pinctrl-1 = <&wlan_en_sleep>;
+ 
+	// 	wlan-en-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>;
+	// };
+
 };
 
 &dispcc {
@@ -1059,8 +1081,8 @@
 &pcie0 {
 	// perst-gpios = <&tlmm 79 GPIO_ACTIVE_HIGH>;
 	// wake-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
-	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
-	// vdda-supply = <&vreg_l12a_1p8>;
+	vddpe-3v3-supply = <&vreg_l13a_3p3>;
+	vdda-supply = <&vreg_l12a_1p8>;
 	status = "okay";
 };
 
@@ -1091,6 +1113,19 @@
 		// vdda-supply = <&vreg_l12a_1p8>;
 	};
 };
+
+&pcie2 {
+	vddpe-3v3-supply = <&vreg_l13a_3p3>;
+	vdda-supply = <&vreg_l12a_1p8>;
+	status = "okay";
+};
+
+&pcie2_phy {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+};
+
 
 &pm8150_gpios {
 	vol_up_n: vol-up-n-state {
@@ -1246,7 +1281,7 @@
 
 
 	mm1-dai-link {
-		link-name = "MultiMedia2";
+		link-name = "MultiMedia1";
 
 		cpu {
 			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
@@ -1324,6 +1359,16 @@
 		};
 	};
 
+	bt_en_sleep: bt-sleep-state {
+		pins = "gpio21";
+		function = "gpio";
+
+		drive-strength = <0x02>;
+		output-low;
+		bias-pull-down;
+	};
+
+
 	wlan_en_state: wlan-default-state {
 		wlan-en-pins {
 			pins = "gpio20";
@@ -1332,6 +1377,14 @@
 			output-low;
 			bias-pull-up;
 		};
+	};
+
+	wlan_en_sleep: wlan-sleep-state {
+		pins = "gpio20";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-down;
 	};
 
 	ts_active: ts-active {
@@ -1636,16 +1689,15 @@
 		compatible = "qcom,qca6390-bt";
 		// pinctrl-names = "default";
 		// pinctrl-0 = <&sw_ctrl>;
-		// swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
-		// vddasd-supply = <&vreg_l16a_3p3>;
+		vddasd-supply = <&vreg_l16a_3p3>;
 		vddbtcmx-supply = <&vreg_pmu_btcmx_0p85>;
 		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
 		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
-
-		firmware-name = "htnv20.bin";
 	};
 
 };
