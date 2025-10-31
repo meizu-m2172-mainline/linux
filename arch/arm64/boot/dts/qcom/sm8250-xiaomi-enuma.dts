@@ -31,3 +31,7 @@
 	vdda-pll-supply = <&vreg_l9a_1p2>;
 	status = "okay";
 };
+
+&wifi_0 {
+	qcom,calibration-variant = "Xiaomi_Pad_5Pro_5G";
+};
