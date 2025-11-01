@@ -85,8 +85,8 @@ static ssize_t max_brightness_show(struct device *dev,
 static DEVICE_ATTR_RO(max_brightness);
 
 #ifdef CONFIG_LEDS_TRIGGERS
-static BIN_ATTR(trigger, 0644, led_trigger_read, led_trigger_write, 0);
-static struct bin_attribute *led_trigger_bin_attrs[] = {
+static const BIN_ATTR(trigger, 0644, led_trigger_read, led_trigger_write, 0);
+static const struct bin_attribute *const led_trigger_bin_attrs[] = {
 	&bin_attr_trigger,
 	NULL,
 };
@@ -256,7 +256,7 @@ static const struct class leds_class = {
  * Returns the LED device parsed from the phandle specified in the "leds"
  * property of a device tree node or a negative error-code on failure.
  */
-struct led_classdev *of_led_get(struct device_node *np, int index)
+static struct led_classdev *of_led_get(struct device_node *np, int index)
 {
 	struct device *led_dev;
 	struct device_node *led_node;
@@ -270,7 +270,6 @@ struct led_classdev *of_led_get(struct device_node *np, int index)
 
 	return led_module_get(led_dev);
 }
-EXPORT_SYMBOL_GPL(of_led_get);
 
 /**
  * led_put() - release a LED device

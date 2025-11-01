@@ -174,7 +174,6 @@ static const int xway_internal_delay[] = {0, 500, 1000, 1500, 2000, 2500,
 
 static int xway_gphy_rgmii_init(struct phy_device *phydev)
 {
-	struct device *dev = &phydev->mdio.dev;
 	unsigned int delay_size = ARRAY_SIZE(xway_internal_delay);
 	s32 int_delay;
 	int val = 0;
@@ -207,8 +206,7 @@ static int xway_gphy_rgmii_init(struct phy_device *phydev)
 
 	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
 	    phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID) {
-		int_delay = phy_get_internal_delay(phydev, dev,
-						   xway_internal_delay,
+		int_delay = phy_get_internal_delay(phydev, xway_internal_delay,
 						   delay_size, true);
 
 		/* if rx-internal-delay-ps is missing, use default of 2.0 ns */
@@ -220,8 +218,7 @@ static int xway_gphy_rgmii_init(struct phy_device *phydev)
 
 	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
 	    phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID) {
-		int_delay = phy_get_internal_delay(phydev, dev,
-						   xway_internal_delay,
+		int_delay = phy_get_internal_delay(phydev, xway_internal_delay,
 						   delay_size, false);
 
 		/* if tx-internal-delay-ps is missing, use default of 2.0 ns */
@@ -691,7 +688,7 @@ static struct phy_driver xway_gphy[] = {
 };
 module_phy_driver(xway_gphy);
 
-static struct mdio_device_id __maybe_unused xway_gphy_tbl[] = {
+static const struct mdio_device_id __maybe_unused xway_gphy_tbl[] = {
 	{ PHY_ID_PHY11G_1_3, 0xffffffff },
 	{ PHY_ID_PHY22F_1_3, 0xffffffff },
 	{ PHY_ID_PHY11G_1_4, 0xffffffff },

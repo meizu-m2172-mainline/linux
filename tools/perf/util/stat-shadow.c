@@ -151,6 +151,7 @@ static double find_stat(const struct evsel *evsel, int aggr_idx, enum stat_type 
 {
 	struct evsel *cur;
 	int evsel_ctx = evsel_context(evsel);
+	struct perf_pmu *evsel_pmu = evsel__find_pmu(evsel);
 
 	evlist__for_each_entry(evsel->evlist, cur) {
 		struct perf_stat_aggr *aggr;
@@ -177,7 +178,7 @@ static double find_stat(const struct evsel *evsel, int aggr_idx, enum stat_type 
 		 * Except the SW CLOCK events,
 		 * ignore if not the PMU we're looking for.
 		 */
-		if ((type != STAT_NSECS) && (evsel->pmu != cur->pmu))
+		if ((type != STAT_NSECS) && (evsel_pmu != evsel__find_pmu(cur)))
 			continue;
 
 		aggr = &cur->stats->aggr[aggr_idx];
@@ -327,7 +328,8 @@ static void print_instructions(struct perf_stat_config *config,
 			     "insn per cycle", 0);
 	}
 	if (max_stalled && instructions) {
-		out->new_line(config, ctxp);
+		if (out->new_line)
+			out->new_line(config, ctxp);
 		print_metric(config, ctxp, METRIC_THRESHOLD_UNKNOWN, "%7.2f ",
 			     "stalled cycles per insn", max_stalled / instructions);
 	}
@@ -633,14 +635,14 @@ void *perf_stat__print_shadow_stats_metricgroup(struct perf_stat_config *config,
 						int aggr_idx,
 						int *num,
 						void *from,
-						struct perf_stat_output_ctx *out,
-						struct rblist *metric_events)
+						struct perf_stat_output_ctx *out)
 {
 	struct metric_event *me;
 	struct metric_expr *mexp = from;
 	void *ctxp = out->ctx;
 	bool header_printed = false;
 	const char *name = NULL;
+	struct rblist *metric_events = &evsel->evlist->metric_events;
 
 	me = metricgroup__lookup(metric_events, evsel, false);
 	if (me == NULL)
@@ -670,7 +672,7 @@ void *perf_stat__print_shadow_stats_metricgroup(struct perf_stat_config *config,
 			}
 		}
 
-		if ((*num)++ > 0)
+		if ((*num)++ > 0 && out->new_line)
 			out->new_line(config, ctxp);
 		generic_metric(config, mexp, evsel, aggr_idx, out);
 	}
@@ -681,8 +683,7 @@ void *perf_stat__print_shadow_stats_metricgroup(struct perf_stat_config *config,
 void perf_stat__print_shadow_stats(struct perf_stat_config *config,
 				   struct evsel *evsel,
 				   double avg, int aggr_idx,
-				   struct perf_stat_output_ctx *out,
-				   struct rblist *metric_events)
+				   struct perf_stat_output_ctx *out)
 {
 	typedef void (*stat_print_function_t)(struct perf_stat_config *config,
 					const struct evsel *evsel,
@@ -733,7 +734,7 @@ void perf_stat__print_shadow_stats(struct perf_stat_config *config,
 	}
 
 	perf_stat__print_shadow_stats_metricgroup(config, evsel, aggr_idx,
-						  &num, NULL, out, metric_events);
+						  &num, NULL, out);
 
 	if (num == 0) {
 		print_metric(config, ctxp, METRIC_THRESHOLD_UNKNOWN,
@@ -746,7 +747,6 @@ void perf_stat__print_shadow_stats(struct perf_stat_config *config,
  *				  if it's not running or not the metric event.
  */
 bool perf_stat__skip_metric_event(struct evsel *evsel,
-				  struct rblist *metric_events,
 				  u64 ena, u64 run)
 {
 	if (!evsel->default_metricgroup)
@@ -755,5 +755,5 @@ bool perf_stat__skip_metric_event(struct evsel *evsel,
 	if (!ena || !run)
 		return true;
 
-	return !metricgroup__lookup(metric_events, evsel, false);
+	return !metricgroup__lookup(&evsel->evlist->metric_events, evsel, false);
 }

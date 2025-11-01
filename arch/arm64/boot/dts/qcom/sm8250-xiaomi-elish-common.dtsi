@@ -37,18 +37,12 @@
 		serial0 = &uart6;
 	};
 
-	battery_l: battery-l {
+	battery: battery {
 		compatible = "simple-battery";
 		voltage-min-design-microvolt = <3870000>;
-		energy-full-design-microwatt-hours = <16600000>;
-		charge-full-design-microamp-hours = <4300000>;
-	};
-
-	battery_r: battery-r {
-		compatible = "simple-battery";
-		voltage-min-design-microvolt = <3870000>;
-		energy-full-design-microwatt-hours = <16600000>;
-		charge-full-design-microamp-hours = <4300000>;
+		voltage-max-design-microvolt = <4500000>;
+		energy-full-design-microwatt-hours = <33200000>;
+		charge-full-design-microamp-hours = <8600000>;
 	};
 
 	bl_vddpos_5p5: bl-vddpos-regulator {
@@ -89,28 +83,12 @@
 		};
 	};
 
-	vph_pwr: vph-pwr-regulator {
-		compatible = "regulator-fixed";
-		regulator-name = "vph_pwr";
-		regulator-min-microvolt = <3700000>;
-		regulator-max-microvolt = <3700000>;
-	};
-
-	/* S6c is really ebi.lvl but it's there for supply map completeness sake. */
-	vreg_s6c_0p88: smpc6-regulator {
-		compatible = "regulator-fixed";
-		regulator-name = "vreg_s6c_0p88";
-		regulator-min-microvolt = <880000>;
-		regulator-max-microvolt = <880000>;
-		regulator-always-on;
-		vin-supply = <&vph_pwr>;
-	};
-
 	qca6390-pmu {
 		compatible = "qcom,qca6390-pmu";
 
-		pinctrl-names = "default";
-		pinctrl-0 = <&bt_en_state>, <&wlan_en_state>;
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&bt_en_active>, <&wlan_en_active>;
+		pinctrl-1 = <&bt_en_sleep>, <&wlan_en_sleep>;
 
 		vddaon-supply = <&vreg_s6a_0p95>;
 		vddpmu-supply = <&vreg_s6a_0p95>;
@@ -123,6 +101,7 @@
 
 		wlan-enable-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>;
 		bt-enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
 
 		regulators {
 			vreg_pmu_rfa_cmn: ldo0 {
@@ -165,6 +144,23 @@
 				regulator-name = "vreg_pmu_pcie_1p8";
 			};
 		};
+	};
+
+	vph_pwr: vph-pwr-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+	};
+
+	/* S6c is really ebi.lvl but it's there for supply map completeness sake. */
+	vreg_s6c_0p88: smpc6-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_s6c_0p88";
+		regulator-min-microvolt = <880000>;
+		regulator-max-microvolt = <880000>;
+		regulator-always-on;
+		vin-supply = <&vph_pwr>;
 	};
 
 	reserved-memory {
@@ -551,7 +547,8 @@
 	fuel-gauge@55 {
 		compatible = "ti,bq27z561";
 		reg = <0x55>;
-		monitored-battery = <&battery_r>;
+		monitored-battery = <&battery>;
+		power-supplies = <&bq25970_slave>;
 	};
 };
 
@@ -725,7 +722,8 @@
 	fuel-gauge@55 {
 		compatible = "ti,bq27z561";
 		reg = <0x55>;
-		monitored-battery = <&battery_l>;
+		monitored-battery = <&battery>;
+		power-supplies = <&bq25970_master>;
 	};
 };
 
@@ -733,7 +731,7 @@
 	clock-frequency = <400000>;
 	status = "ok";
 
-	bq25970-master@65 {
+	bq25970_master: bq25970-master@65 {
 		compatible = "ti,bq2597x-master";
 		reg = <0x65>;
 		interrupt-parent = <&tlmm>;
@@ -771,7 +769,7 @@
 		sc8551,ac-ovp-threshold = <14>;
 	};
 
-	bq25970-slave@66 {
+	bq25970_slave: bq25970-slave@66 {
 		compatible = "ti,bq2597x-slave";
 		reg = <0x66>;
 		/*
@@ -880,7 +878,8 @@
 	qcom,dual-dsi-mode;
 	qcom,sync-dual-dsi;
 	/* DSI1 is slave, so use DSI0 clocks */
-	assigned-clock-parents = <&mdss_dsi0_phy 0>, <&mdss_dsi0_phy 1>;
+	assigned-clock-parents = <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
+				 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>;
 	status = "okay";
 };
 
@@ -920,8 +919,13 @@
 		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
 		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
 
-		qcom,ath11k-calibration-variant = "Xiaomi_Pad_5Pro";
+		qcom,calibration-variant = "Xiaomi_Pad_5Pro";
 	};
+};
+
+&pm8150b_charger {
+	monitored-battery = <&battery>;
+	status = "okay";
 };
 
 &pm8150_gpios {
@@ -942,6 +946,7 @@
 		compatible = "usb-c-connector";
 
 		op-sink-microwatt = <10000000>;
+		try-power-role = "sink";
 		power-role = "dual";
 		data-role = "dual";
 		self-powered;
@@ -955,7 +960,7 @@
 				       PDO_FIXED_DUAL_ROLE |
 				       PDO_FIXED_USB_COMM |
 				       PDO_FIXED_DATA_SWAP)
-				       PDO_VAR(5000, 12000, 5000)>;
+				       PDO_VAR(5000, 9000, 3000)>;
 
 		ports {
 			#address-cells = <1>;
@@ -976,6 +981,11 @@
 	regulator-min-microamp = <500000>;
 	regulator-max-microamp = <3000000>;
 	status = "okay";
+};
+
+&pon {
+	mode-bootloader = <0x2>;
+	mode-recovery = <0x1>;
 };
 
 &pm8150l_flash {
@@ -1104,7 +1114,7 @@
 &tlmm {
 	gpio-reserved-ranges = <40 4>;
 
-	bt_en_state: bt-default-state {
+	bt_en_active: bt-default-state {
 		pins = "gpio21";
 		function = "gpio";
 		drive-strength = <16>;
@@ -1112,12 +1122,28 @@
 		bias-pull-up;
 	};
 
-	wlan_en_state: wlan-default-state {
+	bt_en_sleep: bt-sleep-state {
+		pins = "gpio21";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
+	};
+
+	wlan_en_active: wlan-default-state {
 		pins = "gpio20";
 		function = "gpio";
 		drive-strength = <16>;
-		output-low;
+		output-high;
 		bias-pull-up;
+	};
+
+	wlan_en_sleep: wlan-sleep-state {
+		pins = "gpio20";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
 	};
 
 	tert_tdm_active: tert-tdm-active-state {
@@ -1174,6 +1200,9 @@
 
 	bluetooth {
 		compatible = "qcom,qca6390-bt";
+
+		enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
 
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;

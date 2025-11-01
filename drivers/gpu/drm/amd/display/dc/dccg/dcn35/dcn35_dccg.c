@@ -133,30 +133,34 @@ enum dsc_clk_source {
 };
 
 
-static void dccg35_set_dsc_clk_rcg(struct dccg *dccg, int inst, bool enable)
+static void dccg35_set_dsc_clk_rcg(struct dccg *dccg, int inst, bool allow_rcg)
 {
 	struct dcn_dccg *dccg_dcn = TO_DCN_DCCG(dccg);
 
-	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dsc && enable)
+	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dsc && allow_rcg)
 		return;
 
 	switch (inst) {
 	case 0:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK0_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK0_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	case 1:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK1_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK1_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	case 2:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK2_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK2_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	case 3:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK3_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK3_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	default:
 		BREAK_TO_DEBUGGER();
 		return;
 	}
+
+	/* Wait for clock to ramp */
+	if (!allow_rcg)
+		udelay(10);
 }
 
 static void dccg35_set_symclk32_se_rcg(
@@ -385,32 +389,34 @@ static void dccg35_set_dtbclk_p_rcg(struct dccg *dccg, int inst, bool enable)
 	}
 }
 
-static void dccg35_set_dppclk_rcg(struct dccg *dccg,
-												int inst, bool enable)
+static void dccg35_set_dppclk_rcg(struct dccg *dccg, int inst, bool allow_rcg)
 {
-
 	struct dcn_dccg *dccg_dcn = TO_DCN_DCCG(dccg);
 
-	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dpp && enable)
+	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dpp && allow_rcg)
 		return;
 
 	switch (inst) {
 	case 0:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK0_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK0_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	case 1:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK1_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK1_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	case 2:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK2_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK2_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	case 3:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK3_ROOT_GATE_DISABLE, enable ? 0 : 1);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK3_ROOT_GATE_DISABLE, allow_rcg ? 0 : 1);
 		break;
 	default:
 	BREAK_TO_DEBUGGER();
 		break;
 	}
+
+	/* Wait for clock to ramp */
+	if (!allow_rcg)
+		udelay(10);
 }
 
 static void dccg35_set_dpstreamclk_rcg(
@@ -1035,6 +1041,7 @@ static void dccg35_enable_dpp_clk_new(
 			  DPPCLK0_DTO_MODULO, 0xFF);
 }
 
+
 static void dccg35_disable_dpp_clk_new(
 	struct dccg *dccg,
 	int inst)
@@ -1112,30 +1119,24 @@ static void dcn35_set_dppclk_enable(struct dccg *dccg,
 {
 	struct dcn_dccg *dccg_dcn = TO_DCN_DCCG(dccg);
 
+
 	switch (dpp_inst) {
 	case 0:
 		REG_UPDATE(DPPCLK_CTRL, DPPCLK0_EN, enable);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dpp)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK0_ROOT_GATE_DISABLE, enable);
 		break;
 	case 1:
 		REG_UPDATE(DPPCLK_CTRL, DPPCLK1_EN, enable);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dpp)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK1_ROOT_GATE_DISABLE, enable);
 		break;
 	case 2:
 		REG_UPDATE(DPPCLK_CTRL, DPPCLK2_EN, enable);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dpp)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK2_ROOT_GATE_DISABLE, enable);
 		break;
 	case 3:
 		REG_UPDATE(DPPCLK_CTRL, DPPCLK3_EN, enable);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dpp)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK3_ROOT_GATE_DISABLE, enable);
 		break;
 	default:
 		break;
 	}
+	//DC_LOG_DEBUG("%s: dpp_inst(%d) DPPCLK_EN = %d\n", __func__, dpp_inst, enable);
 
 }
 
@@ -1163,41 +1164,50 @@ static void dccg35_update_dpp_dto(struct dccg *dccg, int dpp_inst,
 			ASSERT(false);
 			phase = 0xff;
 		}
+		dccg35_set_dppclk_rcg(dccg, dpp_inst, false);
 
 		REG_SET_2(DPPCLK_DTO_PARAM[dpp_inst], 0,
 				DPPCLK0_DTO_PHASE, phase,
 				DPPCLK0_DTO_MODULO, modulo);
 
 		dcn35_set_dppclk_enable(dccg, dpp_inst, true);
-	} else
+	} else {
 		dcn35_set_dppclk_enable(dccg, dpp_inst, false);
+		/*we have this in hwss: disable_plane*/
+		//dccg35_set_dppclk_rcg(dccg, dpp_inst, true);
+	}
 	dccg->pipe_dppclk_khz[dpp_inst] = req_dppclk;
 }
 
 static void dccg35_set_dppclk_root_clock_gating(struct dccg *dccg,
-		 uint32_t dpp_inst, uint32_t enable)
+		 uint32_t dpp_inst, uint32_t disallow_rcg)
 {
 	struct dcn_dccg *dccg_dcn = TO_DCN_DCCG(dccg);
 
-	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dpp)
+	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dpp && !disallow_rcg)
 		return;
+
 
 	switch (dpp_inst) {
 	case 0:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK0_ROOT_GATE_DISABLE, enable);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK0_ROOT_GATE_DISABLE, disallow_rcg);
 		break;
 	case 1:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK1_ROOT_GATE_DISABLE, enable);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK1_ROOT_GATE_DISABLE, disallow_rcg);
 		break;
 	case 2:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK2_ROOT_GATE_DISABLE, enable);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK2_ROOT_GATE_DISABLE, disallow_rcg);
 		break;
 	case 3:
-		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK3_ROOT_GATE_DISABLE, enable);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DPPCLK3_ROOT_GATE_DISABLE, disallow_rcg);
 		break;
 	default:
 		break;
 	}
+
+	/* Wait for clock to ramp */
+	if (disallow_rcg)
+		udelay(10);
 }
 
 static void dccg35_get_pixel_rate_div(
@@ -1521,28 +1531,30 @@ static void dccg35_set_physymclk_root_clock_gating(
 	switch (phy_inst) {
 	case 0:
 		REG_UPDATE(DCCG_GATE_DISABLE_CNTL2,
-				PHYASYMCLK_ROOT_GATE_DISABLE, enable ? 1 : 0);
+				PHYASYMCLK_ROOT_GATE_DISABLE, enable ? 0 : 1);
 		break;
 	case 1:
 		REG_UPDATE(DCCG_GATE_DISABLE_CNTL2,
-				PHYBSYMCLK_ROOT_GATE_DISABLE, enable ? 1 : 0);
+				PHYBSYMCLK_ROOT_GATE_DISABLE, enable ? 0 : 1);
 		break;
 	case 2:
 		REG_UPDATE(DCCG_GATE_DISABLE_CNTL2,
-				PHYCSYMCLK_ROOT_GATE_DISABLE, enable ? 1 : 0);
+				PHYCSYMCLK_ROOT_GATE_DISABLE, enable ? 0 : 1);
 		break;
 	case 3:
 		REG_UPDATE(DCCG_GATE_DISABLE_CNTL2,
-				PHYDSYMCLK_ROOT_GATE_DISABLE, enable ? 1 : 0);
+				PHYDSYMCLK_ROOT_GATE_DISABLE, enable ? 0 : 1);
 		break;
 	case 4:
 		REG_UPDATE(DCCG_GATE_DISABLE_CNTL2,
-				PHYESYMCLK_ROOT_GATE_DISABLE, enable ? 1 : 0);
+				PHYESYMCLK_ROOT_GATE_DISABLE, enable ? 0 : 1);
 		break;
 	default:
 		BREAK_TO_DEBUGGER();
 		return;
 	}
+	//DC_LOG_DEBUG("%s: dpp_inst(%d) PHYESYMCLK_ROOT_GATE_DISABLE:\n", __func__, phy_inst, enable ? 0 : 1);
+
 }
 
 static void dccg35_set_physymclk(
@@ -1643,6 +1655,8 @@ static void dccg35_dpp_root_clock_control(
 		return;
 
 	if (clock_on) {
+		dccg35_set_dppclk_rcg(dccg, dpp_inst, false);
+
 		/* turn off the DTO and leave phase/modulo at max */
 		dcn35_set_dppclk_enable(dccg, dpp_inst, 1);
 		REG_SET_2(DPPCLK_DTO_PARAM[dpp_inst], 0,
@@ -1654,6 +1668,8 @@ static void dccg35_dpp_root_clock_control(
 		REG_SET_2(DPPCLK_DTO_PARAM[dpp_inst], 0,
 			  DPPCLK0_DTO_PHASE, 0,
 			  DPPCLK0_DTO_MODULO, 1);
+		/*we have this in hwss: disable_plane*/
+		//dccg35_set_dppclk_rcg(dccg, dpp_inst, true);
 	}
 
 	dccg->dpp_clock_gated[dpp_inst] = !clock_on;
@@ -1771,50 +1787,50 @@ static void dccg35_enable_dscclk(struct dccg *dccg, int inst)
 	//Disable DTO
 	switch (inst) {
 	case 0:
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK0_ROOT_GATE_DISABLE, 1);
+
 		REG_UPDATE_2(DSCCLK0_DTO_PARAM,
 				DSCCLK0_DTO_PHASE, 0,
 				DSCCLK0_DTO_MODULO, 0);
 		REG_UPDATE(DSCCLK_DTO_CTRL,	DSCCLK0_EN, 1);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dsc)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK0_ROOT_GATE_DISABLE, 1);
 		break;
 	case 1:
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK1_ROOT_GATE_DISABLE, 1);
+
 		REG_UPDATE_2(DSCCLK1_DTO_PARAM,
 				DSCCLK1_DTO_PHASE, 0,
 				DSCCLK1_DTO_MODULO, 0);
 		REG_UPDATE(DSCCLK_DTO_CTRL, DSCCLK1_EN, 1);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dsc)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK1_ROOT_GATE_DISABLE, 1);
 		break;
 	case 2:
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK2_ROOT_GATE_DISABLE, 1);
+
 		REG_UPDATE_2(DSCCLK2_DTO_PARAM,
 				DSCCLK2_DTO_PHASE, 0,
 				DSCCLK2_DTO_MODULO, 0);
 		REG_UPDATE(DSCCLK_DTO_CTRL, DSCCLK2_EN, 1);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dsc)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK2_ROOT_GATE_DISABLE, 1);
 		break;
 	case 3:
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK3_ROOT_GATE_DISABLE, 1);
+
 		REG_UPDATE_2(DSCCLK3_DTO_PARAM,
 				DSCCLK3_DTO_PHASE, 0,
 				DSCCLK3_DTO_MODULO, 0);
 		REG_UPDATE(DSCCLK_DTO_CTRL, DSCCLK3_EN, 1);
-		if (dccg->ctx->dc->debug.root_clock_optimization.bits.dsc)
-			REG_UPDATE(DCCG_GATE_DISABLE_CNTL6, DSCCLK3_ROOT_GATE_DISABLE, 1);
 		break;
 	default:
 		BREAK_TO_DEBUGGER();
 		return;
 	}
+
+	/* Wait for clock to ramp */
+	udelay(10);
 }
 
 static void dccg35_disable_dscclk(struct dccg *dccg,
 				int inst)
 {
 	struct dcn_dccg *dccg_dcn = TO_DCN_DCCG(dccg);
-
-	if (!dccg->ctx->dc->debug.root_clock_optimization.bits.dsc)
-		return;
 
 	switch (inst) {
 	case 0:
@@ -1852,6 +1868,9 @@ static void dccg35_disable_dscclk(struct dccg *dccg,
 	default:
 		return;
 	}
+
+	/* Wait for clock ramp */
+	udelay(10);
 }
 
 static void dccg35_enable_symclk_se(struct dccg *dccg, uint32_t stream_enc_inst, uint32_t link_enc_inst)
@@ -2337,10 +2356,7 @@ static void dccg35_disable_symclk_se_cb(
 
 void dccg35_root_gate_disable_control(struct dccg *dccg, uint32_t pipe_idx, uint32_t disable_clock_gating)
 {
-
-	if (dccg->ctx->dc->debug.root_clock_optimization.bits.dpp) {
-		dccg35_set_dppclk_root_clock_gating(dccg, pipe_idx, disable_clock_gating);
-	}
+	dccg35_set_dppclk_root_clock_gating(dccg, pipe_idx, disable_clock_gating);
 }
 
 static const struct dccg_funcs dccg35_funcs_new = {

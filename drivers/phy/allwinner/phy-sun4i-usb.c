@@ -23,7 +23,6 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-sun4i-usb.h>
 #include <linux/platform_device.h>
@@ -755,7 +754,7 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
 	}
 
 	if (of_property_present(np, "usb0_vbus_power-supply")) {
-		data->vbus_power_supply = devm_power_supply_get_by_phandle(dev,
+		data->vbus_power_supply = devm_power_supply_get_by_reference(dev,
 						     "usb0_vbus_power-supply");
 		if (IS_ERR(data->vbus_power_supply)) {
 			dev_err(dev, "Couldn't get the VBUS power supply\n");

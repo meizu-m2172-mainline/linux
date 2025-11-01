@@ -97,6 +97,8 @@
 /* page number for queue file region */
 #define QM_DOORBELL_PAGE_NR		1
 
+#define QM_DEV_ALG_MAX_LEN		256
+
 /* uacce mode of the driver */
 #define UACCE_MODE_NOUACCE		0 /* don't use uacce */
 #define UACCE_MODE_SVA			1 /* use uacce sva mode */
@@ -122,6 +124,7 @@ enum qm_hw_ver {
 	QM_HW_V1 = 0x20,
 	QM_HW_V2 = 0x21,
 	QM_HW_V3 = 0x30,
+	QM_HW_V4 = 0x50,
 };
 
 enum qm_fun_type {
@@ -156,6 +159,7 @@ enum qm_cap_bits {
 	QM_SUPPORT_MB_COMMAND,
 	QM_SUPPORT_SVA_PREFETCH,
 	QM_SUPPORT_RPM,
+	QM_SUPPORT_DAE,
 };
 
 struct qm_dev_alg {
@@ -266,6 +270,8 @@ struct hisi_qm_err_ini {
 	void (*show_last_dfx_regs)(struct hisi_qm *qm);
 	void (*err_info_init)(struct hisi_qm *qm);
 	enum acc_err_result (*get_err_result)(struct hisi_qm *qm);
+	bool (*dev_is_abnormal)(struct hisi_qm *qm);
+	int (*set_priv_status)(struct hisi_qm *qm);
 };
 
 struct hisi_qm_cap_info {
@@ -391,6 +397,8 @@ struct hisi_qm {
 	struct hisi_qm_poll_data *poll_data;
 
 	struct mutex mailbox_lock;
+
+	struct mutex ifc_lock;
 
 	const struct hisi_qm_hw_ops *ops;
 
@@ -548,9 +556,9 @@ int hisi_qm_mb(struct hisi_qm *qm, u8 cmd, dma_addr_t dma_addr, u16 queue,
 struct hisi_acc_sgl_pool;
 struct hisi_acc_hw_sgl *hisi_acc_sg_buf_map_to_hw_sgl(struct device *dev,
 	struct scatterlist *sgl, struct hisi_acc_sgl_pool *pool,
-	u32 index, dma_addr_t *hw_sgl_dma);
+	u32 index, dma_addr_t *hw_sgl_dma, enum dma_data_direction dir);
 void hisi_acc_sg_buf_unmap(struct device *dev, struct scatterlist *sgl,
-			   struct hisi_acc_hw_sgl *hw_sgl);
+			   struct hisi_acc_hw_sgl *hw_sgl, enum dma_data_direction dir);
 struct hisi_acc_sgl_pool *hisi_acc_create_sgl_pool(struct device *dev,
 						   u32 count, u32 sge_nr);
 void hisi_acc_free_sgl_pool(struct device *dev,

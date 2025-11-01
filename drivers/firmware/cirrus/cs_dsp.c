@@ -311,6 +311,11 @@ static const struct cs_dsp_ops cs_dsp_adsp2_ops[];
 static const struct cs_dsp_ops cs_dsp_halo_ops;
 static const struct cs_dsp_ops cs_dsp_halo_ao_ops;
 
+struct cs_dsp_alg_region_list_item {
+	struct list_head list;
+	struct cs_dsp_alg_region alg_region;
+};
+
 struct cs_dsp_buf {
 	struct list_head list;
 	void *buf;
@@ -1609,8 +1614,8 @@ static int cs_dsp_load(struct cs_dsp *dsp, const struct firmware *firmware,
 				goto out_fw;
 			}
 
-			ret = regmap_raw_write_async(regmap, reg, buf->buf,
-						     le32_to_cpu(region->len));
+			ret = regmap_raw_write(regmap, reg, buf->buf,
+					       le32_to_cpu(region->len));
 			if (ret != 0) {
 				cs_dsp_err(dsp,
 					   "%s.%d: Failed to write %d bytes at %d in %s: %d\n",
@@ -1625,20 +1630,14 @@ static int cs_dsp_load(struct cs_dsp *dsp, const struct firmware *firmware,
 		regions++;
 	}
 
-	ret = regmap_async_complete(regmap);
-	if (ret != 0) {
-		cs_dsp_err(dsp, "Failed to complete async write: %d\n", ret);
-		goto out_fw;
-	}
-
 	if (pos > firmware->size)
 		cs_dsp_warn(dsp, "%s.%d: %zu bytes at end of file\n",
 			    file, regions, pos - firmware->size);
 
 	cs_dsp_debugfs_save_wmfwname(dsp, file);
 
+	ret = 0;
 out_fw:
-	regmap_async_complete(regmap);
 	cs_dsp_buf_free(&buf_list);
 
 	if (ret == -EOVERFLOW)
@@ -1758,13 +1757,13 @@ static void *cs_dsp_read_algs(struct cs_dsp *dsp, size_t n_algs,
 struct cs_dsp_alg_region *cs_dsp_find_alg_region(struct cs_dsp *dsp,
 						 int type, unsigned int id)
 {
-	struct cs_dsp_alg_region *alg_region;
+	struct cs_dsp_alg_region_list_item *item;
 
 	lockdep_assert_held(&dsp->pwr_lock);
 
-	list_for_each_entry(alg_region, &dsp->alg_regions, list) {
-		if (id == alg_region->alg && type == alg_region->type)
-			return alg_region;
+	list_for_each_entry(item, &dsp->alg_regions, list) {
+		if (id == item->alg_region.alg && type == item->alg_region.type)
+			return &item->alg_region;
 	}
 
 	return NULL;
@@ -1775,35 +1774,35 @@ static struct cs_dsp_alg_region *cs_dsp_create_region(struct cs_dsp *dsp,
 						      int type, __be32 id,
 						      __be32 ver, __be32 base)
 {
-	struct cs_dsp_alg_region *alg_region;
+	struct cs_dsp_alg_region_list_item *item;
 
-	alg_region = kzalloc(sizeof(*alg_region), GFP_KERNEL);
-	if (!alg_region)
+	item = kzalloc(sizeof(*item), GFP_KERNEL);
+	if (!item)
 		return ERR_PTR(-ENOMEM);
 
-	alg_region->type = type;
-	alg_region->alg = be32_to_cpu(id);
-	alg_region->ver = be32_to_cpu(ver);
-	alg_region->base = be32_to_cpu(base);
+	item->alg_region.type = type;
+	item->alg_region.alg = be32_to_cpu(id);
+	item->alg_region.ver = be32_to_cpu(ver);
+	item->alg_region.base = be32_to_cpu(base);
 
-	list_add_tail(&alg_region->list, &dsp->alg_regions);
+	list_add_tail(&item->list, &dsp->alg_regions);
 
 	if (dsp->wmfw_ver > 0)
-		cs_dsp_ctl_fixup_base(dsp, alg_region);
+		cs_dsp_ctl_fixup_base(dsp, &item->alg_region);
 
-	return alg_region;
+	return &item->alg_region;
 }
 
 static void cs_dsp_free_alg_regions(struct cs_dsp *dsp)
 {
-	struct cs_dsp_alg_region *alg_region;
+	struct cs_dsp_alg_region_list_item *item;
 
 	while (!list_empty(&dsp->alg_regions)) {
-		alg_region = list_first_entry(&dsp->alg_regions,
-					      struct cs_dsp_alg_region,
-					      list);
-		list_del(&alg_region->list);
-		kfree(alg_region);
+		item = list_first_entry(&dsp->alg_regions,
+					struct cs_dsp_alg_region_list_item,
+					list);
+		list_del(&item->list);
+		kfree(item);
 	}
 }
 
@@ -2326,8 +2325,8 @@ static int cs_dsp_load_coeff(struct cs_dsp *dsp, const struct firmware *firmware
 			cs_dsp_dbg(dsp, "%s.%d: Writing %d bytes at %x\n",
 				   file, blocks, le32_to_cpu(blk->len),
 				   reg);
-			ret = regmap_raw_write_async(regmap, reg, buf->buf,
-						     le32_to_cpu(blk->len));
+			ret = regmap_raw_write(regmap, reg, buf->buf,
+					       le32_to_cpu(blk->len));
 			if (ret != 0) {
 				cs_dsp_err(dsp,
 					   "%s.%d: Failed to write to %x in %s: %d\n",
@@ -2339,18 +2338,14 @@ static int cs_dsp_load_coeff(struct cs_dsp *dsp, const struct firmware *firmware
 		blocks++;
 	}
 
-	ret = regmap_async_complete(regmap);
-	if (ret != 0)
-		cs_dsp_err(dsp, "Failed to complete async write: %d\n", ret);
-
 	if (pos > firmware->size)
 		cs_dsp_warn(dsp, "%s.%d: %zu bytes at end of file\n",
 			    file, blocks, pos - firmware->size);
 
 	cs_dsp_debugfs_save_binname(dsp, file);
 
+	ret = 0;
 out_fw:
-	regmap_async_complete(regmap);
 	cs_dsp_buf_free(&buf_list);
 
 	if (ret == -EOVERFLOW)
@@ -2561,8 +2556,8 @@ static int cs_dsp_adsp2_enable_core(struct cs_dsp *dsp)
 {
 	int ret;
 
-	ret = regmap_update_bits_async(dsp->regmap, dsp->base + ADSP2_CONTROL,
-				       ADSP2_SYS_ENA, ADSP2_SYS_ENA);
+	ret = regmap_update_bits(dsp->regmap, dsp->base + ADSP2_CONTROL,
+				 ADSP2_SYS_ENA, ADSP2_SYS_ENA);
 	if (ret != 0)
 		return ret;
 

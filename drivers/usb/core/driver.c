@@ -119,11 +119,11 @@ ssize_t usb_show_dynids(struct usb_dynids *dynids, char *buf)
 	guard(mutex)(&usb_dynids_lock);
 	list_for_each_entry(dynid, &dynids->list, node)
 		if (dynid->id.bInterfaceClass != 0)
-			count += scnprintf(&buf[count], PAGE_SIZE - count, "%04x %04x %02x\n",
+			count += sysfs_emit_at(buf, count, "%04x %04x %02x\n",
 					   dynid->id.idVendor, dynid->id.idProduct,
 					   dynid->id.bInterfaceClass);
 		else
-			count += scnprintf(&buf[count], PAGE_SIZE - count, "%04x %04x\n",
+			count += sysfs_emit_at(buf, count, "%04x %04x\n",
 					   dynid->id.idVendor, dynid->id.idProduct);
 	return count;
 }
@@ -1086,15 +1086,14 @@ int usb_register_driver(struct usb_driver *new_driver, struct module *owner,
 	pr_info("%s: registered new interface driver %s\n",
 			usbcore_name, new_driver->name);
 
-out:
-	return retval;
+	return 0;
 
 out_newid:
 	driver_unregister(&new_driver->driver);
-
+out:
 	pr_err("%s: error %d registering interface driver %s\n",
 		usbcore_name, retval, new_driver->name);
-	goto out;
+	return retval;
 }
 EXPORT_SYMBOL_GPL(usb_register_driver);
 
