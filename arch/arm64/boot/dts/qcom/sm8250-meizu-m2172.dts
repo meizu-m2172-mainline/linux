@@ -12,6 +12,7 @@
 #include "pm8150.dtsi"
 #include "pm8150b.dtsi"
 #include "pm8150l.dtsi"
+#include "pm8009.dtsi"
 
 // /delete-node/ &removed_mem;
 
@@ -99,11 +100,11 @@
 		vin-supply = <&vph_pwr>;
 	};
 
-	refgen_regulator: refgen-regulator@88e7000 {
-		compatible = "qcom,sm8250-refgen-regulator";
-		regulator-name = "refgen";
-		reg = <0 0x88e7000 0 0x84>;
-	};
+	// refgen_regulator: refgen-regulator@88e7000 {
+	// 	compatible = "qcom,sm8250-refgen-regulator";
+	// 	regulator-name = "refgen";
+	// 	reg = <0 0x88e7000 0 0x84>;
+	// };
 
 	qca6390-pmu {
 		compatible = "qcom,qca6390-pmu";
@@ -482,6 +483,63 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 	};
+
+	regulators-2 {
+		compatible = "qcom,pm8009-rpmh-regulators";
+		qcom,pmic-id = "f";
+
+		vdd-s1-supply = <&vph_pwr>;
+		vdd-s2-supply = <&vreg_bob>;
+		vdd-l2-supply = <&vreg_s8c_1p35>;
+		vdd-l5-l6-supply = <&vreg_bob>;
+		vdd-l7-supply = <&vreg_s4a_1p8>;
+
+		vreg_s1f_1p2: smps1 {
+			regulator-name = "vreg_s1f_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s2f_0p5: smps2 {
+			regulator-name = "vreg_s2f_0p5";
+			regulator-min-microvolt = <512000>;
+			regulator-max-microvolt = <1100000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L1 is unused. */
+
+		vreg_l2f_1p3: ldo2 {
+			regulator-name = "vreg_l2f_1p3";
+			regulator-min-microvolt = <1304000>;
+			regulator-max-microvolt = <1304000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L3 & L4 are unused. */
+
+		vreg_l5f_2p8: ldo5 {
+			regulator-name = "vreg_l5f_2p85";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6f_2p8: ldo6 {
+			regulator-name = "vreg_l6f_2p8";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7f_1p8: ldo7 {
+			regulator-name = "vreg_l7f_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
 };
 
 &cdsp {
@@ -739,7 +797,7 @@
 
 &mdss_dsi0 {
 	vdda-supply = <&vreg_l9a_1p2>;
-	refgen-supply = <&refgen_regulator>;
+	// refgen-supply = <&refgen_regulator>;
 	status = "okay";
 
 	panel: panel@0 {
@@ -776,8 +834,7 @@
 
 &i2c1 {
 	status = "okay";
-	//clock-frequency = <400000>;
-	//clock-frequency = <1000000>;
+	clock-frequency = <1000000>;
 
 	nfc@28 {
 		compatible = "nxp,pn553",
@@ -879,6 +936,7 @@
 
 &i2c4 {
 	status = "okay";
+	clock-frequency = <400000>;
 
 	aw882xx_r: speaker-amp@34 {
 		status = "okay";
@@ -914,7 +972,7 @@
 };
 
 &i2c15 {
-	//clock-frequency = <100000>;
+	clock-frequency = <400000>;
 	status = "okay";
 
 	typec-mux@43 {
@@ -1054,6 +1112,7 @@
 	qcom,i2c-touch-active = "focaltech,fts_ts";
 	clock-names = "se", "m-ahb", "s-ahb";
 	clocks = <&gcc GCC_QUPV3_WRAP1_S5_CLK &gcc GCC_QUPV3_WRAP_1_S_AHB_CLK &gcc GCC_QUPV3_WRAP_2_M_AHB_CLK>;
+	clock-frequency = <400000>;
 
 	touchscreen@38 {
 		compatible = "focaltech,fts_ts";
@@ -1098,7 +1157,6 @@
 	wifi@0 {
 		compatible = "pci17cb,1101";
 		reg = <0x10000 0x0 0x0 0x0 0x0>;
-		status = "okay";
 
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
@@ -1238,22 +1296,22 @@
 };
 
 &q6afedai {
-	dai@56 {
+	dai@20 {
 		// reg = <TERTIARY_TDM_RX_0>;
-		qcom,tdm-sync-mode = <0>;
-		qcom,tdm-sync-src = <1>;
-		qcom,tdm-data-out = <0>;
-		qcom,tdm-invert-sync = <1>;
-		qcom,tdm-data-delay = <1>;
-		qcom,tdm-data-align = <0>;
-		reg = <TERTIARY_TDM_RX_0>;
+		// qcom,tdm-sync-mode = <0>;
+		// qcom,tdm-sync-src = <1>;
+		// qcom,tdm-data-out = <0>;
+		// qcom,tdm-invert-sync = <1>;
+		// qcom,tdm-data-delay = <1>;
+		// qcom,tdm-data-align = <0>;
+		reg = <TERTIARY_MI2S_RX>;
 		// qcom,tdm-sync-mode = <1>;     /* Sync mode: 1=secondary (for AW88261) */
 		// qcom,tdm-sync-src = <1>;      /* Sync source: 1=internal */
 		// qcom,tdm-data-out = <0>;      /* Data out: 0=enabled */
 		// qcom,tdm-invert-sync = <0>;   /* Don't invert sync for AW88261 */
 		// qcom,tdm-data-delay = <1>;    /* 1-bit data delay for proper alignment */
 		// qcom,tdm-data-align = <0>;    /* No special alignment needed */
-		// qcom,sd-lines = <0 1>;
+		qcom,sd-lines = <0 1>;
 	};
 };
 
@@ -1290,10 +1348,10 @@
 
 	speaker-dai-link {
 		link-name = "Tertiary TDM Playback";
-		no-pcm;
+		// no-pcm;
 
 		cpu {
-			sound-dai = <&q6afedai TERTIARY_TDM_RX_0>;
+			sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
 		};
 
 		platform {
@@ -1302,7 +1360,6 @@
 
 		codec {
 			sound-dai = <&aw882xx_r 0>, <&aw882xx_l 0>;
-			// sound-dai = <&aw882xx_r 0>;
 		};
 	};
 };
@@ -1374,7 +1431,7 @@
 			pins = "gpio20";
 			function = "gpio";
 			drive-strength = <16>;
-			output-low;
+			output-high;
 			bias-pull-up;
 		};
 	};
