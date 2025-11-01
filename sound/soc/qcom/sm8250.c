@@ -110,57 +110,6 @@ end:
 	return ret;
 }
 
-static int sm8250_tdm_snd_hw_params(struct snd_pcm_substream *substream,
-					struct snd_pcm_hw_params *params)
-{
-	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
-	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
-
-	int ret = 0;
-	int channels, slots, slot_width;
-
-	channels = params_channels(params);
-	slots = 8;
-	slot_width = 32;
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-	  ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, 0x03,
-	                  slots, slot_width);
-	  if (ret < 0) {
-	          dev_err(rtd->dev, "%s: failed to set tdm slot, err:%d\n",
-	                          __func__, ret);
-	          goto end;
-	  }
-
-	  ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
-	                  channels, tdm_slot_offset);
-	  if (ret < 0) {
-	          dev_err(rtd->dev, "%s: failed to set channel map, err:%d\n",
-	                          __func__, ret);
-	          goto end;
-	  }
-	} else {
-	   ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0xf, 0,
-	                    slots, slot_width);
-	   if (ret < 0) {
-	      dev_err(rtd->dev, "%s: failed to set tdm slot, err:%d\n",
-	              __func__, ret);
-	      goto end;
-	    }
-
-	   ret = snd_soc_dai_set_channel_map(cpu_dai, channels,
-	                    tdm_slot_offset, 0, NULL);
-	   if (ret < 0) {
-	      dev_err(rtd->dev, "%s: failed to set channel map, err:%d\n",
-	              __func__, ret);
-	      goto end;
-	   }
-	}
-
-end:
-	return ret;
-}
-
 static int sm8250_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 				     struct snd_pcm_hw_params *params)
 {
