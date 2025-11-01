@@ -12,6 +12,7 @@
 #include "pm8150.dtsi"
 #include "pm8150b.dtsi"
 #include "pm8150l.dtsi"
+#include "pm8009.dtsi"
 
 // /delete-node/ &removed_mem;
 
@@ -49,7 +50,11 @@
 			// 	 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
 			// 	 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
 			// 	 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
-			//power-domains = <&dispcc MDSS_GDSC>;
+			// power-domains = <&dispcc MDSS_GDSC>;
+			// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+			// 	 <&gcc GCC_DISP_HF_AXI_CLK>,
+			// 	 <&gcc GCC_DISP_SF_AXI_CLK>,
+			// 	 <&dispcc DISP_CC_MDSS_MDP_CLK>;
 		};
 	};
 
@@ -104,8 +109,9 @@
 	qca6390-pmu {
 		compatible = "qcom,qca6390-pmu";
 
-		pinctrl-names = "default";
+		pinctrl-names = "default", "sleep";
 		pinctrl-0 = <&bt_en_state>, <&wlan_en_state>;
+		pinctrl-1 = <&bt_en_sleep>, <&wlan_en_sleep>;
 
 		vddaon-supply = <&vreg_s6a_0p95>;
 		vddpmu-supply = <&vreg_s6a_0p95>;
@@ -189,6 +195,27 @@
 			record-size = <0x80000>;
 		};	
 	};
+
+	// qca639x: qca639x {
+	// 	compatible = "qcom,qca6390";
+	// 	#power-domain-cells = <0>;
+ 
+	// 	vddaon-supply = <&vreg_s6a_0p95>;
+	// 	vddpmu-supply = <&vreg_s6a_0p95>;
+	// 	vddrfa1-supply = <&vreg_s6a_0p95>;
+	// 	vddrfa2-supply = <&vreg_s8c_1p35>;
+	// 	vddrfa3-supply = <&vreg_s5a_1p9>;
+	// 	vddpcie1-supply = <&vreg_s8c_1p35>;
+	// 	vddpcie2-supply = <&vreg_s5a_1p9>;
+	// 	vddio-supply = <&vreg_s4a_1p8>;
+
+	// 	pinctrl-names = "default", "sleep";
+	// 	pinctrl-0 = <&wlan_en_state>;
+	// 	pinctrl-1 = <&wlan_en_sleep>;
+ 
+	// 	wlan-en-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>;
+	// };
+
 };
 
 &dispcc {
@@ -456,6 +483,63 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 	};
+
+	regulators-2 {
+		compatible = "qcom,pm8009-rpmh-regulators";
+		qcom,pmic-id = "f";
+
+		vdd-s1-supply = <&vph_pwr>;
+		vdd-s2-supply = <&vreg_bob>;
+		vdd-l2-supply = <&vreg_s8c_1p35>;
+		vdd-l5-l6-supply = <&vreg_bob>;
+		vdd-l7-supply = <&vreg_s4a_1p8>;
+
+		vreg_s1f_1p2: smps1 {
+			regulator-name = "vreg_s1f_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s2f_0p5: smps2 {
+			regulator-name = "vreg_s2f_0p5";
+			regulator-min-microvolt = <512000>;
+			regulator-max-microvolt = <1100000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L1 is unused. */
+
+		vreg_l2f_1p3: ldo2 {
+			regulator-name = "vreg_l2f_1p3";
+			regulator-min-microvolt = <1304000>;
+			regulator-max-microvolt = <1304000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L3 & L4 are unused. */
+
+		vreg_l5f_2p8: ldo5 {
+			regulator-name = "vreg_l5f_2p85";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6f_2p8: ldo6 {
+			regulator-name = "vreg_l6f_2p8";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7f_1p8: ldo7 {
+			regulator-name = "vreg_l7f_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
 };
 
 &cdsp {
@@ -720,14 +804,15 @@
 		compatible = "visionox,vtdr6130";
 		reg = <0>;
 
-		pinctrl-0 = <&sde_dsi_active &sde_te_active_sleep>;
-		pinctrl-1 = <&sde_dsi_sleep &sde_te_active_sleep>;
+		pinctrl-0 = <&sde_dsi_active>, <&sde_te_active_sleep>;
+		pinctrl-1 = <&sde_dsi_sleep>, <&sde_te_active_sleep>;
 		pinctrl-names = "default", "sleep";
 
 		vddio-supply = <&vreg_l14a_1p88>;
 		vci-supply = <&vreg_l11c_3p0>;
 		vdd-supply = <&vreg_l6a_1p2>;
-		reset-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
+		// reset-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
 
 		port {
 			panel_in: endpoint {
@@ -749,7 +834,6 @@
 
 &i2c1 {
 	status = "okay";
-	//clock-frequency = <400000>;
 	clock-frequency = <1000000>;
 
 	nfc@28 {
@@ -852,6 +936,7 @@
 
 &i2c4 {
 	status = "okay";
+	clock-frequency = <400000>;
 
 	aw882xx_r: speaker-amp@34 {
 		status = "okay";
@@ -887,7 +972,7 @@
 };
 
 &i2c15 {
-	//clock-frequency = <100000>;
+	clock-frequency = <400000>;
 	status = "okay";
 
 	typec-mux@43 {
@@ -1027,6 +1112,7 @@
 	qcom,i2c-touch-active = "focaltech,fts_ts";
 	clock-names = "se", "m-ahb", "s-ahb";
 	clocks = <&gcc GCC_QUPV3_WRAP1_S5_CLK &gcc GCC_QUPV3_WRAP_1_S_AHB_CLK &gcc GCC_QUPV3_WRAP_2_M_AHB_CLK>;
+	clock-frequency = <400000>;
 
 	touchscreen@38 {
 		compatible = "focaltech,fts_ts";
@@ -1047,15 +1133,15 @@
 		focaltech,max-touch-number = <10>;
 		focaltech,display-coords = <0 0 1080 2400>;
 
-		//panel = <&panel>;
+		// panel = <&panel>;
 	};
 };
 
 &pcie0 {
 	// perst-gpios = <&tlmm 79 GPIO_ACTIVE_HIGH>;
 	// wake-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
-	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
-	// vdda-supply = <&vreg_l12a_1p8>;
+	vddpe-3v3-supply = <&vreg_l13a_3p3>;
+	vdda-supply = <&vreg_l12a_1p8>;
 	status = "okay";
 };
 
@@ -1071,7 +1157,6 @@
 	wifi@0 {
 		compatible = "pci17cb,1101";
 		reg = <0x10000 0x0 0x0 0x0 0x0>;
-		status = "okay";
 
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
@@ -1086,6 +1171,19 @@
 		// vdda-supply = <&vreg_l12a_1p8>;
 	};
 };
+
+&pcie2 {
+	vddpe-3v3-supply = <&vreg_l13a_3p3>;
+	vdda-supply = <&vreg_l12a_1p8>;
+	status = "okay";
+};
+
+&pcie2_phy {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+};
+
 
 &pm8150_gpios {
 	vol_up_n: vol-up-n-state {
@@ -1198,7 +1296,7 @@
 };
 
 &q6afedai {
-	dai@56 {
+	dai@20 {
 		// reg = <TERTIARY_TDM_RX_0>;
 		// qcom,tdm-sync-mode = <0>;
 		// qcom,tdm-sync-src = <1>;
@@ -1206,14 +1304,14 @@
 		// qcom,tdm-invert-sync = <1>;
 		// qcom,tdm-data-delay = <1>;
 		// qcom,tdm-data-align = <0>;
-		reg = <TERTIARY_TDM_RX_0>;
-		qcom,tdm-sync-mode = <1>;     /* Sync mode: 1=secondary (for AW88261) */
-		qcom,tdm-sync-src = <1>;      /* Sync source: 1=internal */
-		qcom,tdm-data-out = <0>;      /* Data out: 0=enabled */
-		qcom,tdm-invert-sync = <0>;   /* Don't invert sync for AW88261 */
-		qcom,tdm-data-delay = <1>;    /* 1-bit data delay for proper alignment */
-		qcom,tdm-data-align = <0>;    /* No special alignment needed */
-		// qcom,sd-lines = <0 1>;
+		reg = <TERTIARY_MI2S_RX>;
+		// qcom,tdm-sync-mode = <1>;     /* Sync mode: 1=secondary (for AW88261) */
+		// qcom,tdm-sync-src = <1>;      /* Sync source: 1=internal */
+		// qcom,tdm-data-out = <0>;      /* Data out: 0=enabled */
+		// qcom,tdm-invert-sync = <0>;   /* Don't invert sync for AW88261 */
+		// qcom,tdm-data-delay = <1>;    /* 1-bit data delay for proper alignment */
+		// qcom,tdm-data-align = <0>;    /* No special alignment needed */
+		qcom,sd-lines = <0 1>;
 	};
 };
 
@@ -1241,7 +1339,7 @@
 
 
 	mm1-dai-link {
-		link-name = "MultiMedia2";
+		link-name = "MultiMedia1";
 
 		cpu {
 			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
@@ -1250,10 +1348,10 @@
 
 	speaker-dai-link {
 		link-name = "Tertiary TDM Playback";
-		no-pcm;
+		// no-pcm;
 
 		cpu {
-			sound-dai = <&q6afedai TERTIARY_TDM_RX_0>;
+			sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
 		};
 
 		platform {
@@ -1262,7 +1360,6 @@
 
 		codec {
 			sound-dai = <&aw882xx_r 0>, <&aw882xx_l 0>;
-			// sound-dai = <&aw882xx_r 0>;
 		};
 	};
 };
@@ -1319,14 +1416,32 @@
 		};
 	};
 
+	bt_en_sleep: bt-sleep-state {
+		pins = "gpio21";
+		function = "gpio";
+
+		drive-strength = <0x02>;
+		output-low;
+		bias-pull-down;
+	};
+
+
 	wlan_en_state: wlan-default-state {
 		wlan-en-pins {
 			pins = "gpio20";
 			function = "gpio";
 			drive-strength = <16>;
-			output-low;
+			output-high;
 			bias-pull-up;
 		};
+	};
+
+	wlan_en_sleep: wlan-sleep-state {
+		pins = "gpio20";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-down;
 	};
 
 	ts_active: ts-active {
@@ -1394,12 +1509,34 @@
 	// 	output-high;
 	// };
 
+	// sde_dsi_active: sde_dsi_active-state {
+	// 	pins = "gpio128";
+	// 	function = "gpio";
+	// 	drive-strength = <8>;
+	// 	bias-disable;
+	// 	output-high;
+	// };
+
+	// sde_dsi_sleep: sde-dsi-sleep-state {
+	// 	pins = "gpio128";
+	// 	function = "gpio";
+	// 	drive-strength = <2>;
+	// 	bias-pull-down;
+	// 	output-high;
+	// };
+
+	// sde_te_active_sleep: sde_te_active-state {
+	// 	pins = "gpio66";
+	// 	function = "mdp_vsync";
+	// 	drive-strength = <2>;
+	// 	bias-pull-down;
+	// };
+
 	sde_dsi_active: sde_dsi_active-state {
 		pins = "gpio128";
 		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
-		output-high;
 	};
 
 	sde_dsi_sleep: sde-dsi-sleep-state {
@@ -1407,11 +1544,10 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
-		output-high;
 	};
 
 	sde_te_active_sleep: sde_te_active-state {
-		pins = "gpio66";
+		pins = "gpio67";
 		function = "mdp_vsync";
 		drive-strength = <2>;
 		bias-pull-down;
@@ -1610,16 +1746,15 @@
 		compatible = "qcom,qca6390-bt";
 		// pinctrl-names = "default";
 		// pinctrl-0 = <&sw_ctrl>;
-		// swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
-		// vddasd-supply = <&vreg_l16a_3p3>;
+		vddasd-supply = <&vreg_l16a_3p3>;
 		vddbtcmx-supply = <&vreg_pmu_btcmx_0p85>;
 		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
 		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
-
-		firmware-name = "htnv20.bin";
 	};
 
 };
