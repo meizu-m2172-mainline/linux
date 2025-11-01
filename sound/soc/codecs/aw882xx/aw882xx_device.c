@@ -306,6 +306,7 @@ static void aw_algo_auth_misc_deinit(struct aw_device *aw_dev)
 /*********************************aw_device*************************************/
 static void aw_dev_reg_dump(struct aw_device *aw_dev)
 {
+	return;
 	int reg_num = aw_dev->reg_num;
 	uint8_t i = 0;
 	unsigned int reg_val = 0;
