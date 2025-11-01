@@ -67,7 +67,6 @@ static struct aw_componet_codec_ops aw_componet_codec_ops = {
 	.kcontrol_codec = snd_soc_kcontrol_component,
 	.codec_get_drvdata = snd_soc_component_get_drvdata,
 	.add_codec_controls = snd_soc_add_component_controls,
-	.unregister_codec = snd_soc_unregister_component,
 	.register_codec = snd_soc_register_component,
 };
 #else
