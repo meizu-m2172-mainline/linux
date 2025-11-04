@@ -201,29 +201,10 @@
 		};	
 	};
 
-	// qca639x: qca639x {
-	// 	compatible = "qcom,qca6390";
-	// 	#power-domain-cells = <0>;
- 
-	// 	vddaon-supply = <&vreg_s6a_0p95>;
-	// 	vddpmu-supply = <&vreg_s6a_0p95>;
-	// 	vddrfa1-supply = <&vreg_s6a_0p95>;
-	// 	vddrfa2-supply = <&vreg_s8c_1p35>;
-	// 	vddrfa3-supply = <&vreg_s5a_1p9>;
-	// 	vddpcie1-supply = <&vreg_s8c_1p35>;
-	// 	vddpcie2-supply = <&vreg_s5a_1p9>;
-	// 	vddio-supply = <&vreg_s4a_1p8>;
-
-	// 	pinctrl-names = "default", "sleep";
-	// 	pinctrl-0 = <&wlan_en_state>;
-	// 	pinctrl-1 = <&wlan_en_sleep>;
- 
-	// 	wlan-en-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>;
-	// };
-
 };
 
 &dispcc {
+	reg = <0 0x0af00000 0 0x20000>;
 	status = "okay";
 };
 
@@ -865,9 +846,7 @@
 };
 
 &pcieport0 {
-	status = "okay";
-
-	wifi@0 {
+	wifi_0: wifi@0 {
 		compatible = "pci17cb,1101";
 		reg = <0x10000 0x0 0x0 0x0 0x0>;
 
@@ -880,8 +859,8 @@
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
 		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
 		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
-		// vddpe-3v3-supply = <&vreg_l13a_3p3>;
-		// vdda-supply = <&vreg_l12a_1p8>;
+
+		qcom,calibration-variant = "Xiaomi_Pad_5Pro";
 	};
 };
 
@@ -909,6 +888,10 @@
 	status = "okay";
 };
 
+&pon {
+	mode-bootloader = <0x2>;
+	mode-recovery = <0x1>;
+};
 
 &pm8150_gpios {
 	vol_up_n: vol-up-n-state {
@@ -927,7 +910,7 @@
 };
 
 &pm8150b_typec {
-	status = "okay";
+	status = "disabled";
 
 	vdd-pdphy-supply = <&vreg_l2a_3p1>;
 
@@ -1099,6 +1082,39 @@
 	gpio-reserved-ranges = <28 4>, <40 4>;
 	status = "okay";
 
+	bt_en_state: bt-default-state {
+		pins = "gpio21";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-up;
+	};
+
+	bt_en_sleep: bt-sleep-state {
+		pins = "gpio21";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
+	};
+
+
+	wlan_en_state: wlan-default-state {
+		pins = "gpio20";
+		function = "gpio";
+		drive-strength = <16>;
+		output-high;
+		bias-pull-up;
+	};
+
+	wlan_en_sleep: wlan-sleep-state {
+		pins = "gpio20";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
+	};
+
 	tert_tdm_active: tert-tdm-active-state {
 		sck-pins {
 			pins = "gpio133";
@@ -1129,40 +1145,6 @@
 			drive-strength = <8>;
 			bias-disable;
 		};
-	};
-
-	bt_en_state: bt-default-state {
-		pins = "gpio21";
-		function = "gpio";
-		drive-strength = <16>;
-		output-low;
-		bias-pull-up;
-
-	};
-
-	bt_en_sleep: bt-sleep-state {
-		pins = "gpio21";
-		function = "gpio";
-		drive-strength = <2>;
-		output-low;
-		bias-pull-down;
-	};
-
-
-	wlan_en_state: wlan-default-state {
-		pins = "gpio20";
-		function = "gpio";
-		drive-strength = <16>;
-		output-high;
-		bias-pull-up;
-	};
-
-	wlan_en_sleep: wlan-sleep-state {
-		pins = "gpio20";
-		function = "gpio";
-		drive-strength = <2>;
-		output-low;
-		bias-pull-down;
 	};
 
 	ts_active: ts-active {
@@ -1214,45 +1196,6 @@
 		};
 	};
 
-	// sde_dsi_active: sde_dsi_active-state {
-	// 	pins = "gpio12";
-	// 	function = "gpio";
-	// 	drive-strength = <8>;
-	// 	bias-disable;
-	// 	output-high;
-	// };
-
-	// sde_dsi_sleep: sde-dsi-sleep-state {
-	// 	pins = "gpio12";
-	// 	function = "gpio";
-	// 	drive-strength = <2>;
-	// 	bias-pull-down;
-	// 	output-high;
-	// };
-
-	// sde_dsi_active: sde_dsi_active-state {
-	// 	pins = "gpio128";
-	// 	function = "gpio";
-	// 	drive-strength = <8>;
-	// 	bias-disable;
-	// 	output-high;
-	// };
-
-	// sde_dsi_sleep: sde-dsi-sleep-state {
-	// 	pins = "gpio128";
-	// 	function = "gpio";
-	// 	drive-strength = <2>;
-	// 	bias-pull-down;
-	// 	output-high;
-	// };
-
-	// sde_te_active_sleep: sde_te_active-state {
-	// 	pins = "gpio66";
-	// 	function = "mdp_vsync";
-	// 	drive-strength = <2>;
-	// 	bias-pull-down;
-	// };
-
 	sde_dsi_active: sde_dsi_active-state {
 		pins = "gpio128";
 		function = "gpio";
@@ -1274,25 +1217,19 @@
 		bias-pull-down;
 	};
 
-	// sw_ctrl: sw-ctrl-state {
-	// 	pins = "gpio124";
+	// pm8008_int_default: pm8008-int-default-state {
+	// 	pins = "gpio84";
 	// 	function = "gpio";
-	// 	bias-pull-down;
+	// 	drive-strength = <2>;
+	// 	bias-disable;
 	// };
 
-	pm8008_int_default: pm8008-int-default-state {
-		pins = "gpio84";
-		function = "gpio";
-		drive-strength = <2>;
-		bias-disable;
-	};
-
-	pm8008_reset_n_default: pm8008-reset-n-default-state {
-		pins = "gpio77";
-		function = "gpio";
-		drive-strength = <2>;
-		bias-disable;
-	};
+	// pm8008_reset_n_default: pm8008-reset-n-default-state {
+	// 	pins = "gpio77";
+	// 	function = "gpio";
+	// 	drive-strength = <2>;
+	// 	bias-disable;
+	// };
 
 	// cam_s5k5e9_default: cam-s5k5e9-default-state {
 	// 	rst-pins {
@@ -1378,20 +1315,17 @@
 
 	bluetooth {
 		compatible = "qcom,qca6390-bt";
-		// pinctrl-names = "default";
-		// // pinctrl-0 = <&sw_ctrl>;
-		// pinctrl-0 = <&bt_en_state>;
-		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+
 		enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 124 GPIO_ACTIVE_HIGH>;
+
 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
 		vddaon-supply = <&vreg_pmu_aon_0p59>;
-		vddasd-supply = <&vreg_l16a_3p3>;
 		vddbtcmx-supply = <&vreg_pmu_btcmx_0p85>;
 		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
 		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
 	};
-
 };
 
 &uart12 {
