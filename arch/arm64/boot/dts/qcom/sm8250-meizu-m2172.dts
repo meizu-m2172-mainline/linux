@@ -32,35 +32,35 @@
 		serial0 = &uart6;
 	};
 
-	chosen {
-		#address-cells = <2>;
-		#size-cells = <2>;
-		ranges;
-		// //stdout-path = "framebuffer0";
+	// chosen {
+	// 	#address-cells = <2>;
+	// 	#size-cells = <2>;
+	// 	ranges;
+	// 	// //stdout-path = "framebuffer0";
 
-		framebuffer0: framebuffer@9c000000 {
-			compatible = "simple-framebuffer";
-			reg = <0x0 0x9c000000 0x0 (1080 * 2400 * 4)>;
-			width = <1080>;
-			height = <2400>;
-			stride = <(1080 * 4)>;
-			format = "a8r8g8b8";
-			// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
-			// 	 <&gcc GCC_DISP_HF_AXI_CLK>,
-			// 	 <&gcc GCC_DISP_SF_AXI_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_MDP_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
-			// power-domains = <&dispcc MDSS_GDSC>;
-			// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
-			// 	 <&gcc GCC_DISP_HF_AXI_CLK>,
-			// 	 <&gcc GCC_DISP_SF_AXI_CLK>,
-			// 	 <&dispcc DISP_CC_MDSS_MDP_CLK>;
-		};
-	};
+	// 	framebuffer0: framebuffer@9c000000 {
+	// 		compatible = "simple-framebuffer";
+	// 		reg = <0x0 0x9c000000 0x0 (1080 * 2400 * 4)>;
+	// 		width = <1080>;
+	// 		height = <2400>;
+	// 		stride = <(1080 * 4)>;
+	// 		format = "a8r8g8b8";
+	// 		// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+	// 		// 	 <&gcc GCC_DISP_HF_AXI_CLK>,
+	// 		// 	 <&gcc GCC_DISP_SF_AXI_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_MDP_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
+	// 		// power-domains = <&dispcc MDSS_GDSC>;
+	// 		// clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+	// 		// 	 <&gcc GCC_DISP_HF_AXI_CLK>,
+	// 		// 	 <&gcc GCC_DISP_SF_AXI_CLK>,
+	// 		// 	 <&dispcc DISP_CC_MDSS_MDP_CLK>;
+	// 	};
+	// };
 
 	battery: battery {
 		compatible = "simple-battery";
@@ -180,11 +180,11 @@
 		// 	no-map;
 		// };
 
-		cont_splash_region@9c000000 {
-			reg = <0x00 0x9c000000 0x00 0x2300000>;
-			label = "cont_splash_region";
-			no-map;
-		};
+		// cont_splash_region@9c000000 {
+		// 	reg = <0x00 0x9c000000 0x00 0x2300000>;
+		// 	label = "cont_splash_region";
+		// 	no-map;
+		// };
 
 		// disp_rdump_region@9c000000 {
 		// 	reg = <0x00 0x9c000000 0x00 0x800000>;
@@ -644,91 +644,6 @@
 	};
 };
 
-// &i2c3 {
-// 	clock-frequency = <1000000>;
-// 	status = "disabled";
-
-// 	cs35l41_rcv: speaker-amp@40 {
-// 		compatible = "cirrus,cs35l41";
-// 		reg = <0x40>;
-// 		VA-supply = <&vreg_s4a_1p8>;
-// 		VP-supply = <&vph_pwr>;
-// 		interrupt-parent = <&tlmm>;
-// 		interrupts = <113 IRQ_TYPE_LEVEL_LOW>;
-// 		reset-gpios = <&tlmm 114 GPIO_ACTIVE_HIGH>;
-// 		cirrus,boost-type = <0>;
-// 		cirrus,boost-peak-milliamp = <4000>;
-// 		cirrus,boost-ind-nanohenry = <1000>;
-// 		cirrus,boost-cap-microfarad = <15>;
-// 		cirrus,asp-sdout-hiz = <3>;
-// 		cirrus,gpio2-src-select = <4>;
-// 		cirrus,gpio2-output-enable;
-// 		sound-name-prefix = "RCV";
-// 		#sound-dai-cells = <1>;
-// 	};
-
-// 	cs35l41_lcv: speaker-amp@41 {
-// 		compatible = "cirrus,cs35l41";
-// 		reg = <0x41>;
-// 		VA-supply = <&vreg_s4a_1p8>;
-// 		VP-supply = <&vph_pwr>;
-// 		interrupt-parent = <&tlmm>;
-// 		interrupts = <112 IRQ_TYPE_LEVEL_LOW>;
-// 		reset-gpios = <&tlmm 114 GPIO_ACTIVE_HIGH>;
-// 		cirrus,boost-type = <0>;
-// 		cirrus,boost-peak-milliamp = <4000>;
-// 		cirrus,boost-ind-nanohenry = <1000>;
-// 		cirrus,boost-cap-microfarad = <15>;
-// 		cirrus,asp-sdout-hiz = <3>;
-// 		cirrus,gpio2-src-select = <4>;
-// 		cirrus,gpio2-output-enable;
-// 		sound-name-prefix = "LCV";
-// 		#sound-dai-cells = <1>;
-// 	};
-// };
-
-// &i2c4 {
-// 	status = "okay";
-
-// 	aw882xx_r: speaker-amp@34 {
-// 		status = "okay";
-// 		compatible = "awinic,aw882xx_smartpa";
-// 		reg = <0x34>;
-// 		monitor-flag = <0x01>;
-// 		//monitor-timer-val = <0x0fa0>;
-// 		//monitor-sysctrl = <0x00>;
-
-// 		reset-gpio = <&tlmm 116 GPIO_ACTIVE_HIGH>;
-// 		//irq-gpio = <&tlmm 117 0x2008>;
-
-// 		sound-channel = <0>;
-// 		//sync-flag;
-// 		sync-load = <1>;
-
-// 		#sound-dai-cells = <1>;
-// 		aw-cali-mode = "aw_misc";
-// 	};
-
-// 	aw882xx_l: speaker-amp@35 {
-// 		status = "okay";
-// 		compatible = "awinic,aw882xx_smartpa";
-// 		reg = <0x35>;
-// 		monitor-flag = <0x01>;
-// 		//monitor-timer-val = <0x0fa0>;
-// 		//monitor-sysctrl = <0x00>;
-
-// 		reset-gpio = <&tlmm 115 GPIO_ACTIVE_HIGH>;
-// 		// irq-gpio = <&tlmm 118 0x2008>;
-
-// 		sound-channel = <1>;
-// 		//sync-flag;
-// 		sync-load = <1>;
-
-// 		#sound-dai-cells = <1>;
-// 		aw-cali-mode = "aw_misc";
-// 	};
-// };
-
 &i2c4 {
 	status = "okay";
 	clock-frequency = <400000>;
@@ -786,16 +701,16 @@
 		};
 	};
 
-	// nq@64 {
-	// 	compatible = "rtc6226";
-	// 	reg = <0x64>;
-	// 	fmint-gpio = <&tlmm 0x33 GPIO_ACTIVE_HIGH>;
-	// 	rtc6226,vio-supply = <&vreg_s4a_1p8>;
-	// 	// rtc6226,vio-supply-voltage = <0x1b7740 0x1b7740>;
-	// 	rtc6226,vdd-supply = <&vreg_bob>;
-	// 	// rtc6226,vdd-supply-voltage = <0x324b00 0x324b00>;
+	nq@64 {
+		compatible = "rtc6226";
+		reg = <0x64>;
+		fmint-gpio = <&tlmm 0x33 GPIO_ACTIVE_HIGH>;
+		rtc6226,vio-supply = <&vreg_s4a_1p8>;
+		// rtc6226,vio-supply-voltage = <0x1b7740 0x1b7740>;
+		rtc6226,vdd-supply = <&vreg_bob>;
+		// rtc6226,vdd-supply-voltage = <0x324b00 0x324b00>;
 
-	// };
+	};
 };
 
 &i2c13  {
@@ -859,22 +774,8 @@
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
 		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
 		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
-
-		qcom,calibration-variant = "Xiaomi_Pad_5Pro";
 	};
 };
-
-// &pcie1 {
-// 	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
-// 	vdda-supply = <&vreg_l12a_1p8>;
-// 	status = "okay";
-// };
-
-// &pcie1_phy {
-// 	vdda-phy-supply = <&vreg_l5a_0p88>;
-// 	vdda-pll-supply = <&vreg_l9a_1p2>;
-// 	status = "okay";
-// };
 
 &pcie2 {
 	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
@@ -1217,68 +1118,6 @@
 		bias-pull-down;
 	};
 
-	// pm8008_int_default: pm8008-int-default-state {
-	// 	pins = "gpio84";
-	// 	function = "gpio";
-	// 	drive-strength = <2>;
-	// 	bias-disable;
-	// };
-
-	// pm8008_reset_n_default: pm8008-reset-n-default-state {
-	// 	pins = "gpio77";
-	// 	function = "gpio";
-	// 	drive-strength = <2>;
-	// 	bias-disable;
-	// };
-
-	// cam_s5k5e9_default: cam-s5k5e9-default-state {
-	// 	rst-pins {
-	// 		pins = "gpio92";
-	// 		function = "gpio";
-	// 		drive-strength = <2>;
-	// 		bias-disable;
-	// 	};
-
-	// 	mclk1-pins {
-	// 		pins = "gpio95";
-	// 		function = "cam_mclk";
-	// 		drive-strength = <2>;
-	// 		bias-disable;
-	// 	};
-	// };
-
-	// cam_imx355_default: cam-imx355-default-state {
-	// 	rst-pins {
-	// 		pins = "gpio78";
-	// 		function = "gpio";
-	// 		drive-strength = <2>;
-	// 		bias-disable;
-	// 	};
-
-	// 	mclk2-pins {
-	// 		pins = "gpio96";
-	// 		function = "cam_mclk";
-	// 		drive-strength = <2>;
-	// 		bias-disable;
-	// 	};
-	// };
-
-	// cam_imx582_default: cam-imx582-default-state {
-	// 	rst-pins {
-	// 		pins = "gpio93";
-	// 		function = "gpio";
-	// 		drive-strength = <2>;
-	// 		bias-disable;
-	// 	};
-
-	// 	mclk0-pins {
-	// 		pins = "gpio94";
-	// 		function = "cam_mclk";
-	// 		drive-strength = <2>;
-	// 		bias-disable;
-	// 	};
-	// };
-
 	qupv3_se13_i2c_sleep: qupv3_se13_i2c_sleep {
 
 		mux {
@@ -1326,10 +1165,6 @@
 		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
 	};
-};
-
-&uart12 {
-	status = "okay";
 };
 
 &usb_1 {
