@@ -38,6 +38,7 @@
 #include <linux/uaccess.h>
 #include <linux/miscdevice.h>
 #include <linux/gpio/consumer.h>
+#include <sound/soc-dai.h>
 #include "aw882xx.h"
 #include "aw882xx_reg.h"
 
@@ -1252,7 +1253,7 @@ static int aw882xx_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
 	case SND_SOC_DAIFMT_I2S:
 		if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) !=
-			SND_SOC_DAIFMT_CBS_CFS) {
+			SND_SOC_DAIFMT_CBC_CFC) {
 			dev_err(component->dev, "%s: invalid codec master mode\n",
 				__func__);
 			return -EINVAL;
@@ -2584,7 +2585,7 @@ static void aw882xx_monitor_work_func(struct work_struct *work)
 void init_aw882xx_monitor(struct aw882xx_monitor *monitor)
 {
 	pr_info("%s: enter\n", __func__);
-	hrtimer_init(&monitor->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_setup(&monitor->timer, NULL, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	monitor->timer.function = aw882xx_monitor_timer_func;
 	INIT_WORK(&monitor->work, aw882xx_monitor_work_func);
 	monitor->pre_vol = 0;
