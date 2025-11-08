@@ -25,10 +25,6 @@
 	qcom,board-id = <0x10008 0x00>;
 
 	aliases {
-		pci-domain0 = &pcie0;
-		pci-domain1 = &pcie1;
-		pci-domain2 = &pcie2;
-		ufshc1 = &ufs_mem_hc;
 		serial0 = &uart6;
 	};
 
@@ -755,10 +751,6 @@
 };
 
 &pcie0 {
-	// perst-gpios = <&tlmm 79 GPIO_ACTIVE_HIGH>;
-	// wake-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
-	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
-	// vdda-supply = <&vreg_l12a_1p8>;
 	status = "okay";
 };
 
@@ -786,8 +778,6 @@
 };
 
 &pcie2 {
-	// vddpe-3v3-supply = <&vreg_l13a_3p3>;
-	// vdda-supply = <&vreg_l12a_1p8>;
 	status = "okay";
 };
 
@@ -897,16 +887,6 @@
 &pon_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
 	status = "okay";
-};
-
-&qup_spi4_cs_gpio {
-	drive-strength = <6>;
-	bias-disable;
-};
-
-&qup_spi4_data_clk {
-	drive-strength = <6>;
-	bias-disable;
 };
 
 &qupv3_id_0 {
@@ -1229,12 +1209,4 @@
 &venus {
 	firmware-name = "qcom/sm8250/meizu/m2172/venus.mbn";
 	status = "okay";
-};
-
-&qup_i2c7_default {
-	status = "disabled";
-};
-
-&qup_spi7_data_clk {
-	status = "disabled";
 };
