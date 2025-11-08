@@ -797,11 +797,6 @@
 	status = "okay";
 };
 
-&pon {
-	mode-bootloader = <0x2>;
-	mode-recovery = <0x1>;
-};
-
 &pm8150_gpios {
 	vol_up_n: vol-up-n-state {
 		pins = "gpio6";
@@ -890,6 +885,11 @@
 	};
 };
 
+&pon {
+	mode-bootloader = <0x2>;
+	mode-recovery = <0x1>;
+};
+
 &pon_pwrkey {
 	status = "okay";
 };
@@ -897,6 +897,16 @@
 &pon_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
 	status = "okay";
+};
+
+&qup_spi4_cs_gpio {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&qup_spi4_data_clk {
+	drive-strength = <6>;
+	bias-disable;
 };
 
 &qupv3_id_0 {
