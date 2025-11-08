@@ -689,38 +689,6 @@
 	};
 };
 
-&i2c15 {
-	clock-frequency = <400000>;
-	status = "okay";
-
-	typec-mux@43 {
-		compatible = "fcs,fsa4480";
-		reg = <0x43>;
-
-		vcc-supply = <&vreg_bob>;
-
-		mode-switch;
-		orientation-switch;
-
-		port {
-			fsa4480_sbu_mux: endpoint {
-				remote-endpoint = <&pm8150b_typec_sbu_out>;
-			};
-		};
-	};
-
-	nq@64 {
-		compatible = "rtc6226";
-		reg = <0x64>;
-		fmint-gpio = <&tlmm 0x33 GPIO_ACTIVE_HIGH>;
-		rtc6226,vio-supply = <&vreg_s4a_1p8>;
-		// rtc6226,vio-supply-voltage = <0x1b7740 0x1b7740>;
-		rtc6226,vdd-supply = <&vreg_bob>;
-		// rtc6226,vdd-supply-voltage = <0x324b00 0x324b00>;
-
-	};
-};
-
 &i2c13  {
 	status = "okay";
 	pinctrl-names = "default", "sleep";
@@ -751,6 +719,38 @@
 		focaltech,display-coords = <0 0 1080 2400>;
 
 		// panel = <&panel>;
+	};
+};
+
+&i2c15 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	typec-mux@43 {
+		compatible = "fcs,fsa4480";
+		reg = <0x43>;
+
+		vcc-supply = <&vreg_bob>;
+
+		mode-switch;
+		orientation-switch;
+
+		port {
+			fsa4480_sbu_mux: endpoint {
+				remote-endpoint = <&pm8150b_typec_sbu_out>;
+			};
+		};
+	};
+
+	nq@64 {
+		compatible = "rtc6226";
+		reg = <0x64>;
+		fmint-gpio = <&tlmm 0x33 GPIO_ACTIVE_HIGH>;
+		rtc6226,vio-supply = <&vreg_s4a_1p8>;
+		// rtc6226,vio-supply-voltage = <0x1b7740 0x1b7740>;
+		rtc6226,vdd-supply = <&vreg_bob>;
+		// rtc6226,vdd-supply-voltage = <0x324b00 0x324b00>;
+
 	};
 };
 
