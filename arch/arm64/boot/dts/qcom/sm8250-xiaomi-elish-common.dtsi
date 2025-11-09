@@ -833,6 +833,11 @@
 		reg = <0>;
 		vddio-supply = <&vreg_l14a_1p88>;
 		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&panel_default>;
+		pinctrl-1 = <&panel_sleep>;
+
 		backlight = <&backlight>;
 		rotation = <90>;
 
@@ -1175,6 +1180,20 @@
 			drive-strength = <8>;
 			bias-disable;
 		};
+	};
+
+	panel_default: panel-default-state {
+		pins = "gpio75";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	panel_sleep: panel-sleep-state {
+		pins = "gpio75";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
 	};
 
 	keyboard_vdd_pin: keyboard-vdd-state {
