@@ -1106,6 +1106,10 @@
 		spi-max-frequency = <19200000>;	//4800000,9600000,15000000,19200000
 		novatek,irq-gpio = <&tlmm 39 0x2001>;
 
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&ts_default>;
+		pinctrl-1 = <&ts_sleep>;
+
 		novatek,pen-support;
 		novatek,wgp-stylus;
 
@@ -1191,6 +1195,20 @@
 
 	panel_sleep: panel-sleep-state {
 		pins = "gpio75";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	ts_default: ts-default-state {
+		pins = "gpio39";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	ts_sleep: ts-sleep-state {
+		pins = "gpio39";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
