@@ -81,6 +81,24 @@
 			linux,can-disable;
 			wakeup-source;
 		};
+
+		switch-lid {
+			label = "Swtich Lid";
+			gpios = <&tlmm 110 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			debounce-interval = <15>;
+			linux,code = <SW_LID>;
+			gpio-key,wakeup;
+		};
+
+		switch-tablet-mode {
+			label = "Swtich Tablet Mode";
+			gpios = <&tlmm 121 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			debounce-interval = <15>;
+			linux,code = <SW_TABLET_MODE>;
+			gpio-key,wakeup;
+		};
 	};
 
 	qca6390-pmu {
