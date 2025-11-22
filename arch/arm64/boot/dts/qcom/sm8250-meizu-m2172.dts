@@ -31,10 +31,10 @@
 
 / {
 	model = "Meizu 18X (m2172)";
-	compatible = "qcom,sm8250";
+	compatible = "meizu,m2172", "qcom,sm8250";
 	chassis-type = "handset";
 
-	qcom,msm-id = <0x164 0x20001>;
+	qcom,msm-id = <QCOM_ID_SM8250 0x20001>;
 	qcom,board-id = <0x10008 0x00>;
 
 	aliases {
