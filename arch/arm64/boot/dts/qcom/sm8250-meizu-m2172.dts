@@ -14,20 +14,20 @@
 #include "pm8150l.dtsi"
 #include "pm8009.dtsi"
 
-/delete-node/ &removed_mem;
-/delete-node/ &camera_mem;
-/delete-node/ &wlan_mem;
-/delete-node/ &ipa_fw_mem;
-/delete-node/ &ipa_gsi_mem;
-/delete-node/ &gpu_mem;
-/delete-node/ &npu_mem;
-/delete-node/ &video_mem;
-/delete-node/ &cvp_mem;
-/delete-node/ &cdsp_mem;
-/delete-node/ &slpi_mem;
-/delete-node/ &adsp_mem;
-/delete-node/ &spss_mem;
-/delete-node/ &cdsp_secure_heap;
+// /delete-node/ &removed_mem;
+// /delete-node/ &camera_mem;
+// /delete-node/ &wlan_mem;
+// /delete-node/ &ipa_fw_mem;
+// /delete-node/ &ipa_gsi_mem;
+// /delete-node/ &gpu_mem;
+// /delete-node/ &npu_mem;
+// /delete-node/ &video_mem;
+// /delete-node/ &cvp_mem;
+// /delete-node/ &cdsp_mem;
+// /delete-node/ &slpi_mem;
+// /delete-node/ &adsp_mem;
+// /delete-node/ &spss_mem;
+// /delete-node/ &cdsp_secure_heap;
 
 / {
 	model = "Meizu 18X (m2172)";
@@ -192,75 +192,75 @@
 		// 	reusable;
 		// };
 
-		removed_mem: removed_mem@80b00000 {
-			reg = <0x0 0x80b00000 0x0 0x9000000>;
-			no-map;
-		};
+		// removed_mem: removed_mem@80b00000 {
+		// 	reg = <0x0 0x80b00000 0x0 0x9000000>;
+		// 	no-map;
+		// };
 
-		camera_mem: camera_mem@89b00000 {
-			reg = <0x0 0x89b00000 0x0 0x500000>;
-			no-map;
-		};
+		// camera_mem: camera_mem@89b00000 {
+		// 	reg = <0x0 0x89b00000 0x0 0x500000>;
+		// 	no-map;
+		// };
 
-		wlan_mem: wlan_mem@8a000000 {
-			reg = <0x0 0x8a000000 0x0 0x100000>;
-			no-map;
-		};
+		// wlan_mem: wlan_mem@8a000000 {
+		// 	reg = <0x0 0x8a000000 0x0 0x100000>;
+		// 	no-map;
+		// };
 
-		ipa_fw_mem: ipa_fw_mem@8a100000 {
-			reg = <0x0 0x8a100000 0x0 0x10000>;
-			no-map;
-		};
+		// ipa_fw_mem: ipa_fw_mem@8a100000 {
+		// 	reg = <0x0 0x8a100000 0x0 0x10000>;
+		// 	no-map;
+		// };
 
-		ipa_gsi_mem: ipa_gsi_mem@8a110000 {
-			reg = <0x0 0x8a110000 0x0 0xa000>;
-			no-map;
-		};
+		// ipa_gsi_mem: ipa_gsi_mem@8a110000 {
+		// 	reg = <0x0 0x8a110000 0x0 0xa000>;
+		// 	no-map;
+		// };
 
-		gpu_mem: gpu_mem@8a11a000 {
-			reg = <0x0 0x8a11a000 0x0 0x2000>;
-			no-map;
-		};
+		// gpu_mem: gpu_mem@8a11a000 {
+		// 	reg = <0x0 0x8a11a000 0x0 0x2000>;
+		// 	no-map;
+		// };
 
-		npu_mem: npu_mem@8a200000 {
-			reg = <0x0 0x8a200000 0x0 0x500000>;
-			no-map;
-		};
+		// npu_mem: npu_mem@8a200000 {
+		// 	reg = <0x0 0x8a200000 0x0 0x500000>;
+		// 	no-map;
+		// };
 
-		video_mem: video_mem@8a700000 {
-			reg = <0x0 0x8a700000 0x0 0x500000>;
-			no-map;
-		};
+		// video_mem: video_mem@8a700000 {
+		// 	reg = <0x0 0x8a700000 0x0 0x500000>;
+		// 	no-map;
+		// };
 
-		cvp_mem: cvp_mem@8ac00000 {
-			reg = <0x0 0x8ac00000 0x0 0x500000>;
-			no-map;
-		};
+		// cvp_mem: cvp_mem@8ac00000 {
+		// 	reg = <0x0 0x8ac00000 0x0 0x500000>;
+		// 	no-map;
+		// };
 
-		cdsp_mem: cdsp_mem@8b100000 {
-			reg = <0x0 0x8b100000 0x0 0x1400000>;
-			no-map;
-		};
+		// cdsp_mem: cdsp_mem@8b100000 {
+		// 	reg = <0x0 0x8b100000 0x0 0x1400000>;
+		// 	no-map;
+		// };
 
-		slpi_mem: slpi_mem@8c500000 {
-			reg = <0x00 0x8c500000 0x00 0x1500000>;
-			no-map;
-		};
+		// slpi_mem: slpi_mem@8c500000 {
+		// 	reg = <0x00 0x8c500000 0x00 0x1500000>;
+		// 	no-map;
+		// };
 
-		adsp_mem: adsp_mem@8da00000 {
-			reg = <0x00 0x8da00000 0x00 0x1d00000>;
-			no-map;
-		};
+		// adsp_mem: adsp_mem@8da00000 {
+		// 	reg = <0x00 0x8da00000 0x00 0x1d00000>;
+		// 	no-map;
+		// };
 
-		spss_mem: spss_mem@8f700000 {
-			reg = <0x00 0x8f700000 0x00 0x100000>;
-			no-map;
-		};
+		// spss_mem: spss_mem@8f700000 {
+		// 	reg = <0x00 0x8f700000 0x00 0x100000>;
+		// 	no-map;
+		// };
 
-		cdsp_secure_heap: cdsp_secure_heap@8f800000 {
-			reg = <0x00 0x8f800000 0x00 0x4600000>;
-			no-map;
-		};
+		// cdsp_secure_heap: cdsp_secure_heap@8f800000 {
+		// 	reg = <0x00 0x8f800000 0x00 0x4600000>;
+		// 	no-map;
+		// };
 
 		cont_splash_region: cont_splash_region@9c000000 {
 			reg = <0x00 0x9c000000 0x00 0x2300000>;
