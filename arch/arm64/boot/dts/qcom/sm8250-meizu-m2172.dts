@@ -15,6 +15,19 @@
 #include "pm8009.dtsi"
 
 /delete-node/ &removed_mem;
+/delete-node/ &camera_mem;
+/delete-node/ &wlan_mem;
+/delete-node/ &ipa_fw_mem;
+/delete-node/ &ipa_gsi_mem;
+/delete-node/ &gpu_mem;
+/delete-node/ &npu_mem;
+/delete-node/ &video_mem;
+/delete-node/ &cvp_mem;
+/delete-node/ &cdsp_mem;
+/delete-node/ &slpi_mem;
+/delete-node/ &adsp_mem;
+/delete-node/ &spss_mem;
+/delete-node/ &cdsp_secure_heap;
 
 / {
 	model = "Meizu 18X (m2172)";
@@ -170,21 +183,86 @@
 	// };
 
 	reserved-memory {
-		linux,cma {
-			linux,cma-default;
-			alignment = <0x00 0x400000>;
-			alloc-ranges = <0x00 0x00 0x00 0xffffffff>;
-			compatible = "shared-dma-pool";
-			size = <0x00 0x2000000>;
-			reusable;
-		};
+		// linux,cma {
+		// 	linux,cma-default;
+		// 	alignment = <0x00 0x400000>;
+		// 	alloc-ranges = <0x00 0x00 0x00 0xffffffff>;
+		// 	compatible = "shared-dma-pool";
+		// 	size = <0x00 0x2000000>;
+		// 	reusable;
+		// };
 
-		removed_mem@80b00000 {
-			reg = <0x0 0x80b00000 0x0 0x5700000>;
+		removed_mem: removed_mem@80b00000 {
+			reg = <0x0 0x80b00000 0x0 0x9000000>;
 			no-map;
 		};
 
-		cont_splash_region@9c000000 {
+		camera_mem: camera_mem@89b00000 {
+			reg = <0x0 0x89b00000 0x0 0x500000>;
+			no-map;
+		};
+
+		wlan_mem: wlan_mem@8a000000 {
+			reg = <0x0 0x8a000000 0x0 0x100000>;
+			no-map;
+		};
+
+		ipa_fw_mem: ipa_fw_mem@8a100000 {
+			reg = <0x0 0x8a100000 0x0 0x10000>;
+			no-map;
+		};
+
+		ipa_gsi_mem: ipa_gsi_mem@8a110000 {
+			reg = <0x0 0x8a110000 0x0 0xa000>;
+			no-map;
+		};
+
+		gpu_mem: gpu_mem@8a11a000 {
+			reg = <0x0 0x8a11a000 0x0 0x2000>;
+			no-map;
+		};
+
+		npu_mem: npu_mem@8a200000 {
+			reg = <0x0 0x8a200000 0x0 0x500000>;
+			no-map;
+		};
+
+		video_mem: video_mem@8a700000 {
+			reg = <0x0 0x8a700000 0x0 0x500000>;
+			no-map;
+		};
+
+		cvp_mem: cvp_mem@8ac00000 {
+			reg = <0x0 0x8ac00000 0x0 0x500000>;
+			no-map;
+		};
+
+		cdsp_mem: cdsp_mem@8b100000 {
+			reg = <0x0 0x8b100000 0x0 0x1400000>;
+			no-map;
+		};
+
+		slpi_mem: slpi_mem@8c500000 {
+			reg = <0x00 0x8c500000 0x00 0x1500000>;
+			no-map;
+		};
+
+		adsp_mem: adsp_mem@8da00000 {
+			reg = <0x00 0x8da00000 0x00 0x1d00000>;
+			no-map;
+		};
+
+		spss_mem: spss_mem@8f700000 {
+			reg = <0x00 0x8f700000 0x00 0x100000>;
+			no-map;
+		};
+
+		cdsp_secure_heap: cdsp_secure_heap@8f800000 {
+			reg = <0x00 0x8f800000 0x00 0x4600000>;
+			no-map;
+		};
+
+		cont_splash_region: cont_splash_region@9c000000 {
 			reg = <0x00 0x9c000000 0x00 0x2300000>;
 			label = "cont_splash_region";
 			no-map;
@@ -196,13 +274,13 @@
 		// 	no-map;
 		// };
 
-		ramoops_region {
-			compatible = "ramoops";
-			no-map;
-			reg = <0x00 0x9f800000 0x00 0x200000>;
-			console-size = <0x80000>;
-			record-size = <0x80000>;
-		};	
+		// ramoops_region {
+		// 	compatible = "ramoops";
+		// 	no-map;
+		// 	reg = <0x00 0x9f800000 0x00 0x200000>;
+		// 	console-size = <0x80000>;
+		// 	record-size = <0x80000>;
+		// };	
 	};
 
 };
@@ -255,14 +333,14 @@
 
 		vreg_s5a_1p9: smps5 {
 			regulator-name = "vreg_s5a_1p9";
-			regulator-min-microvolt = <1824000>;
+			regulator-min-microvolt = <1900000>;
 			regulator-max-microvolt = <2040000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_s6a_0p95: smps6 {
 			regulator-name = "vreg_s6a_0p95";
-			regulator-min-microvolt = <600000>;
+			regulator-min-microvolt = <950000>;
 			regulator-max-microvolt = <1128000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
@@ -407,7 +485,7 @@
 
 		vreg_s8c_1p35: smps8 {
 			regulator-name = "vreg_s8c_1p35";
-			regulator-min-microvolt = <1200000>;
+			regulator-min-microvolt = <1350000>;
 			regulator-max-microvolt = <1400000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
@@ -985,7 +1063,7 @@
 		pins = "gpio21";
 		function = "gpio";
 		drive-strength = <16>;
-		output-low;
+		output-high;
 		bias-pull-up;
 	};
 
@@ -1161,6 +1239,14 @@
 		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
 		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
 	};
+};
+
+&qup_i2c7_default {
+	status = "disabled";
+};
+
+&qup_spi7_data_clk {
+	status = "disabled";
 };
 
 &usb_1 {
