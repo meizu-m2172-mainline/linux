@@ -641,6 +641,10 @@
 	};
 };
 
+&crypto {
+	status = "okay";
+};
+
 &gmu {
 	status = "okay";
 };
