@@ -81,6 +81,24 @@
 			linux,can-disable;
 			wakeup-source;
 		};
+
+		switch-lid {
+			label = "Swtich Lid";
+			gpios = <&tlmm 110 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			debounce-interval = <15>;
+			linux,code = <SW_LID>;
+			gpio-key,wakeup;
+		};
+
+		switch-tablet-mode {
+			label = "Swtich Tablet Mode";
+			gpios = <&tlmm 121 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			debounce-interval = <15>;
+			linux,code = <SW_TABLET_MODE>;
+			gpio-key,wakeup;
+		};
 	};
 
 	qca6390-pmu {
@@ -834,6 +852,11 @@
 		reg = <0>;
 		vddio-supply = <&vreg_l14a_1p88>;
 		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&panel_default>;
+		pinctrl-1 = <&panel_sleep>;
+
 		backlight = <&backlight>;
 		rotation = <90>;
 
@@ -905,7 +928,7 @@
 };
 
 &pcieport0 {
-	wifi@0 {
+	wifi_0: wifi@0 {
 		compatible = "pci17cb,1101";
 		reg = <0x10000 0x0 0x0 0x0 0x0>;
 
@@ -1102,6 +1125,10 @@
 		spi-max-frequency = <19200000>;	//4800000,9600000,15000000,19200000
 		novatek,irq-gpio = <&tlmm 39 0x2001>;
 
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&ts_default>;
+		pinctrl-1 = <&ts_sleep>;
+
 		novatek,pen-support;
 		novatek,wgp-stylus;
 
@@ -1176,6 +1203,34 @@
 			drive-strength = <8>;
 			bias-disable;
 		};
+	};
+
+	panel_default: panel-default-state {
+		pins = "gpio75";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	panel_sleep: panel-sleep-state {
+		pins = "gpio75";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	ts_default: ts-default-state {
+		pins = "gpio39";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	ts_sleep: ts-sleep-state {
+		pins = "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
 	};
 
 	keyboard_vdd_pin: keyboard-vdd-state {
