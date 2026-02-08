@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/*
+ * Copyright (c) 2023 Luka Panio <lukapanio@gmail.com>
+ */
+
+/dts-v1/;
+
+#include "sm8250-xiaomi-pipa-common.dtsi"
+
+/ {
+	model = "Xiaomi Pad 6 (Tianma)";
+	compatible = "xiaomi,pipa", "qcom,sm8250";
+};
+
+&display_panel {
+	compatible = "xiaomi,pipa-tianma-nt36532", "novatek,nt36532";
+	status = "okay";
+};
+
+&touchscreen {
+	firmware-name = "novatek/nt36532_tianma.bin";
+	status = "okay";
+};
