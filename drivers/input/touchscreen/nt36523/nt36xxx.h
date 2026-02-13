@@ -111,6 +111,18 @@ struct nvt_config_info {
 	const char *nvt_limit_name;
 };
 
+enum nvt_input_calc_method {
+	NVT_INPUT_CALC_NT36523,
+	NVT_INPUT_CALC_NT36532,
+};
+
+struct nvt_ts_desc {
+	const struct nvt_ts_mem_map *mmap;
+	uint8_t hw_crc;
+	uint8_t auto_copy;
+	enum nvt_input_calc_method input_calc_method;
+};
+
 struct nvt_ts_data {
 	struct spi_device *client;
 	struct input_dev *input_dev;
@@ -130,16 +142,18 @@ struct nvt_ts_data {
 #endif
 	uint32_t config_array_size;
 	struct nvt_config_info *config_array;
+	const struct nvt_ts_desc *desc;
 	const char *fw_name;
 	bool lkdown_readed;
 	uint8_t fw_ver;
 	uint8_t x_num;
 	uint8_t y_num;
 	int ic_state;
-	uint16_t abs_x_max;
-	uint16_t abs_y_max;
+	uint32_t abs_x_max;
+	uint32_t abs_y_max;
 	uint8_t max_touch_num;
 	uint8_t max_button_num;
+	uint8_t auto_copy;
 	uint32_t int_trigger_type;
 	int32_t irq_gpio;
 	uint32_t irq_flags;
@@ -231,12 +245,14 @@ int32_t nvt_get_fw_info(void);
 int32_t nvt_clear_fw_status(void);
 int32_t nvt_check_fw_status(void);
 int32_t nvt_check_spi_dma_tx_info(void);
+int32_t nvt_check_tx_auto_copy(void);
 int32_t nvt_set_page(uint32_t addr);
 int32_t nvt_write_addr(uint32_t addr, uint8_t data);
 int32_t nvt_read_pid(void);
 bool nvt_get_dbgfw_status(void);
 int32_t nvt_set_pocket_palm_switch(uint8_t pocket_palm_switch);
 void Boot_Update_Firmware(struct work_struct *work);
+int32_t nvt_wait_auto_copy(void);
 int32_t disable_pen_input_device(bool disable);
 #if NVT_TOUCH_ESD_PROTECT
 extern void nvt_esd_check_enable(uint8_t enable);

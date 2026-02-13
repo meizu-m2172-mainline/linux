@@ -1,9 +1,8 @@
 /*
- * Copyright (C) 2010 - 2018 Novatek, Inc.
- * Copyright (C) 2021 XiaoMi, Inc.
+ * Copyright (C) 2010 - 2022 Novatek, Inc.
  *
- * $Revision: 68983 $
- * $Date: 2020-09-17 09:43:23 +0800 (週四, 17 九月 2020) $
+ * $Revision: 77624 $
+ * $Date: 2021-02-05 10:03:05 +0800 (週五, 05 二月 2021) $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,14 +22,12 @@
 #include "nt36xxx.h"
 
 #if BOOT_UPDATE_FIRMWARE
-
 #define SIZE_4KB 4096
+#define NVT_FLASH_END_FLAG_LEN 3
 #define FLASH_SECTOR_SIZE SIZE_4KB
 #define FW_BIN_VER_OFFSET (fw_need_write_size - SIZE_4KB)
 #define FW_BIN_VER_BAR_OFFSET (FW_BIN_VER_OFFSET + 1)
-#define NVT_FLASH_END_FLAG_LEN 3
-#define NVT_FLASH_END_FLAG_ADDR (fw_need_write_size - NVT_FLASH_END_FLAG_LEN)
-
+#define DEFAULT_DEBUG_FW_NAME     "novatek_debug_fw.bin"
 static ktime_t start, end;
 const struct firmware *fw_entry = NULL;
 static size_t fw_need_write_size = 0;
@@ -45,6 +42,35 @@ struct nvt_ts_bin_map {
 };
 
 static struct nvt_ts_bin_map *bin_map;
+
+static int32_t nvt_get_fw_need_write_size(const struct firmware *fw_entry)
+{
+	int32_t i = 0;
+	int32_t total_sectors_to_check = 0;
+
+	total_sectors_to_check = fw_entry->size / FLASH_SECTOR_SIZE;
+	/* printk("total_sectors_to_check = %d\n", total_sectors_to_check); */
+
+	for (i = total_sectors_to_check; i > 0; i--) {
+		/* printk("current end flag address checked = 0x%X\n", i * FLASH_SECTOR_SIZE - NVT_FLASH_END_FLAG_LEN); */
+		/* check if there is end flag "NVT" at the end of this sector */
+		if (strncmp(&fw_entry->data[i * FLASH_SECTOR_SIZE - NVT_FLASH_END_FLAG_LEN], "NVT", NVT_FLASH_END_FLAG_LEN) == 0) {
+			fw_need_write_size = i * FLASH_SECTOR_SIZE;
+			NVT_LOG("fw_need_write_size = %zu(0x%zx), NVT end flag\n", fw_need_write_size, fw_need_write_size);
+			return 0;
+		}
+
+		/* check if there is end flag "MOD" at the end of this sector */
+		if (strncmp(&fw_entry->data[i * FLASH_SECTOR_SIZE - NVT_FLASH_END_FLAG_LEN], "MOD", NVT_FLASH_END_FLAG_LEN) == 0) {
+			fw_need_write_size = i * FLASH_SECTOR_SIZE;
+			NVT_LOG("fw_need_write_size = %zu(0x%zx), MOD end flag\n", fw_need_write_size, fw_need_write_size);
+			return 0;
+		}
+	}
+
+	NVT_ERR("end flag \"NVT\" \"MOD\" not found!\n");
+	return -1;
+}
 
 /*******************************************************
 Description:
@@ -307,7 +333,12 @@ static int32_t update_firmware_request(const char *filename)
 			goto request_fail;
 		}
 
-		fw_need_write_size = fw_entry->size;
+		// check FW need to write size
+		if (nvt_get_fw_need_write_size(fw_entry)) {
+			NVT_ERR("get fw need to write size fail!\n");
+			ret = -EINVAL;
+			goto invalid;
+		}
 
 		// check if FW version add FW version bar equals 0xFF
 		if (*(fw_entry->data + FW_BIN_VER_OFFSET) + *(fw_entry->data + FW_BIN_VER_BAR_OFFSET) != 0xFF) {
@@ -524,10 +555,10 @@ static void nvt_set_bld_crc_bank(uint32_t DES_ADDR, uint32_t SRAM_ADDR,
 	fwbuf[0] = LENGTH_ADDR & 0x7F;
 	fwbuf[1] = (size) & 0xFF;
 	fwbuf[2] = (size >> 8) & 0xFF;
-	fwbuf[3] = (size >> 16) & 0x01;
-	if (ts->hw_crc == 1) {
+	fwbuf[3] = (size >> 16) & 0xFF;
+	if (ts->hw_crc == HWCRC_LEN_2Bytes) {
 		CTP_SPI_WRITE(ts->client, fwbuf, 3);
-	} else if (ts->hw_crc > 1) {
+	} else if (ts->hw_crc >= HWCRC_LEN_3Bytes) {
 		CTP_SPI_WRITE(ts->client, fwbuf, 4);
 	}
 
@@ -667,9 +698,9 @@ static int32_t nvt_download_firmware_hw_crc(void)
 				goto fail;
 			}
 
-			ret = nvt_check_spi_dma_tx_info();
+			ret = nvt_wait_auto_copy();
 			if (ret) {
-				NVT_ERR("spi dma tx info failed. (%d)\n", ret);
+				NVT_ERR("wait auto copy failed. (%d)\n", ret);
 				goto fail;
 			}
 		} else {
@@ -679,9 +710,6 @@ static int32_t nvt_download_firmware_hw_crc(void)
 				goto fail;
 			}
 		}
-
-		/* enable hw bld crc function */
-		nvt_bld_crc_enable();
 
 		/* clear fw reset status & enable fw crc check */
 		nvt_fw_crc_enable();
@@ -726,6 +754,9 @@ static int32_t nvt_download_firmware(void)
 
 	start = ktime_get();
 
+	NVT_LOG("Start firmware download\n");
+	nvt_check_fw_reset_state(0x0A);
+
 	while (1) {
 		/*
 		 * Send eng reset cmd before download FW
@@ -742,6 +773,9 @@ static int32_t nvt_download_firmware(void)
 #endif
 		nvt_bootloader_reset();
 
+		NVT_LOG("Reset bootloader\n");
+		nvt_check_fw_reset_state(0x0A);
+
 		/* clear fw reset status */
 		nvt_write_addr(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_RESET_COMPLETE, 0x00);
 
@@ -751,6 +785,9 @@ static int32_t nvt_download_firmware(void)
 			NVT_ERR("Write_Firmware failed. (%d)\n", ret);
 			goto fail;
 		}
+
+		NVT_LOG("Written firmware\n");
+		nvt_check_fw_reset_state(0x0A);
 
 		/* Set Boot Ready Bit */
 		nvt_boot_ready();
@@ -850,7 +887,14 @@ return:
 void Boot_Update_Firmware(struct work_struct *work)
 {
 	mutex_lock(&ts->lock);
-	nvt_update_firmware(ts->fw_name);
+	if (nvt_get_dbgfw_status()) {
+		if (nvt_update_firmware(DEFAULT_DEBUG_FW_NAME) < 0) {
+			NVT_ERR("use built-in fw");
+			nvt_update_firmware(ts->fw_name);
+		}
+	} else {
+		nvt_update_firmware(ts->fw_name);
+	}
 	disable_pen_input_device(false);
 	nvt_get_fw_info();
 	mutex_unlock(&ts->lock);

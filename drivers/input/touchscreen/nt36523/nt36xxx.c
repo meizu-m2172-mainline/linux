@@ -240,30 +240,6 @@ int32_t nvt_write_addr(uint32_t addr, uint8_t data)
 	return ret;
 }
 
-/*******************************************************
-Description:
-	Novatek touchscreen enable hw bld crc function.
-
-return:
-	N/A.
-*******************************************************/
-void nvt_bld_crc_enable(void)
-{
-	uint8_t buf[4] = {0};
-
-	//---set xdata index to BLD_CRC_EN_ADDR---
-	nvt_set_page(ts->mmap->BLD_CRC_EN_ADDR);
-
-	//---read data from index---
-	buf[0] = ts->mmap->BLD_CRC_EN_ADDR & (0x7F);
-	buf[1] = 0xFF;
-	CTP_SPI_READ(ts->client, buf, 2);
-
-	//---write data to index---
-	buf[0] = ts->mmap->BLD_CRC_EN_ADDR & (0x7F);
-	buf[1] = buf[1] | (0x01 << 7);
-	CTP_SPI_WRITE(ts->client, buf, 2);
-}
 
 /*******************************************************
 Description:
@@ -322,10 +298,15 @@ return:
 *******************************************************/
 void nvt_tx_auto_copy_mode(void)
 {
-	//---write TX_AUTO_COPY_EN cmds---
-	nvt_write_addr(ts->mmap->TX_AUTO_COPY_EN, 0x69);
+	if (ts->auto_copy == CHECK_SPI_DMA_TX_INFO) {
+		//---write TX_AUTO_COPY_EN cmds---
+		nvt_write_addr(ts->mmap->TX_AUTO_COPY_EN, 0x69);
+	} else if (ts->auto_copy == CHECK_TX_AUTO_COPY_EN) {
+		//---write SPI_MST_AUTO_COPY cmds---
+		nvt_write_addr(ts->mmap->TX_AUTO_COPY_EN, 0x56);
+	}
 
-	NVT_ERR("tx auto copy mode enable\n");
+	NVT_ERR("tx auto copy mode %d enable\n", ts->auto_copy);
 }
 
 /*******************************************************
@@ -607,8 +588,6 @@ info_retry:
 	ts->fw_ver = buf[1];
 	ts->x_num = buf[3];
 	ts->y_num = buf[4];
-	ts->abs_x_max = (uint16_t)((buf[5] << 8) | buf[6]);
-	ts->abs_y_max = (uint16_t)((buf[7] << 8) | buf[8]);
 	ts->max_button_num = buf[11];
 	ts->cascade = buf[34] & 0x01;
 	if (ts->pen_support) {
@@ -622,8 +601,6 @@ info_retry:
 		ts->fw_ver = 0;
 		ts->x_num = 18;
 		ts->y_num = 32;
-		ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
-		ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
 		ts->max_button_num = TOUCH_KEY_NUM;
 
 		if(retry_count < 3) {
@@ -721,6 +698,25 @@ static int32_t nvt_parse_dt(struct device *dev)
 	} else {
 		NVT_LOG("spi-max-frequency: %u\n", ts->spi_max_freq);
 	}
+
+	ret = of_property_read_u32(np, "touchscreen-size-x", &ts->abs_x_max);
+	if (ret || ts->abs_x_max == 0) {
+		NVT_LOG("Unable to get screen width\n");
+		ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
+		ret = 0;
+	}
+
+	ret = of_property_read_u32(np, "touchscreen-size-y", &ts->abs_y_max);
+	if (ret || ts->abs_y_max == 0) {
+		NVT_LOG("Unable to get screen height\n");
+		ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
+		ret = 0;
+	}
+
+	ts->desc = of_device_get_match_data(dev);
+	if (!ts->desc)
+		return -ENODEV;
+	NVT_LOG("Detected input calc type %d\n", ts->desc->input_calc_method);
 
 	return ret;
 }
@@ -853,76 +849,8 @@ static void nvt_esd_check_func(struct work_struct *work)
 }
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
-#if NVT_TOUCH_WDT_RECOVERY
-static uint8_t recovery_cnt = 0;
-static uint8_t nvt_wdt_fw_recovery(uint8_t *point_data)
-{
-   uint32_t recovery_cnt_max = 10;
-   uint8_t recovery_enable = false;
-   uint8_t i = 0;
-
-   recovery_cnt++;
-
-   /* check pattern */
-   for (i=1 ; i<7 ; i++) {
-       if ((point_data[i] != 0xFD) && (point_data[i] != 0xFE)) {
-           recovery_cnt = 0;
-           break;
-       }
-   }
-
-   if (recovery_cnt > recovery_cnt_max){
-       recovery_enable = true;
-       recovery_cnt = 0;
-   }
-
-   return recovery_enable;
-}
-#endif	/* #if NVT_TOUCH_WDT_RECOVERY */
-
 #define PEN_DATA_LEN 14
 #define FW_HISTORY_SIZE 128
-static uint32_t nvt_dump_fw_history(void)
-{
-	int32_t ret = 0;
-	uint8_t buf[FW_HISTORY_SIZE + 1 + DUMMY_BYTES] = {0};
-	int32_t i = 0;
-	char *tmp_dump = NULL;
-	int32_t line_cnt = 0;
-
-	if (ts->mmap->FW_HISTORY_ADDR == 0) {
-		NVT_ERR("FW_HISTORY_ADDR not available!\n");
-		ret = -1;
-		goto exit_nvt_dump_fw_history;
-	}
-	nvt_set_page(ts->mmap->FW_HISTORY_ADDR);
-	buf[0] = ts->mmap->FW_HISTORY_ADDR & 0xFF;
-	CTP_SPI_READ(ts->client, buf, FW_HISTORY_SIZE + 1);
-	if (ret) {
-		NVT_ERR("CTP_SPI_READ failed.(%d)\n", ret);
-		ret = -1;
-		goto exit_nvt_dump_fw_history;
-		}
-
-	tmp_dump = (char *)kzalloc(FW_HISTORY_SIZE * 4, GFP_KERNEL);
-	for (i = 0; i < FW_HISTORY_SIZE; i++) {
-		sprintf(tmp_dump + i * 3 + line_cnt, "%02X ", buf[1 + i]);
-		if ((i + 1) % 16 == 0) {
-			sprintf(tmp_dump + i * 3 + line_cnt + 3, "%c", '\n');
-			line_cnt++;
-		}
-	}
-	NVT_LOG("%s", tmp_dump);
-
-exit_nvt_dump_fw_history:
-	if (tmp_dump) {
-		kfree(tmp_dump);
-		tmp_dump = NULL;
-	}
-	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
-
-	return ret;
-}
 
 #define POINT_DATA_LEN 65
 /*******************************************************
@@ -977,26 +905,6 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 		goto XFER_ERROR;
 	}
 
-	/*--- dump SPI buf ---
-	for (i = 0; i < 10; i++) {
-		NVT_LOG("%02X %02X %02X %02X %02X %02X  \n",
-			point_data[1+i*6], point_data[2+i*6], point_data[3+i*6], point_data[4+i*6], point_data[5+i*6], point_data[6+i*6]);
-	}
-	*/
-
-#if NVT_TOUCH_WDT_RECOVERY
-	/* ESD protect by WDT */
-	if (nvt_wdt_fw_recovery(point_data)) {
-		NVT_ERR("Recover for fw reset, %02X\n", point_data[1]);
-		if (point_data[1] == 0xFD) {
-			NVT_ERR("Dump FW history:\n");
-			nvt_dump_fw_history();
-		}
-		nvt_update_firmware(ts->fw_name);
-		goto XFER_ERROR;
-	}
-#endif /* #if NVT_TOUCH_WDT_RECOVERY */
-
 	/* ESD protect by FW handshake */
 	if (nvt_fw_recovery(point_data)) {
 #if NVT_TOUCH_ESD_PROTECT
@@ -1018,25 +926,40 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 			/* update interrupt timer */
 			irq_timer = jiffies;
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
-			input_x = (uint32_t)(point_data[position + 1] << 4) + (uint32_t) (point_data[position + 3] >> 4);
-			input_y = (uint32_t)(point_data[position + 2] << 4) + (uint32_t) (point_data[position + 3] & 0x0F);
+			if (ts->desc->input_calc_method == NVT_INPUT_CALC_NT36532)
+			{
+				input_x = (uint32_t)(point_data[position + 1] << 8) + (uint32_t) (point_data[position + 2]);
+				input_y = (uint32_t)(point_data[position + 3] << 8) + (uint32_t) (point_data[position + 4]);
+			}
+			else
+			{
+				input_x = (uint32_t)(point_data[position + 1] << 4) + (uint32_t) (point_data[position + 3] >> 4);
+				input_y = (uint32_t)(point_data[position + 2] << 4) + (uint32_t) (point_data[position + 3] & 0x0F);
+			}
 			if ((input_x < 0) || (input_y < 0))
 				continue;
 			if ((input_x > ts->abs_x_max) || (input_y > ts->abs_y_max))
 				continue;
-			input_w = (uint32_t)(point_data[position + 4]);
-			if (input_w == 0)
-				input_w = 1;
-			if (i < 2) {
-				input_p = (uint32_t)(point_data[position + 5]) + (uint32_t)(point_data[i + 63] << 8);
-				if (input_p > TOUCH_FORCE_NUM)
-					input_p = TOUCH_FORCE_NUM;
-			} else {
-				input_p = (uint32_t)(point_data[position + 5]);
+			if (ts->desc->input_calc_method == NVT_INPUT_CALC_NT36532)
+			{
+				input_w = (uint32_t)(point_data[position + 5]);
+				if (input_w == 0)
+					input_w = 1;
+				input_p = (uint32_t)(point_data[1 + 98 + i]);
+			}
+			else
+			{
+				input_w = (uint32_t)(point_data[position + 4]);
+				if (i < 2) {
+					input_p = (uint32_t)(point_data[position + 5]) + (uint32_t)(point_data[i + 63] << 8);
+					if (input_p > TOUCH_FORCE_NUM)
+						input_p = TOUCH_FORCE_NUM;
+				} else {
+					input_p = (uint32_t)(point_data[position + 5]);
+				}
 			}
 			if (input_p == 0)
 				input_p = 1;
-
 #if MT_PROTOCOL_B
 			press_id[input_id - 1] = 1;
 			input_mt_slot(ts->input_dev, input_id - 1);
@@ -1166,11 +1089,56 @@ return:
 *******************************************************/
 static int8_t nvt_ts_check_chip_ver_trim(uint32_t chip_ver_trim_addr)
 {
-
-	ts->mmap = &NT36523_memory_map;
-	ts->carrier_system = NT36523_hw_info.carrier_system;
-	ts->hw_crc = NT36523_hw_info.hw_crc;
+	ts->mmap = ts->desc->mmap;
+	ts->hw_crc = ts->desc->hw_crc;
+	ts->auto_copy = ts->desc->auto_copy;
 	return 0;
+}
+
+int32_t nvt_check_tx_auto_copy(void)
+{
+	uint8_t buf[8] = {0};
+	int32_t i = 0;
+	const int32_t retry = 200;
+
+	if (ts->mmap->TX_AUTO_COPY_EN == 0) {
+		NVT_ERR("error, TX_AUTO_COPY_EN = 0\n");
+		return -1;
+	}
+
+	for (i = 0; i < retry; i++) {
+		//---set xdata index to SPI_MST_AUTO_COPY---
+		nvt_set_page(ts->mmap->TX_AUTO_COPY_EN);
+
+		//---read auto copy status---
+		buf[0] = ts->mmap->TX_AUTO_COPY_EN & 0x7F;
+		buf[1] = 0xFF;
+		CTP_SPI_READ(ts->client, buf, 2);
+
+		if (buf[1] == 0x00)
+			break;
+
+		usleep_range(1000, 1000);
+	}
+
+	if (i >= retry) {
+		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
+		return -1;
+	} else {
+		return 0;
+	}
+}
+
+int32_t nvt_wait_auto_copy(void)
+{
+	if (ts->auto_copy == CHECK_SPI_DMA_TX_INFO) {
+		return nvt_check_spi_dma_tx_info();
+	} else if (ts->auto_copy == CHECK_TX_AUTO_COPY_EN) {
+		return nvt_check_tx_auto_copy();
+	} else {
+		NVT_ERR("failed, not support mode %d!\n", ts->auto_copy);
+		return -1;
+	}
 }
 
 int32_t disable_pen_input_device(bool disable) {
@@ -1329,8 +1297,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 		}
 	}
 
-	ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
-	ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
 
 	//---allocate input device---
 	ts->input_dev = input_allocate_device();
@@ -1359,8 +1325,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	ts->y_num = 50;
 	ts->x_gang_num = 4;
 	ts->y_gang_num = 6;
-	ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
-	ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
 	ts->max_button_num = TOUCH_KEY_NUM;
 	NVT_LOG("Set default fw_ver=%d, x_num=%d, y_num=%d, "
 					"abs_x_max=%d, abs_y_max=%d, max_button_num=%d!\n",
@@ -1814,6 +1778,12 @@ static int32_t nvt_ts_resume(struct device *dev)
 	if (ts->dev_pm_suspend)
 		pm_stay_awake(dev);
 
+	// Xiaomi Pad 6 panel has some delay before turning on
+	if (ts->desc->input_calc_method == NVT_INPUT_CALC_NT36532)
+	{
+		msleep(750);
+	}
+
 	mutex_lock(&ts->lock);
 
 	NVT_LOG("resume start\n");
@@ -1920,16 +1890,33 @@ static const struct dev_pm_ops nvt_dev_pm_ops = {
 };
 
 static const struct spi_device_id nvt_ts_id[] = {
-	{ NVT_SPI_NAME, 0 },
+	{ "NVT-ts-spi", 0 },
+	{ "NVT-ts-spi-nt36532", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, nvt_ts_id);
 
 #ifdef CONFIG_OF
+
+static const struct nvt_ts_desc nt36523_desc = {
+	.mmap = &NT36523_memory_map,
+	.hw_crc = HWCRC_LEN_3Bytes,
+	.auto_copy = CHECK_SPI_DMA_TX_INFO,
+	.input_calc_method = NVT_INPUT_CALC_NT36523,
+};
+static const struct nvt_ts_desc nt36532_desc = {
+	.mmap = &NT36532_cascade_memory_map,
+	.hw_crc = HWCRC_LEN_3Bytes,
+	.auto_copy = CHECK_TX_AUTO_COPY_EN,
+	.input_calc_method = NVT_INPUT_CALC_NT36532,
+};
+
 static struct of_device_id nvt_match_table[] = {
-	{ .compatible = "novatek,NVT-ts-spi",},
+	{ .compatible = "novatek,NVT-ts-spi", .data = &nt36523_desc },
+	{ .compatible = "novatek,NVT-ts-spi-nt36532", .data = &nt36532_desc },
 	{ },
 };
+
 MODULE_DEVICE_TABLE(of, nvt_match_table);
 #endif
 
