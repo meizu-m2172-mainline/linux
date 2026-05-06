@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
-/dts-v1/;
 
 #include <dt-bindings/arm/qcom,ids.h>
 #include <dt-bindings/leds/common.h>
@@ -586,7 +585,7 @@
 	status = "okay";
 
 	panel: panel@0 {
-		compatible = "visionox,vtdr6130";
+		compatible = "visionox,rm692e5";
 		reg = <0>;
 
 		pinctrl-0 = <&sde_dsi_active>, <&sde_te_active_sleep>;

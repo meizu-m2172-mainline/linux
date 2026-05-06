@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+
+#include "sm8250-meizu-m2172-common.dtsi"
+
+&panel {
+	compatible = "visionox,vtdr6130";
+	vddio-supply = <&vreg_l14a_1p88>;
+	vci-supply = <&vreg_l11c_3p0>;
+	vdd-supply = <&vreg_l6a_1p2>;
+};
