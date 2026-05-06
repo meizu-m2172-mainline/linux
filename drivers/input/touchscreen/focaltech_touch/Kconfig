@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config TOUCHSCREEN_FTS
+	tristate "FocalTech FT3518 I2C touchscreen"
+	depends on I2C
+	help
+	  Say Y here if you have a FocalTech FT3518 (or compatible) I2C
+	  touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called focaltech_ts.
