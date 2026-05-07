@@ -79,6 +79,7 @@ struct qcom_fg_ops {
 			enum power_supply_property psp, int);
 
 	short memif_base;
+	bool current_psy_sign;
 };
 
 struct qcom_fg_chip {
@@ -499,7 +500,7 @@ static int qcom_fg_get_capacity(struct qcom_fg_chip *chip, int *val)
 		cap[0] = cap[0] < cap[1] ? cap[0] : cap[1];
 	}
 
-	*val = DIV_ROUND_CLOSEST((cap[0] - 1) * 98, 0xff - 2) + 1;
+	*val = DIV_ROUND_CLOSEST((cap[0] - 1) * 100, 0xff - 1);
 
 	return 0;
 }
@@ -836,6 +837,7 @@ static const struct qcom_fg_ops ops_fg = {
 	.get_temp_threshold = qcom_fg_get_temp_threshold,
 	.set_temp_threshold = qcom_fg_set_temp_threshold,
 	.memif_base = 0x400,
+	.current_psy_sign = false,
 };
 
 /* Gen3 fuel gauge. PMI8998 and newer */
@@ -846,6 +848,7 @@ static const struct qcom_fg_ops ops_fg_gen3 = {
 	.get_voltage = qcom_fg_gen3_get_voltage,
 	.get_temp_threshold = qcom_fg_gen3_get_temp_threshold,
 	.memif_base = 0x400,
+	.current_psy_sign = true,
 };
 
 /* Gen4 fuel gauge. PM8150B and newer */
@@ -856,6 +859,7 @@ static const struct qcom_fg_ops ops_fg_gen4 = {
 	.get_voltage = qcom_fg_gen3_get_voltage,
 	.get_temp_threshold = qcom_fg_gen3_get_temp_threshold,
 	.memif_base = 0x300,
+	.current_psy_sign = true,
 };
 
 static enum power_supply_property qcom_fg_props[] = {
@@ -889,7 +893,11 @@ static int qcom_fg_get_property(struct power_supply *psy,
 		/* Get status from charger if available */
 		if (chip->chg_psy &&
 			chip->status != POWER_SUPPLY_STATUS_UNKNOWN) {
-			val->intval = chip->status;
+			ret = chip->ops->get_capacity(chip, &temp);
+			if (!ret && temp == 100)
+				val->intval = POWER_SUPPLY_STATUS_FULL;
+			else
+				val->intval = chip->status;
 			break;
 		} else {
 			/*
@@ -911,12 +919,22 @@ static int qcom_fg_get_property(struct power_supply *psy,
 				val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
 				break;
 			}
-			if (temp < 0)
-				val->intval = POWER_SUPPLY_STATUS_CHARGING;
-			else if (temp > 0)
-				val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
-			else
-				val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+			if (chip->ops->current_psy_sign) {
+				/* PSY API: positive = charging */
+				if (temp > 0)
+					val->intval = POWER_SUPPLY_STATUS_CHARGING;
+				else if (temp < 0)
+					val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+				else
+					val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+			} else {
+				if (temp < 0)
+					val->intval = POWER_SUPPLY_STATUS_CHARGING;
+				else if (temp > 0)
+					val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+				else
+					val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+			}
 		}
 
 		break;
@@ -1309,12 +1327,15 @@ static int qcom_fg_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	/* Optional: Get charger power supply for status checking */
-	chip->chg_psy = power_supply_get_by_name("power-supplies");
-	if (IS_ERR(chip->chg_psy)) {
-		ret = PTR_ERR(chip->chg_psy);
-		dev_warn(chip->dev, "Failed to get charger supply: %d\n", ret);
-		chip->chg_psy = NULL;
+	/* Get charger power supply from power-supplies DT property */
+	if (chip->batt_psy->num_supplies > 0) {
+		chip->chg_psy = power_supply_get_by_name(
+			chip->batt_psy->supplied_from[0]);
+		if (IS_ERR(chip->chg_psy)) {
+			dev_warn(chip->dev, "Failed to get charger supply: %ld\n",
+				 PTR_ERR(chip->chg_psy));
+			chip->chg_psy = NULL;
+		}
 	}
 
 	if (chip->chg_psy) {
