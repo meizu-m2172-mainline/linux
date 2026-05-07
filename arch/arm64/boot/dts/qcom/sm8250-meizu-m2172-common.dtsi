@@ -708,6 +708,7 @@
 	typec-mux@43 {
 		compatible = "fcs,fsa4480";
 		reg = <0x43>;
+		status = "disabled";
 
 		vcc-supply = <&vreg_bob>;
 
@@ -787,12 +788,15 @@
 };
 
 &pm8150b_typec {
-	status = "disabled";
+	status = "okay";
 
+	vdd-vbus-supply = <&pm8150b_vbus>;
 	vdd-pdphy-supply = <&vreg_l2a_3p1>;
 
 	connector {
 		compatible = "usb-c-connector";
+
+		usb-role-switch = <&usb_1_dwc3>;
 
 		power-role = "dual";
 		data-role = "dual";
