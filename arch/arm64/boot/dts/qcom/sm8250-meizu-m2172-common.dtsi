@@ -14,7 +14,7 @@
 #include "pm8150l.dtsi"
 #include "pm8009.dtsi"
 
-// /delete-node/ &removed_mem;
+/delete-node/ &removed_mem;
 // /delete-node/ &camera_mem;
 // /delete-node/ &wlan_mem;
 // /delete-node/ &ipa_fw_mem;
@@ -169,21 +169,40 @@
 
 
 	reserved-memory {
+		removed_mem: memory@80b00000 {
+			reg = <0x0 0x80b00000 0x0 0x5700000>;
+			no-map;
+		};
+
+		reserved_xbl_uefi_log: memory@80880000 {
+			reg = <0x0 0x80880000 0x0 0x14000>;
+			no-map;
+		};
+
 		cont_splash_region: cont_splash_region@9c000000 {
 			reg = <0x00 0x9c000000 0x00 0x2300000>;
 			label = "cont_splash_region";
 			no-map;
 		};
 
-		// 	reg = <0x00 0x9c000000 0x00 0x800000>;
-		// 	label = "disp_rdump_region";
-		// 	no-map;
+		dfps_data_region: dfps-data@9e300000 {
+			reg = <0x0 0x9e300000 0x0 0x100000>;
+			label = "dfps_data_region";
+		};
 
-		// 	compatible = "ramoops";
-		// 	no-map;
-		// 	reg = <0x00 0x9f800000 0x00 0x200000>;
-		// 	console-size = <0x80000>;
-		// 	record-size = <0x80000>;
+		ramoops@9f800000 {
+			compatible = "ramoops";
+			reg = <0x0 0x9f800000 0x0 0x200000>;
+			console-size = <0x80000>;
+			record-size = <0x80000>;
+			no-map;
+		};
+
+		wt_mem: memory@c0000000 {
+			compatible = "wt_share_mem";
+			reg = <0x0 0xc0000000 0x0 0x100000>;
+			no-map;
+		};
 	};
 
 };
