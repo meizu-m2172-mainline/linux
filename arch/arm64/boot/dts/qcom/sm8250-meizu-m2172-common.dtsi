@@ -95,8 +95,8 @@
 		pinctrl-1 = <&bt_en_sleep>, <&wlan_en_sleep>;
 
 		vddaon-supply = <&vreg_s6a_0p95>;
-		vddpmu-supply = <&vreg_s6a_0p95>;
-		vddrfa0p95-supply = <&vreg_s6a_0p95>;
+		vddpmu-supply = <&vreg_s2f_0p95>;
+		vddrfa0p95-supply = <&vreg_s2f_0p95>;
 		vddrfa1p3-supply = <&vreg_s8c_1p35>;
 		vddrfa1p9-supply = <&vreg_s5a_1p9>;
 		vddpcie1p3-supply = <&vreg_s8c_1p35>;
@@ -497,7 +497,7 @@
 		status = "okay";
 
 		vdd-s1-supply = <&vph_pwr>;
-		vdd-s2-supply = <&vreg_bob>;
+		vdd-s2-supply = <&vph_pwr>;
 		vdd-l2-supply = <&vreg_s8c_1p35>;
 		vdd-l5-l6-supply = <&vreg_bob>;
 		vdd-l7-supply = <&vreg_s4a_1p8>;
@@ -509,11 +509,12 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
-		vreg_s2f_0p5: smps2 {
-			regulator-name = "vreg_s2f_0p5";
-			regulator-min-microvolt = <512000>;
-			regulator-max-microvolt = <1100000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		vreg_s2f_0p95: smps2 {
+			regulator-name = "vreg_s2f_0p95";
+			regulator-min-microvolt = <944000>;
+			regulator-max-microvolt = <952000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
+			regulator-always-on;
 		};
 
 		/* L1 is unused. */
