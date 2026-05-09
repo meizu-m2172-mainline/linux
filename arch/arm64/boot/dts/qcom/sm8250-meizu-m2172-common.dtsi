@@ -994,7 +994,7 @@
 
 	speaker-dai-link {
 		link-name = "Senary MI2S Playback";
-		// no-pcm;
+		no-pcm;
 
 		cpu {
 			sound-dai = <&q6afedai SENARY_MI2S_RX>;
