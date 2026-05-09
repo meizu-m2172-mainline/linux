@@ -645,6 +645,19 @@ static void aw882xx_set_dither_en(struct aw882xx *aw882xx, uint32_t reg_val)
 			__func__, AW882XX_TESTCTRL2_REG, read_val);
 }
 
+static int aw882xx_set_rx_channel(struct aw882xx *aw882xx)
+{
+	unsigned int chsel;
+
+	if (aw882xx->chan_info.channel == AW882XX_CHANNLE_RIGHT)
+		chsel = AW882XX_CHSEL_RIGHT_VALUE;
+	else
+		chsel = AW882XX_CHSEL_LEFT_VALUE;
+
+	return aw882xx_i2c_write_bits(aw882xx, AW882XX_I2SCTRL_REG,
+				      AW882XX_CHSEL_MASK, chsel);
+}
+
 static int aw882xx_reg_container_update(struct aw882xx *aw882xx,
 	struct aw882xx_container *aw882xx_cont)
 {
@@ -673,12 +686,23 @@ static int aw882xx_reg_container_update(struct aw882xx *aw882xx,
 			continue;
 		}
 
+		if (reg_addr == AW882XX_I2SCTRL_REG) {
+			reg_val &= AW882XX_CHSEL_MASK;
+			reg_val |= aw882xx->chan_info.channel == AW882XX_CHANNLE_RIGHT ?
+				AW882XX_CHSEL_RIGHT_VALUE : AW882XX_CHSEL_LEFT_VALUE;
+		}
+
 		ret = aw882xx_i2c_write(aw882xx,
 			(unsigned char)reg_addr,
 			(unsigned int)reg_val);
 		if (ret < 0)
 			break;
 	}
+
+	if (ret >= 0)
+		ret = aw882xx_set_rx_channel(aw882xx);
+	if (ret < 0)
+		return ret;
 
 	aw882xx_i2c_read(aw882xx, AW882XX_SYSCTRL2_REG, &sysctrl_val);
 	aw882xx->hagce_val = (sysctrl_val & (~AW882XX_HAGCE_MASK));
@@ -1445,7 +1469,7 @@ static int aw882xx_hw_params(struct snd_pcm_substream *substream,
 				AW882XX_I2SFS_MASK, reg_value);
 	}
 
-	return 0;
+	return aw882xx_set_rx_channel(aw882xx);
 }
 
 static int aw882xx_mute(struct snd_soc_dai *dai, int mute, int stream)
@@ -2062,6 +2086,13 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c)
 	ret = aw882xx_read_chipid(aw882xx);
 	if (ret < 0) {
 		aw_dev_err(&i2c->dev, "%s: aw882xx_read_chipid failed ret=%d\n",
+			__func__, ret);
+		return ret;
+	}
+
+	ret = aw882xx_set_rx_channel(aw882xx);
+	if (ret < 0) {
+		aw_dev_err(&i2c->dev, "%s: set rx channel failed ret=%d\n",
 			__func__, ret);
 		return ret;
 	}
