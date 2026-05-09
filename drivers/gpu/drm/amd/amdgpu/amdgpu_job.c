@@ -135,8 +135,12 @@ static enum drm_gpu_sched_stat amdgpu_job_timedout(struct drm_sched_job *s_job)
 	    ring->funcs->reset) {
 		dev_err(adev->dev, "Starting %s ring reset\n",
 			s_job->sched->name);
+		/* Stop the scheduler to prevent anybody else from touching the ring buffer. */
+		drm_sched_wqueue_stop(&ring->sched);
 		r = amdgpu_ring_reset(ring, job->vmid, job->hw_fence);
 		if (!r) {
+			/* Start the scheduler again */
+			drm_sched_wqueue_start(&ring->sched);
 			atomic_inc(&ring->adev->gpu_reset_counter);
 			dev_err(adev->dev, "Ring %s reset succeeded\n",
 				ring->sched.name);
@@ -177,7 +181,8 @@ static enum drm_gpu_sched_stat amdgpu_job_timedout(struct drm_sched_job *s_job)
 exit:
 	amdgpu_vm_put_task_info(ti);
 	drm_dev_exit(idx);
-	return DRM_GPU_SCHED_STAT_RESET;
+	/* This is needed to add the job back to the pending list */
+	return DRM_GPU_SCHED_STAT_NO_HANG;
 }
 
 int amdgpu_job_alloc(struct amdgpu_device *adev, struct amdgpu_vm *vm,
@@ -191,18 +196,18 @@ int amdgpu_job_alloc(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	if (num_ibs == 0)
 		return -EINVAL;
 
-	*job = kzalloc(struct_size(*job, ibs, num_ibs), GFP_KERNEL);
+	*job = kzalloc_flex(**job, ibs, num_ibs);
 	if (!*job)
 		return -ENOMEM;
 
-	af = kzalloc(sizeof(struct amdgpu_fence), GFP_KERNEL);
+	af = kzalloc_obj(struct amdgpu_fence);
 	if (!af) {
 		r = -ENOMEM;
 		goto err_job;
 	}
 	(*job)->hw_fence = af;
 
-	af = kzalloc(sizeof(struct amdgpu_fence), GFP_KERNEL);
+	af = kzalloc_obj(struct amdgpu_fence);
 	if (!af) {
 		r = -ENOMEM;
 		goto err_fence;
@@ -282,9 +287,10 @@ void amdgpu_job_free_resources(struct amdgpu_job *job)
 	unsigned i;
 
 	/* Check if any fences were initialized */
-	if (job->base.s_fence && job->base.s_fence->finished.ops)
+	if (job->base.s_fence &&
+	    dma_fence_was_initialized(&job->base.s_fence->finished))
 		f = &job->base.s_fence->finished;
-	else if (job->hw_fence && job->hw_fence->base.ops)
+	else if (dma_fence_was_initialized(&job->hw_fence->base))
 		f = &job->hw_fence->base;
 	else
 		f = NULL;
@@ -301,11 +307,11 @@ static void amdgpu_job_free_cb(struct drm_sched_job *s_job)
 
 	amdgpu_sync_free(&job->explicit_sync);
 
-	if (job->hw_fence->base.ops)
+	if (dma_fence_was_initialized(&job->hw_fence->base))
 		dma_fence_put(&job->hw_fence->base);
 	else
 		kfree(job->hw_fence);
-	if (job->hw_vm_fence->base.ops)
+	if (dma_fence_was_initialized(&job->hw_vm_fence->base))
 		dma_fence_put(&job->hw_vm_fence->base);
 	else
 		kfree(job->hw_vm_fence);
@@ -339,11 +345,11 @@ void amdgpu_job_free(struct amdgpu_job *job)
 	if (job->gang_submit != &job->base.s_fence->scheduled)
 		dma_fence_put(job->gang_submit);
 
-	if (job->hw_fence->base.ops)
+	if (dma_fence_was_initialized(&job->hw_fence->base))
 		dma_fence_put(&job->hw_fence->base);
 	else
 		kfree(job->hw_fence);
-	if (job->hw_vm_fence->base.ops)
+	if (dma_fence_was_initialized(&job->hw_vm_fence->base))
 		dma_fence_put(&job->hw_vm_fence->base);
 	else
 		kfree(job->hw_vm_fence);

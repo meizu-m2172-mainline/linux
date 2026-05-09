@@ -30,7 +30,7 @@ static void l1_guest_code(struct vmx_pages *vmx_pages)
 #define L2_GUEST_STACK_SIZE 64
 	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
 	u64 guest_cr4;
-	vm_paddr_t pml5_pa, pml4_pa;
+	gpa_t pml5_pa, pml4_pa;
 	u64 *pml5;
 	u64 exit_reason;
 
@@ -73,7 +73,7 @@ void guest_code(struct vmx_pages *vmx_pages)
 
 int main(int argc, char *argv[])
 {
-	vm_vaddr_t vmx_pages_gva = 0;
+	gva_t vmx_pages_gva = 0;
 	struct kvm_vm *vm;
 	struct kvm_vcpu *vcpu;
 	struct kvm_x86_state *state;
@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
 	 * L1 needs to read its own PML5 table to set up L2. Identity map
 	 * the PML5 table to facilitate this.
 	 */
-	virt_map(vm, vm->pgd, vm->pgd, 1);
+	virt_map(vm, vm->mmu.pgd, vm->mmu.pgd, 1);
 
 	vcpu_alloc_vmx(vm, &vmx_pages_gva);
 	vcpu_args_set(vcpu, 1, vmx_pages_gva);

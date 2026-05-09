@@ -14,12 +14,8 @@
 #include <drm/drm_print.h>
 
 #include "regs/xe_bars.h"
-#include "regs/xe_regs.h"
 #include "xe_device.h"
-#include "xe_gt.h"
-#include "xe_gt_printk.h"
 #include "xe_gt_sriov_vf.h"
-#include "xe_macros.h"
 #include "xe_sriov.h"
 #include "xe_trace.h"
 #include "xe_wa.h"
@@ -156,6 +152,15 @@ u8 xe_mmio_read8(struct xe_mmio *mmio, struct xe_reg reg)
 	trace_xe_reg_rw(mmio, false, addr, val, sizeof(val));
 
 	return val;
+}
+
+void xe_mmio_write8(struct xe_mmio *mmio, struct xe_reg reg, u8 val)
+{
+	u32 addr = xe_mmio_adjusted_addr(mmio, reg.addr);
+
+	trace_xe_reg_rw(mmio, true, addr, val, sizeof(val));
+
+	writeb(val, mmio->regs + addr);
 }
 
 u16 xe_mmio_read16(struct xe_mmio *mmio, struct xe_reg reg)

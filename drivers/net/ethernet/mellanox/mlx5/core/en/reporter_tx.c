@@ -17,6 +17,7 @@ static const char * const sq_sw_state_type_name[] = {
 	[MLX5E_SQ_STATE_DIM] = "dim",
 	[MLX5E_SQ_STATE_PENDING_XSK_TX] = "pending_xsk_tx",
 	[MLX5E_SQ_STATE_PENDING_TLS_RX_RESYNC] = "pending_tls_rx_resync",
+	[MLX5E_SQ_STATE_LOCK_NEEDED] = "lock_needed",
 };
 
 static int mlx5e_wait_for_sq_flush(struct mlx5e_txqsq *sq)
@@ -46,7 +47,6 @@ static void mlx5e_reset_txqsq_cc_pc(struct mlx5e_txqsq *sq)
 		  "SQ 0x%x: cc (0x%x) != pc (0x%x)\n",
 		  sq->sqn, sq->cc, sq->pc);
 	sq->cc = 0;
-	sq->dma_fifo_cc = 0;
 	sq->pc = 0;
 }
 

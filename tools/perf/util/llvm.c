@@ -146,18 +146,24 @@ int symbol__disassemble_llvm(const char *filename, struct symbol *sym,
 		return errno;
 
 	init_llvm();
-	if (arch__is(args->arch, "x86")) {
+	if (arch__is_x86(args->arch)) {
 		const char *triplet = is_64bit ? "x86_64-pc-linux" : "i686-pc-linux";
 
 		disasm = LLVMCreateDisasm(triplet, &storage, /*tag_type=*/0,
 					  /*get_op_info=*/NULL, symbol_lookup_callback);
 	} else {
 		char triplet[64];
+		const char *features = NULL;
 
 		scnprintf(triplet, sizeof(triplet), "%s-linux-gnu",
 			  args->arch->name);
-		disasm = LLVMCreateDisasm(triplet, &storage, /*tag_type=*/0,
-					  /*get_op_info=*/NULL, symbol_lookup_callback);
+		if (args->arch->id.e_machine == EM_AARCH64)
+			features = "+all";
+		disasm = LLVMCreateDisasmCPUFeatures(triplet, /*cpu=*/"",
+						     features, &storage,
+						     /*tag_type=*/0,
+						     /*get_op_info=*/NULL,
+						     symbol_lookup_callback);
 	}
 
 	if (disasm == NULL)

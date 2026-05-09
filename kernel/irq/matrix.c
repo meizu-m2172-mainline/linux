@@ -39,7 +39,7 @@ struct irq_matrix {
 
 /**
  * irq_alloc_matrix - Allocate a irq_matrix structure and initialize it
- * @matrix_bits:	Number of matrix bits must be <= IRQ_MATRIX_BITS
+ * @matrix_bits:	Number of matrix bits
  * @alloc_start:	From which bit the allocation search starts
  * @alloc_end:		At which bit the allocation search ends, i.e first
  *			invalid bit
@@ -51,7 +51,7 @@ __init struct irq_matrix *irq_alloc_matrix(unsigned int matrix_bits,
 	unsigned int cpu, matrix_size = BITS_TO_LONGS(matrix_bits);
 	struct irq_matrix *m;
 
-	m = kzalloc(struct_size(m, scratch_map, matrix_size * 2), GFP_KERNEL);
+	m = kzalloc_flex(*m, scratch_map, matrix_size * 2);
 	if (!m)
 		return NULL;
 

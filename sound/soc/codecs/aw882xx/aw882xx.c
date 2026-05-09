@@ -18,7 +18,8 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
-#include <linux/of_gpio.h>
+#include <linux/of.h>
+#include <linux/gpio/consumer.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/firmware.h>
@@ -1685,8 +1686,12 @@ static irqreturn_t aw882xx_irq(int irq, void *data)
 static void aw882xx_parse_gpio_dt(struct aw882xx *aw882xx,
 	struct device_node *np)
 {
-	aw882xx->reset_gpio = of_get_named_gpio(np, "reset-gpio", 0);
-	if (aw882xx->reset_gpio < 0) {
+	aw882xx->reset_gpiod = devm_gpiod_get_optional(aw882xx->dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR(aw882xx->reset_gpiod)) {
+		aw_dev_err(aw882xx->dev, "%s: reset gpio error %ld\n",
+			__func__, PTR_ERR(aw882xx->reset_gpiod));
+		aw882xx->reset_gpiod = NULL;
+	} else if (!aw882xx->reset_gpiod) {
 		aw_dev_err(aw882xx->dev,
 			"%s: no reset gpio provided, will not HW reset device\n",
 			__func__);
@@ -1694,13 +1699,18 @@ static void aw882xx_parse_gpio_dt(struct aw882xx *aw882xx,
 		aw_dev_info(aw882xx->dev, "%s: reset gpio provided ok\n",
 			__func__);
 	}
-	aw882xx->irq_gpio = of_get_named_gpio(np, "irq-gpio", 0);
-	if (aw882xx->irq_gpio < 0)
+	aw882xx->irq_gpiod = devm_gpiod_get_optional(aw882xx->dev, "irq", GPIOD_IN);
+	if (IS_ERR(aw882xx->irq_gpiod)) {
+		aw_dev_err(aw882xx->dev, "%s: irq gpio error %ld\n",
+			__func__, PTR_ERR(aw882xx->irq_gpiod));
+		aw882xx->irq_gpiod = NULL;
+	} else if (!aw882xx->irq_gpiod) {
 		aw_dev_err(aw882xx->dev, "%s: no irq gpio provided.\n",
 			__func__);
-	else
+	} else {
 		aw_dev_info(aw882xx->dev, "%s: irq gpio provided ok.\n",
 			__func__);
+	}
 }
 
 static void aw882xx_parse_channel_dt(struct aw882xx *aw882xx,
@@ -1747,10 +1757,10 @@ static void aw882xx_hw_reset(struct aw882xx *aw882xx)
 {
     aw_dev_info(aw882xx->dev, "%s: enter\n", __func__);
     if (IS_ERR(aw882xx->aw_pinctrl)) {
-        if (gpio_is_valid(aw882xx->reset_gpio)) {
-            gpio_set_value_cansleep(aw882xx->reset_gpio, 0);
+        if (!IS_ERR_OR_NULL(aw882xx->reset_gpiod)) {
+            gpiod_set_value_cansleep(aw882xx->reset_gpiod, 0);
             msleep(1);
-            gpio_set_value_cansleep(aw882xx->reset_gpio, 1);
+            gpiod_set_value_cansleep(aw882xx->reset_gpiod, 1);
             msleep(2);
         } else {
             aw_dev_err(aw882xx->dev, "%s: failed\n", __func__);
@@ -2005,8 +2015,8 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c)
     if (np) {
         aw882xx_parse_dt(&i2c->dev, aw882xx, np);
     } else {
-        aw882xx->reset_gpio = -1;
-        aw882xx->irq_gpio = -1;
+        aw882xx->reset_gpiod = NULL;
+        aw882xx->irq_gpiod = NULL;
     }
 
     aw882xx->aw_pinctrl = devm_pinctrl_get(aw882xx->dev);
@@ -2032,32 +2042,17 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c)
     }
 
 
-	if (gpio_is_valid(aw882xx->reset_gpio)) {
+	if (!IS_ERR_OR_NULL(aw882xx->reset_gpiod)) {
 		ret = aw882xx_append_suffix("%s_%s", &aw882xx_rst, aw882xx);
 		if (ret < 0)
 			return ret;
 
-		ret = devm_gpio_request_one(&i2c->dev, aw882xx->reset_gpio,
-			GPIOF_OUT_INIT_LOW, aw882xx_rst);
-		if (ret) {
-			aw_dev_err(&i2c->dev, "%s: rst request failed\n",
-				__func__);
-			return ret;
-		}
 	}
 
-	if (gpio_is_valid(aw882xx->irq_gpio)) {
+	if (!IS_ERR_OR_NULL(aw882xx->irq_gpiod)) {
 		ret = aw882xx_append_suffix("%s_%s", &aw882xx_int, aw882xx);
 		if (ret < 0)
 			return ret;
-
-		ret = devm_gpio_request_one(&i2c->dev, aw882xx->irq_gpio,
-			GPIOF_IN, aw882xx_int);
-		if (ret) {
-			aw_dev_err(&i2c->dev, "%s: int request failed\n",
-				__func__);
-			return ret;
-		}
 	}
 
 	/* hardware reset */
@@ -2114,7 +2109,7 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c)
 	}
 
 	/* aw882xx irq */
-	if (gpio_is_valid(aw882xx->irq_gpio) &&
+	if (!IS_ERR_OR_NULL(aw882xx->irq_gpiod) &&
 		!(aw882xx->flags & AW882XX_FLAG_SKIP_INTERRUPTS)) {
 		/* register irq handler */
 		aw882xx_interrupt_setup(aw882xx);
@@ -2123,12 +2118,12 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c)
 
 		irq_flags = IRQF_TRIGGER_FALLING | IRQF_ONESHOT;
 		ret = devm_request_threaded_irq(&i2c->dev,
-				gpio_to_irq(aw882xx->irq_gpio),
+				gpiod_to_irq(aw882xx->irq_gpiod),
 				NULL, aw882xx_irq, irq_flags,
 				aw882xx_irq_name, aw882xx);
 		if (ret != 0) {
 			aw_dev_err(aw882xx->dev, "failed to request IRQ %d: %d\n",
-				gpio_to_irq(aw882xx->irq_gpio), ret);
+				gpiod_to_irq(aw882xx->irq_gpiod), ret);
 			goto err_irq;
 		}
 	} else {

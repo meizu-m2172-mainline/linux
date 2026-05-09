@@ -142,7 +142,7 @@ static int accel_psp_fs_rx_err_add_rule(struct mlx5e_psp_fs *fs,
 	struct mlx5_flow_spec *spec;
 	int err = 0;
 
-	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	spec = kzalloc_obj(*spec);
 	if (!spec)
 		return -ENOMEM;
 
@@ -344,7 +344,7 @@ static int accel_psp_fs_rx_create_ft(struct mlx5e_psp_fs *fs,
 	int err = 0;
 
 	flow_group_in = kvzalloc(inlen, GFP_KERNEL);
-	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
+	spec = kvzalloc_obj(*spec);
 	if (!flow_group_in || !spec) {
 		err = -ENOMEM;
 		goto out;
@@ -560,7 +560,7 @@ static int accel_psp_fs_init_rx(struct mlx5e_psp_fs *fs)
 	enum accel_fs_psp_type i;
 	int err;
 
-	accel_psp = kzalloc(sizeof(*accel_psp), GFP_KERNEL);
+	accel_psp = kzalloc_obj(*accel_psp);
 	if (!accel_psp)
 		return -ENOMEM;
 
@@ -686,7 +686,7 @@ static int accel_psp_fs_tx_create_ft_table(struct mlx5e_psp_fs *fs)
 	struct mlx5_flow_group *fg;
 	int err = 0;
 
-	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
+	spec = kvzalloc_obj(*spec);
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!spec || !in) {
 		err = -ENOMEM;
@@ -815,7 +815,7 @@ static int accel_psp_fs_init_tx(struct mlx5e_psp_fs *fs)
 	if (!ns)
 		return -EOPNOTSUPP;
 
-	tx_fs = kzalloc(sizeof(*tx_fs), GFP_KERNEL);
+	tx_fs = kzalloc_obj(*tx_fs);
 	if (!tx_fs)
 		return -ENOMEM;
 
@@ -896,7 +896,7 @@ static struct mlx5e_psp_fs *mlx5e_accel_psp_fs_init(struct mlx5e_priv *priv)
 	struct mlx5e_psp_fs *fs;
 	int err = 0;
 
-	fs = kzalloc(sizeof(*fs), GFP_KERNEL);
+	fs = kzalloc_obj(*fs);
 	if (!fs)
 		return ERR_PTR(-ENOMEM);
 
@@ -1070,29 +1070,37 @@ static struct psp_dev_ops mlx5_psp_ops = {
 
 void mlx5e_psp_unregister(struct mlx5e_priv *priv)
 {
-	if (!priv->psp || !priv->psp->psp)
+	struct mlx5e_psp *psp = priv->psp;
+
+	if (!psp || !psp->psp)
 		return;
 
-	psp_dev_unregister(priv->psp->psp);
+	psp_dev_unregister(psp->psp);
+	psp->psp = NULL;
 }
 
 void mlx5e_psp_register(struct mlx5e_priv *priv)
 {
+	struct mlx5e_psp *psp = priv->psp;
+	struct psp_dev *psd;
+
 	/* FW Caps missing */
 	if (!priv->psp)
 		return;
 
-	priv->psp->caps.assoc_drv_spc = sizeof(u32);
-	priv->psp->caps.versions = 1 << PSP_VERSION_HDR0_AES_GCM_128;
+	psp->caps.assoc_drv_spc = sizeof(u32);
+	psp->caps.versions = 1 << PSP_VERSION_HDR0_AES_GCM_128;
 	if (MLX5_CAP_PSP(priv->mdev, psp_crypto_esp_aes_gcm_256_encrypt) &&
 	    MLX5_CAP_PSP(priv->mdev, psp_crypto_esp_aes_gcm_256_decrypt))
-		priv->psp->caps.versions |= 1 << PSP_VERSION_HDR0_AES_GCM_256;
+		psp->caps.versions |= 1 << PSP_VERSION_HDR0_AES_GCM_256;
 
-	priv->psp->psp = psp_dev_create(priv->netdev, &mlx5_psp_ops,
-					&priv->psp->caps, NULL);
-	if (IS_ERR(priv->psp->psp))
+	psd = psp_dev_create(priv->netdev, &mlx5_psp_ops, &psp->caps, NULL);
+	if (IS_ERR(psd)) {
 		mlx5_core_err(priv->mdev, "PSP failed to register due to %pe\n",
-			      priv->psp->psp);
+			      psd);
+		return;
+	}
+	psp->psp = psd;
 }
 
 int mlx5e_psp_init(struct mlx5e_priv *priv)
@@ -1127,26 +1135,22 @@ int mlx5e_psp_init(struct mlx5e_priv *priv)
 		return 0;
 	}
 
-	psp = kzalloc(sizeof(*psp), GFP_KERNEL);
+	psp = kzalloc_obj(*psp);
 	if (!psp)
 		return -ENOMEM;
 
-	priv->psp = psp;
 	fs = mlx5e_accel_psp_fs_init(priv);
 	if (IS_ERR(fs)) {
 		err = PTR_ERR(fs);
-		goto out_err;
+		kfree(psp);
+		return err;
 	}
 
 	psp->fs = fs;
+	priv->psp = psp;
 
 	mlx5_core_dbg(priv->mdev, "PSP attached to netdevice\n");
 	return 0;
-
-out_err:
-	priv->psp = NULL;
-	kfree(psp);
-	return err;
 }
 
 void mlx5e_psp_cleanup(struct mlx5e_priv *priv)

@@ -48,7 +48,8 @@ EXPORT_SYMBOL(acpi_disabled);
 
 int acpi_noirq;				/* skip ACPI IRQ initialization */
 static int acpi_nobgrt;			/* skip ACPI BGRT */
-int acpi_pci_disabled;		/* skip ACPI PCI scan and IRQ initialization */
+static int acpi_spcr_add __initdata;	/* add SPCR-provided console */
+int acpi_pci_disabled;			/* skip ACPI PCI scan and IRQ initialization */
 EXPORT_SYMBOL(acpi_pci_disabled);
 
 int acpi_lapic;
@@ -1669,8 +1670,8 @@ int __init acpi_boot_init(void)
 	if (!acpi_noirq)
 		x86_init.pci.init = pci_acpi_init;
 
-	/* Do not enable ACPI SPCR console by default */
-	acpi_parse_spcr(earlycon_acpi_spcr_enable, false);
+	acpi_parse_spcr(earlycon_acpi_spcr_enable, acpi_spcr_add);
+
 	return 0;
 }
 
@@ -1707,6 +1708,10 @@ static int __init parse_acpi(char *arg)
 	/* "acpi=nocmcff" disables FF mode for corrected errors */
 	else if (strcmp(arg, "nocmcff") == 0) {
 		acpi_disable_cmcff = 1;
+	}
+	/* "acpi=spcr" adds the SPCR-provided console as a preferred one */
+	else if (strcmp(arg, "spcr") == 0) {
+		acpi_spcr_add = 1;
 	} else {
 		/* Core will printk when we return error. */
 		return -EINVAL;
@@ -1843,3 +1848,23 @@ void __iomem * (*acpi_os_ioremap)(acpi_physical_address phys, acpi_size size) =
 	x86_acpi_os_ioremap;
 EXPORT_SYMBOL_GPL(acpi_os_ioremap);
 #endif
+
+int acpi_get_cpu_uid(unsigned int cpu, u32 *uid)
+{
+	u32 acpi_id;
+
+	if (cpu >= nr_cpu_ids)
+		return -EINVAL;
+
+#ifdef CONFIG_SMP
+	acpi_id = per_cpu(x86_cpu_to_acpiid, cpu);
+	if (acpi_id == CPU_ACPIID_INVALID)
+		return -ENODEV;
+#else
+	acpi_id = 0;
+#endif
+
+	*uid = acpi_id;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(acpi_get_cpu_uid);

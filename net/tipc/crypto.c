@@ -367,17 +367,8 @@ int tipc_aead_key_validate(struct tipc_aead_key *ukey, struct genl_info *info)
  */
 static int tipc_aead_key_generate(struct tipc_aead_key *skey)
 {
-	int rc = 0;
-
-	/* Fill the key's content with a random value via RNG cipher */
-	rc = crypto_get_default_rng();
-	if (likely(!rc)) {
-		rc = crypto_rng_get_bytes(crypto_default_rng, skey->key,
-					  skey->keylen);
-		crypto_put_default_rng();
-	}
-
-	return rc;
+	/* Fill the key's content with a random value via stdrng */
+	return crypto_stdrng_get_bytes(skey->key, skey->keylen);
 }
 
 static struct tipc_aead *tipc_aead_get(struct tipc_aead __rcu *aead)
@@ -524,7 +515,7 @@ static int tipc_aead_init(struct tipc_aead **aead, struct tipc_aead_key *ukey,
 		return -EEXIST;
 
 	/* Allocate a new AEAD */
-	tmp = kzalloc(sizeof(*tmp), GFP_ATOMIC);
+	tmp = kzalloc_obj(*tmp, GFP_ATOMIC);
 	if (unlikely(!tmp))
 		return -ENOMEM;
 
@@ -560,7 +551,7 @@ static int tipc_aead_init(struct tipc_aead **aead, struct tipc_aead_key *ukey,
 			break;
 		}
 
-		tfm_entry = kmalloc(sizeof(*tfm_entry), GFP_KERNEL);
+		tfm_entry = kmalloc_obj(*tfm_entry);
 		if (unlikely(!tfm_entry)) {
 			crypto_free_aead(tfm);
 			err = -ENOMEM;
@@ -637,7 +628,7 @@ static int tipc_aead_clone(struct tipc_aead **dst, struct tipc_aead *src)
 	if (unlikely(*dst))
 		return -EEXIST;
 
-	aead = kzalloc(sizeof(*aead), GFP_ATOMIC);
+	aead = kzalloc_obj(*aead, GFP_ATOMIC);
 	if (unlikely(!aead))
 		return -ENOMEM;
 
@@ -1472,7 +1463,7 @@ int tipc_crypto_start(struct tipc_crypto **crypto, struct net *net,
 		return -EEXIST;
 
 	/* Allocate crypto */
-	c = kzalloc(sizeof(*c), GFP_ATOMIC);
+	c = kzalloc_obj(*c, GFP_ATOMIC);
 	if (!c)
 		return -ENOMEM;
 

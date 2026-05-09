@@ -9,7 +9,6 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_print.h>
 
-#include "pxp/intel_pxp.h"
 #include "intel_bo.h"
 #include "intel_color.h"
 #include "intel_color_pipeline.h"
@@ -18,11 +17,11 @@
 #include "intel_display_regs.h"
 #include "intel_display_types.h"
 #include "intel_display_utils.h"
-#include "intel_dpt.h"
+#include "intel_display_wa.h"
 #include "intel_fb.h"
 #include "intel_fbc.h"
 #include "intel_frontbuffer.h"
-#include "intel_panic.h"
+#include "intel_parent.h"
 #include "intel_plane.h"
 #include "intel_psr.h"
 #include "intel_psr_regs.h"
@@ -597,7 +596,7 @@ static u32 tgl_plane_min_alignment(struct intel_plane *plane,
 	 * Figure out what's going on here...
 	 */
 	if (display->platform.alderlake_p &&
-	    intel_plane_can_async_flip(plane, fb->format->format, fb->modifier))
+	    intel_plane_can_async_flip(plane, fb->format, fb->modifier))
 		return mult * 16 * 1024;
 
 	switch (fb->modifier) {
@@ -939,7 +938,7 @@ skl_plane_get_hw_state(struct intel_plane *plane,
 	struct intel_display *display = to_intel_display(plane);
 	enum intel_display_power_domain power_domain;
 	enum plane_id plane_id = plane->id;
-	intel_wakeref_t wakeref;
+	struct ref_tracker *wakeref;
 	bool ret;
 
 	power_domain = POWER_DOMAIN_PIPE(plane->pipe);
@@ -1218,7 +1217,7 @@ static u32 skl_plane_ctl(const struct intel_plane_state *plane_state)
 		plane_ctl |= PLANE_CTL_KEY_ENABLE_SOURCE;
 
 	/* Wa_22012358565:adl-p */
-	if (DISPLAY_VER(display) == 13)
+	if (intel_display_wa(display, INTEL_DISPLAY_WA_22012358565))
 		plane_ctl |= adlp_plane_ctl_arb_slots(plane_state);
 
 	return plane_ctl;
@@ -1601,7 +1600,7 @@ icl_plane_update_noarm(struct intel_dsb *dsb,
 	}
 
 	/* FLAT CCS doesn't need to program AUX_DIST */
-	if (HAS_AUX_CCS(display))
+	if (HAS_AUX_DIST(display))
 		intel_de_write_dsb(display, dsb, PLANE_AUX_DIST(pipe, plane_id),
 				   skl_plane_aux_dist(plane_state, color_plane));
 
@@ -2308,7 +2307,7 @@ static void check_protection(struct intel_plane_state *plane_state)
 	if (DISPLAY_VER(display) < 11)
 		return;
 
-	plane_state->decrypt = intel_pxp_key_check(obj, false) == 0;
+	plane_state->decrypt = intel_bo_key_check(obj) == 0;
 	plane_state->force_black = intel_bo_is_protected(obj) &&
 		!plane_state->decrypt;
 }
@@ -2462,7 +2461,7 @@ static struct intel_fbc *skl_plane_fbc(struct intel_display *display,
 	enum intel_fbc_id fbc_id = skl_fbc_id_for_pipe(pipe);
 
 	if (skl_plane_has_fbc(display, fbc_id, plane_id))
-		return display->fbc[fbc_id];
+		return display->fbc.instances[fbc_id];
 	else
 		return NULL;
 }
@@ -2794,8 +2793,7 @@ static bool tgl_plane_has_mc_ccs(struct intel_display *display,
 				 enum plane_id plane_id)
 {
 	/* Wa_14010477008 */
-	if (display->platform.dg1 || display->platform.rocketlake ||
-	    (display->platform.tigerlake && IS_DISPLAY_STEP(display, STEP_A0, STEP_D0)))
+	if (intel_display_wa(display, INTEL_DISPLAY_WA_14010477008))
 		return false;
 
 	return plane_id < PLANE_6;
@@ -2972,12 +2970,6 @@ skl_universal_plane_create(struct intel_display *display,
 		caps = glk_plane_caps(display, pipe, plane_id);
 	else
 		caps = skl_plane_caps(display, pipe, plane_id);
-
-	/* FIXME: xe has problems with AUX */
-	if (!IS_ENABLED(I915) && HAS_AUX_CCS(display))
-		caps &= ~(INTEL_PLANE_CAP_CCS_RC |
-			  INTEL_PLANE_CAP_CCS_RC_CC |
-			  INTEL_PLANE_CAP_CCS_MC);
 
 	modifiers = intel_fb_plane_get_modifiers(display, caps);
 

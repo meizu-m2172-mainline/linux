@@ -74,7 +74,7 @@ static int bng_re_setup_chip_ctx(struct bng_re_dev *rdev)
 	aux_dev = rdev->aux_dev;
 	rdev->bng_res.pdev = aux_dev->pdev;
 	rdev->rcfw.res = &rdev->bng_res;
-	chip_ctx = kzalloc(sizeof(*chip_ctx), GFP_KERNEL);
+	chip_ctx = kzalloc_obj(*chip_ctx);
 	if (!chip_ctx)
 		return -ENOMEM;
 	chip_ctx->chip_num = aux_dev->chip_num;
@@ -82,7 +82,7 @@ static int bng_re_setup_chip_ctx(struct bng_re_dev *rdev)
 
 	rdev->chip_ctx = chip_ctx;
 	rdev->bng_res.cctx = rdev->chip_ctx;
-	rdev->dev_attr = kzalloc(sizeof(*rdev->dev_attr), GFP_KERNEL);
+	rdev->dev_attr = kzalloc_obj(*rdev->dev_attr);
 	if (!rdev->dev_attr)
 		goto free_chip_ctx;
 	rdev->bng_res.dattr = rdev->dev_attr;
@@ -210,7 +210,7 @@ static int bng_re_stats_ctx_alloc(struct bng_re_dev *rdev)
 	return rc;
 }
 
-static void bng_re_query_hwrm_version(struct bng_re_dev *rdev)
+static int bng_re_query_hwrm_version(struct bng_re_dev *rdev)
 {
 	struct bnge_auxr_dev *aux_dev = rdev->aux_dev;
 	struct hwrm_ver_get_output ver_get_resp = {};
@@ -230,7 +230,7 @@ static void bng_re_query_hwrm_version(struct bng_re_dev *rdev)
 	if (rc) {
 		ibdev_err(&rdev->ibdev, "Failed to query HW version, rc = 0x%x",
 			  rc);
-		return;
+		return rc;
 	}
 
 	cctx = rdev->chip_ctx;
@@ -244,6 +244,8 @@ static void bng_re_query_hwrm_version(struct bng_re_dev *rdev)
 
 	if (!cctx->hwrm_cmd_max_timeout)
 		cctx->hwrm_cmd_max_timeout = BNG_ROCE_FW_MAX_TIMEOUT;
+
+	return 0;
 }
 
 static void bng_re_dev_uninit(struct bng_re_dev *rdev)
@@ -306,17 +308,19 @@ static int bng_re_dev_init(struct bng_re_dev *rdev)
 		goto msix_ctx_fail;
 	}
 
-	bng_re_query_hwrm_version(rdev);
+	rc = bng_re_query_hwrm_version(rdev);
+	if (rc)
+		goto destroy_chip_ctx;
 
 	rc = bng_re_alloc_fw_channel(&rdev->bng_res, &rdev->rcfw);
 	if (rc) {
 		ibdev_err(&rdev->ibdev,
 			  "Failed to allocate RCFW Channel: %#x\n", rc);
-		goto alloc_fw_chl_fail;
+		goto destroy_chip_ctx;
 	}
 
 	/* Allocate nq record memory */
-	rdev->nqr = kzalloc(sizeof(*rdev->nqr), GFP_KERNEL);
+	rdev->nqr = kzalloc_obj(*rdev->nqr);
 	if (!rdev->nqr) {
 		rc = -ENOMEM;
 		goto nq_alloc_fail;
@@ -391,7 +395,7 @@ free_rcfw:
 	kfree(rdev->nqr);
 nq_alloc_fail:
 	bng_re_free_rcfw_channel(&rdev->rcfw);
-alloc_fw_chl_fail:
+destroy_chip_ctx:
 	bng_re_destroy_chip_ctx(rdev);
 msix_ctx_fail:
 	bnge_unregister_dev(rdev->aux_dev);
@@ -447,7 +451,7 @@ static int bng_re_probe(struct auxiliary_device *adev,
 	struct bng_re_en_dev_info *en_info;
 	int rc;
 
-	en_info = kzalloc(sizeof(*en_info), GFP_KERNEL);
+	en_info = kzalloc_obj(*en_info);
 	if (!en_info)
 		return -ENOMEM;
 

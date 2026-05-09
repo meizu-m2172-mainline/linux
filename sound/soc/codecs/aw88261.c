@@ -12,6 +12,7 @@
 #include <linux/firmware.h>
 #include <linux/of_gpio.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <sound/soc.h>
 #include "aw88261.h"
 #include "aw88395/aw88395_data_type.h"
@@ -1059,6 +1060,7 @@ static int aw88261_dev_init(struct aw88261 *aw88261, struct aw_container *aw_cfg
 static int aw88261_request_firmware_file(struct aw88261 *aw88261)
 {
 	const struct firmware *cont = NULL;
+	const char *fw_name;
 	int ret;
 
 	aw88261->aw_pa->fw_status = AW88261_DEV_FW_FAILED;
@@ -1215,6 +1217,10 @@ static int aw88261_init(struct aw88261 *aw88261, struct i2c_client *i2c, struct 
 	unsigned int chip_id;
 	int ret;
 
+	ret = devm_regulator_get_enable(&i2c->dev, "dvdd");
+	if (ret)
+		return dev_err_probe(&i2c->dev, ret, "Failed to enable dvdd supply\n");
+
 	/* read chip id */
 	ret = regmap_read(regmap, AW88261_ID_REG, &chip_id);
 	if (ret) {
@@ -1259,8 +1265,7 @@ static int aw88261_i2c_probe(struct i2c_client *i2c)
 
 	dev_info(&i2c->dev, "Probing AW88261 at address 0x%x, name: %s\n",
 		 i2c->addr, dev_name(&i2c->dev));
-	ret = i2c_check_functionality(i2c->adapter, I2C_FUNC_I2C);
-	if (!ret)
+	if (!i2c_check_functionality(i2c->adapter, I2C_FUNC_I2C))
 		return dev_err_probe(&i2c->dev, -ENXIO, "check_functionality failed");
 
 	aw88261 = devm_kzalloc(&i2c->dev, sizeof(*aw88261), GFP_KERNEL);
@@ -1299,14 +1304,14 @@ static int aw88261_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id aw88261_i2c_id[] = {
-	{ AW88261_I2C_NAME },
+	{ "aw88261" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, aw88261_i2c_id);
 
 static const struct of_device_id aw88261_match_table[] = {
 	{ .compatible = "awinic,aw88261" },
-	{},
+	{ }
 };
 MODULE_DEVICE_TABLE(of, aw88261_match_table);
 
@@ -1314,6 +1319,7 @@ static struct i2c_driver aw88261_i2c_driver = {
 	.driver = {
 		.name = AW88261_I2C_NAME,
 		.of_match_table = aw88261_match_table,
+
 	},
 	.probe = aw88261_i2c_probe,
 	.id_table = aw88261_i2c_id,

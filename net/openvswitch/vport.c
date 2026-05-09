@@ -34,8 +34,7 @@ static struct hlist_head *dev_table;
  */
 int ovs_vport_init(void)
 {
-	dev_table = kcalloc(VPORT_HASH_BUCKETS, sizeof(struct hlist_head),
-			    GFP_KERNEL);
+	dev_table = kzalloc_objs(struct hlist_head, VPORT_HASH_BUCKETS);
 	if (!dev_table)
 		return -ENOMEM;
 
@@ -405,6 +404,9 @@ int ovs_vport_set_upcall_portids(struct vport *vport, const struct nlattr *ids)
 	struct vport_portids *old, *vport_portids;
 
 	if (!nla_len(ids) || nla_len(ids) % sizeof(u32))
+		return -EINVAL;
+
+	if (nla_len(ids) / sizeof(u32) > nr_cpu_ids)
 		return -EINVAL;
 
 	old = ovsl_dereference(vport->upcall_portids);

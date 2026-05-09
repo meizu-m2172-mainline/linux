@@ -2,10 +2,8 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
-#include <linux/file.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/namei.h>
 #include <linux/nospec.h>
 #include <linux/io_uring.h>
 
@@ -21,6 +19,7 @@
 #include "waitid.h"
 #include "futex.h"
 #include "cancel.h"
+#include "wait.h"
 
 struct io_cancel {
 	struct file			*file;
@@ -157,9 +156,16 @@ int io_async_cancel_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 		cancel->fd = READ_ONCE(sqe->fd);
 	}
 	if (cancel->flags & IORING_ASYNC_CANCEL_OP) {
+		u32 op;
+
 		if (cancel->flags & IORING_ASYNC_CANCEL_ANY)
 			return -EINVAL;
-		cancel->opcode = READ_ONCE(sqe->len);
+
+		op = READ_ONCE(sqe->len);
+		if (op >= IORING_OP_LAST)
+			return -EINVAL;
+
+		cancel->opcode = op;
 	}
 
 	return 0;
@@ -539,7 +545,7 @@ __cold bool io_uring_try_cancel_requests(struct io_ring_ctx *ctx,
 	/* SQPOLL thread does its own polling */
 	if ((!(ctx->flags & IORING_SETUP_SQPOLL) && cancel_all) ||
 	    is_sqpoll_thread) {
-		while (!wq_list_empty(&ctx->iopoll_list)) {
+		while (!list_empty(&ctx->iopoll_list)) {
 			io_iopoll_try_reap_events(ctx);
 			ret = true;
 			cond_resched();

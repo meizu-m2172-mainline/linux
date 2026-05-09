@@ -183,6 +183,14 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
 			}
 		}
 		break;
+	case QUINARY_MI2S_RX:
+		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
+		snd_soc_dai_set_sysclk(cpu_dai,
+			Q6AFE_LPASS_CLK_ID_QUI_MI2S_IBIT,
+			MI2S_BCLK_RATE, SNDRV_PCM_STREAM_PLAYBACK);
+		snd_soc_dai_set_fmt(cpu_dai, fmt);
+		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
+		break;
 	case SENARY_MI2S_RX:
 		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
 		snd_soc_dai_set_sysclk(cpu_dai,
@@ -217,7 +225,7 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
 	case PRIMARY_TDM_RX_0:
 		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_DSP_A;
 		snd_soc_dai_set_sysclk(cpu_dai,
-			Q6AFE_LPASS_CLK_ID_PRI_TDM_IBIT                           ,
+			Q6AFE_LPASS_CLK_ID_PRI_TDM_IBIT,
 			TDM_BCLK_RATE, SNDRV_PCM_STREAM_PLAYBACK);
 
 		for_each_rtd_codec_dais(rtd, j, codec_dai) {
@@ -229,7 +237,6 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
 			}
 		}
 		break;
-
 	default:
 		break;
 	}

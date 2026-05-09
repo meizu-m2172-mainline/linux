@@ -8,6 +8,7 @@
 #include <linux/writeback.h>
 #include <linux/swap.h>
 #include <linux/migrate.h>
+#include <linux/fserror.h>
 #include "internal.h"
 #include "trace.h"
 
@@ -79,18 +80,27 @@ static void iomap_set_range_uptodate(struct folio *folio, size_t off,
 {
 	struct iomap_folio_state *ifs = folio->private;
 	unsigned long flags;
-	bool uptodate = true;
+	bool mark_uptodate = true;
 
 	if (folio_test_uptodate(folio))
 		return;
 
 	if (ifs) {
 		spin_lock_irqsave(&ifs->state_lock, flags);
-		uptodate = ifs_set_range_uptodate(folio, ifs, off, len);
+		/*
+		 * If a read with bytes pending is in progress, we must not call
+		 * folio_mark_uptodate(). The read completion path
+		 * (iomap_read_end()) will call folio_end_read(), which uses XOR
+		 * semantics to set the uptodate bit. If we set it here, the XOR
+		 * in folio_end_read() will clear it, leaving the folio not
+		 * uptodate.
+		 */
+		mark_uptodate = ifs_set_range_uptodate(folio, ifs, off, len) &&
+				!ifs->read_bytes_pending;
 		spin_unlock_irqrestore(&ifs->state_lock, flags);
 	}
 
-	if (uptodate)
+	if (mark_uptodate)
 		folio_mark_uptodate(folio);
 }
 
@@ -228,8 +238,7 @@ static struct iomap_folio_state *ifs_alloc(struct inode *inode,
 	 * The first state tracks per-block uptodate and the
 	 * second tracks per-block dirty state.
 	 */
-	ifs = kzalloc(struct_size(ifs, state,
-		      BITS_TO_LONGS(2 * nr_blocks)), gfp);
+	ifs = kzalloc_flex(*ifs, state, BITS_TO_LONGS(2 * nr_blocks), gfp);
 	if (!ifs)
 		return ifs;
 
@@ -371,8 +380,11 @@ static int iomap_read_inline_data(const struct iomap_iter *iter,
 	if (folio_test_uptodate(folio))
 		return 0;
 
-	if (WARN_ON_ONCE(size > iomap->length))
+	if (WARN_ON_ONCE(size > iomap->length)) {
+		fserror_report_io(iter->inode, FSERR_BUFFERED_READ,
+				  iomap->offset, size, -EIO, GFP_NOFS);
 		return -EIO;
+	}
 	if (offset > 0)
 		ifs_alloc(iter->inode, folio, iter->flags);
 
@@ -398,6 +410,11 @@ void iomap_finish_folio_read(struct folio *folio, size_t off, size_t len,
 		finished = !ifs->read_bytes_pending;
 		spin_unlock_irqrestore(&ifs->state_lock, flags);
 	}
+
+	if (error)
+		fserror_report_io(folio->mapping->host, FSERR_BUFFERED_READ,
+				  folio_pos(folio) + off, len, error,
+				  GFP_ATOMIC);
 
 	if (finished)
 		folio_end_read(folio, uptodate);
@@ -497,6 +514,7 @@ static int iomap_read_folio_iter(struct iomap_iter *iter,
 	loff_t length = iomap_length(iter);
 	struct folio *folio = ctx->cur_folio;
 	size_t folio_len = folio_size(folio);
+	struct iomap_folio_state *ifs;
 	size_t poff, plen;
 	loff_t pos_diff;
 	int ret;
@@ -508,7 +526,7 @@ static int iomap_read_folio_iter(struct iomap_iter *iter,
 		return iomap_iter_advance(iter, length);
 	}
 
-	ifs_alloc(iter->inode, folio, iter->flags);
+	ifs = ifs_alloc(iter->inode, folio, iter->flags);
 
 	length = min_t(loff_t, length, folio_len - offset_in_folio(folio, pos));
 	while (length) {
@@ -534,16 +552,24 @@ static int iomap_read_folio_iter(struct iomap_iter *iter,
 			if (!*bytes_submitted)
 				iomap_read_init(folio);
 			ret = ctx->ops->read_folio_range(iter, ctx, plen);
+			if (ret < 0)
+				fserror_report_io(iter->inode,
+						  FSERR_BUFFERED_READ, pos,
+						  plen, ret, GFP_NOFS);
 			if (ret)
 				return ret;
 
 			*bytes_submitted += plen;
 			/*
-			 * If the entire folio has been read in by the IO
-			 * helper, then the helper owns the folio and will end
-			 * the read on it.
+			 * Hand off folio ownership to the IO helper when:
+			 * 1) The entire folio has been submitted for IO, or
+			 * 2) There is no ifs attached to the folio
+			 *
+			 * Case (2) occurs when 1 << i_blkbits matches the folio
+			 * size but the underlying filesystem or block device
+			 * uses a smaller granularity for IO.
 			 */
-			if (*bytes_submitted == folio_len)
+			if (*bytes_submitted == folio_len || !ifs)
 				ctx->cur_folio = NULL;
 		}
 
@@ -557,13 +583,14 @@ static int iomap_read_folio_iter(struct iomap_iter *iter,
 }
 
 void iomap_read_folio(const struct iomap_ops *ops,
-		struct iomap_read_folio_ctx *ctx)
+		struct iomap_read_folio_ctx *ctx, void *private)
 {
 	struct folio *folio = ctx->cur_folio;
 	struct iomap_iter iter = {
 		.inode		= folio->mapping->host,
 		.pos		= folio_pos(folio),
 		.len		= folio_size(folio),
+		.private	= private,
 	};
 	size_t bytes_submitted = 0;
 	int ret;
@@ -574,8 +601,8 @@ void iomap_read_folio(const struct iomap_ops *ops,
 		iter.status = iomap_read_folio_iter(&iter, ctx,
 				&bytes_submitted);
 
-	if (ctx->ops->submit_read)
-		ctx->ops->submit_read(ctx);
+	if (ctx->read_ctx && ctx->ops->submit_read)
+		ctx->ops->submit_read(&iter, ctx);
 
 	if (ctx->cur_folio)
 		iomap_read_end(ctx->cur_folio, bytes_submitted);
@@ -611,6 +638,7 @@ static int iomap_readahead_iter(struct iomap_iter *iter,
  * iomap_readahead - Attempt to read pages from a file.
  * @ops: The operations vector for the filesystem.
  * @ctx: The ctx used for issuing readahead.
+ * @private: The filesystem-specific information for issuing iomap_iter.
  *
  * This function is for filesystems to call to implement their readahead
  * address_space operation.
@@ -623,13 +651,14 @@ static int iomap_readahead_iter(struct iomap_iter *iter,
  * the filesystem to be reentered.
  */
 void iomap_readahead(const struct iomap_ops *ops,
-		struct iomap_read_folio_ctx *ctx)
+		struct iomap_read_folio_ctx *ctx, void *private)
 {
 	struct readahead_control *rac = ctx->rac;
 	struct iomap_iter iter = {
 		.inode	= rac->mapping->host,
 		.pos	= readahead_pos(rac),
 		.len	= readahead_length(rac),
+		.private = private,
 	};
 	size_t cur_bytes_submitted;
 
@@ -639,8 +668,8 @@ void iomap_readahead(const struct iomap_ops *ops,
 		iter.status = iomap_readahead_iter(&iter, ctx,
 					&cur_bytes_submitted);
 
-	if (ctx->ops->submit_read)
-		ctx->ops->submit_read(ctx);
+	if (ctx->read_ctx && ctx->ops->submit_read)
+		ctx->ops->submit_read(&iter, ctx);
 
 	if (ctx->cur_folio)
 		iomap_read_end(ctx->cur_folio, cur_bytes_submitted);
@@ -818,6 +847,10 @@ static int __iomap_write_begin(const struct iomap_iter *iter,
 			else
 				status = iomap_bio_read_folio_range_sync(iter,
 						folio, block_start, plen);
+			if (status < 0)
+				fserror_report_io(iter->inode,
+						  FSERR_BUFFERED_READ, pos,
+						  len, status, GFP_NOFS);
 			if (status)
 				return status;
 		}
@@ -1614,16 +1647,12 @@ iomap_zero_range(struct inode *inode, loff_t pos, loff_t len, bool *did_zero,
 	while ((ret = iomap_iter(&iter, ops)) > 0) {
 		const struct iomap *srcmap = iomap_iter_srcmap(&iter);
 
-		if (WARN_ON_ONCE((iter.iomap.flags & IOMAP_F_FOLIO_BATCH) &&
-				 srcmap->type != IOMAP_UNWRITTEN))
-			return -EIO;
-
 		if (!(iter.iomap.flags & IOMAP_F_FOLIO_BATCH) &&
 		    (srcmap->type == IOMAP_HOLE ||
 		     srcmap->type == IOMAP_UNWRITTEN)) {
 			s64 status;
 
-			if (range_dirty) {
+			if (range_dirty && srcmap->type == IOMAP_UNWRITTEN) {
 				range_dirty = false;
 				status = iomap_zero_iter_flush_and_stale(&iter);
 			} else {
@@ -1829,6 +1858,7 @@ int iomap_writeback_folio(struct iomap_writepage_ctx *wpc, struct folio *folio)
 	u64 pos = folio_pos(folio);
 	u64 end_pos = pos + folio_size(folio);
 	u64 end_aligned = 0;
+	loff_t orig_pos = pos;
 	size_t bytes_submitted = 0;
 	int error = 0;
 	u32 rlen;
@@ -1872,6 +1902,9 @@ int iomap_writeback_folio(struct iomap_writepage_ctx *wpc, struct folio *folio)
 
 	if (bytes_submitted)
 		wpc->nr_folios++;
+	if (error && pos > orig_pos)
+		fserror_report_io(inode, FSERR_BUFFERED_WRITE, orig_pos, 0,
+				  error, GFP_NOFS);
 
 	/*
 	 * We can have dirty bits set past end of file in page_mkwrite path

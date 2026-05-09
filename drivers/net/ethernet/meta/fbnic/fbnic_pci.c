@@ -135,17 +135,21 @@ void fbnic_up(struct fbnic_net *fbn)
 
 	fbnic_rss_reinit_hw(fbn->fbd, fbn);
 
-	__fbnic_set_rx_mode(fbn->fbd);
+	__fbnic_set_rx_mode(fbn->fbd, &fbn->netdev->uc, &fbn->netdev->mc);
 
 	/* Enable Tx/Rx processing */
 	fbnic_napi_enable(fbn);
-	netif_tx_start_all_queues(fbn->netdev);
+	netif_tx_wake_all_queues(fbn->netdev);
 
 	fbnic_service_task_start(fbn);
+
+	fbnic_dbg_up(fbn);
 }
 
 void fbnic_down_noidle(struct fbnic_net *fbn)
 {
+	fbnic_dbg_down(fbn);
+
 	fbnic_service_task_stop(fbn);
 
 	/* Disable Tx/Rx Processing */
@@ -176,7 +180,7 @@ static int fbnic_fw_config_after_crash(struct fbnic_dev *fbd)
 	}
 
 	fbnic_rpc_reset_valid_entries(fbd);
-	__fbnic_set_rx_mode(fbd);
+	__fbnic_set_rx_mode(fbd, &fbd->netdev->uc, &fbd->netdev->mc);
 
 	return 0;
 }
@@ -215,6 +219,9 @@ static void fbnic_service_task(struct work_struct *work)
 	rtnl_lock();
 
 	fbnic_get_hw_stats32(fbd);
+
+	if (fbd->ps_timeout && fbnic_mac_check_tx_pause(fbd))
+		fbnic_mac_ps_protect_handler(fbd);
 
 	fbnic_fw_check_heartbeat(fbd);
 
@@ -291,6 +298,8 @@ static int fbnic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* Populate driver with hardware-specific info and handlers */
 	fbd->max_num_queues = info->max_num_queues;
+
+	fbd->ps_timeout = FBNIC_MAC_PS_TO_DEFAULT_MS;
 
 	pci_set_master(pdev);
 	pci_save_state(pdev);

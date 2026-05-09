@@ -30,6 +30,7 @@
 #include <linux/cc_platform.h>
 #include <linux/efi.h>
 #include <linux/kvm_types.h>
+#include <linux/sched/cputime.h>
 #include <asm/timer.h>
 #include <asm/cpu.h>
 #include <asm/traps.h>
@@ -74,12 +75,6 @@ DEFINE_PER_CPU_DECRYPTED(struct kvm_steal_time, steal_time) __aligned(64) __visi
 static int has_steal_clock = 0;
 
 static int has_guest_poll = 0;
-/*
- * No need for any "IO delay" on KVM
- */
-static void kvm_io_delay(void)
-{
-}
 
 #define KVM_TASK_SLEEP_HASHBITS 8
 #define KVM_TASK_SLEEP_HASHSIZE (1<<KVM_TASK_SLEEP_HASHBITS)
@@ -225,7 +220,7 @@ again:
 		 */
 		if (!dummy) {
 			raw_spin_unlock(&b->lock);
-			dummy = kzalloc(sizeof(*dummy), GFP_ATOMIC);
+			dummy = kzalloc_obj(*dummy, GFP_ATOMIC);
 
 			/*
 			 * Continue looping on allocation failure, eventually
@@ -326,7 +321,7 @@ static void __init paravirt_ops_setup(void)
 	pv_info.name = "KVM";
 
 	if (kvm_para_has_feature(KVM_FEATURE_NOP_IO_DELAY))
-		pv_ops.cpu.io_delay = kvm_io_delay;
+		pv_info.io_delay = false;
 
 #ifdef CONFIG_X86_IO_APIC
 	no_timer_check = 1;
@@ -841,8 +836,10 @@ static void __init kvm_guest_init(void)
 		has_steal_clock = 1;
 		static_call_update(pv_steal_clock, kvm_steal_clock);
 
-		pv_ops.lock.vcpu_is_preempted =
+#ifdef CONFIG_PARAVIRT_SPINLOCKS
+		pv_ops_lock.vcpu_is_preempted =
 			PV_CALLEE_SAVE(__kvm_vcpu_is_preempted);
+#endif
 	}
 
 	if (kvm_para_has_feature(KVM_FEATURE_PV_EOI))
@@ -1138,11 +1135,11 @@ void __init kvm_spinlock_init(void)
 	pr_info("PV spinlocks enabled\n");
 
 	__pv_init_lock_hash();
-	pv_ops.lock.queued_spin_lock_slowpath = __pv_queued_spin_lock_slowpath;
-	pv_ops.lock.queued_spin_unlock =
+	pv_ops_lock.queued_spin_lock_slowpath = __pv_queued_spin_lock_slowpath;
+	pv_ops_lock.queued_spin_unlock =
 		PV_CALLEE_SAVE(__pv_queued_spin_unlock);
-	pv_ops.lock.wait = kvm_wait;
-	pv_ops.lock.kick = kvm_kick_cpu;
+	pv_ops_lock.wait = kvm_wait;
+	pv_ops_lock.kick = kvm_kick_cpu;
 
 	/*
 	 * When PV spinlock is enabled which is preferred over

@@ -972,7 +972,8 @@ static int veth_poll(struct napi_struct *napi, int budget)
 
 	/* NAPI functions as RCU section */
 	peer_dev = rcu_dereference_check(priv->peer, rcu_read_lock_bh_held());
-	peer_txq = peer_dev ? netdev_get_tx_queue(peer_dev, queue_idx) : NULL;
+	peer_txq = (peer_dev && queue_idx < peer_dev->real_num_tx_queues) ?
+		   netdev_get_tx_queue(peer_dev, queue_idx) : NULL;
 
 	xdp_set_return_frame_no_direct();
 	done = veth_xdp_rcv(rq, budget, &bq, &stats);
@@ -1434,8 +1435,8 @@ static int veth_alloc_queues(struct net_device *dev)
 	struct veth_priv *priv = netdev_priv(dev);
 	int i;
 
-	priv->rq = kvcalloc(dev->num_rx_queues, sizeof(*priv->rq),
-			    GFP_KERNEL_ACCOUNT | __GFP_RETRY_MAYFAIL);
+	priv->rq = kvzalloc_objs(*priv->rq, dev->num_rx_queues,
+				 GFP_KERNEL_ACCOUNT | __GFP_RETRY_MAYFAIL);
 	if (!priv->rq)
 		return -ENOMEM;
 

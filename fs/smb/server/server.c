@@ -21,6 +21,7 @@
 #include "mgmt/user_session.h"
 #include "crypto_ctx.h"
 #include "auth.h"
+#include "stats.h"
 
 int ksmbd_debug_types;
 
@@ -145,6 +146,8 @@ andx_again:
 	}
 
 	ret = cmds->proc(work);
+	if (conn->ops->inc_reqs)
+		conn->ops->inc_reqs(command);
 
 	if (ret < 0)
 		ksmbd_debug(CONN, "Failed to process %u [%d]\n", command, ret);
@@ -359,6 +362,7 @@ static void server_ctrl_handle_init(struct server_ctrl_struct *ctrl)
 {
 	int ret;
 
+	ksmbd_proc_reset();
 	ret = ksmbd_conn_transport_init();
 	if (ret) {
 		server_queue_ctrl_reset_work();
@@ -405,7 +409,7 @@ static int __queue_ctrl_work(int type)
 {
 	struct server_ctrl_struct *ctrl;
 
-	ctrl = kmalloc(sizeof(struct server_ctrl_struct), KSMBD_DEFAULT_GFP);
+	ctrl = kmalloc_obj(struct server_ctrl_struct, KSMBD_DEFAULT_GFP);
 	if (!ctrl)
 		return -ENOMEM;
 
@@ -531,6 +535,7 @@ static int ksmbd_server_shutdown(void)
 {
 	WRITE_ONCE(server_conf.state, SERVER_STATE_SHUTTING_DOWN);
 
+	ksmbd_proc_cleanup();
 	class_unregister(&ksmbd_control_class);
 	ksmbd_workqueue_destroy();
 	ksmbd_ipc_release();
@@ -553,6 +558,9 @@ static int __init ksmbd_server_init(void)
 		pr_err("Unable to register ksmbd-control class\n");
 		return ret;
 	}
+
+	ksmbd_proc_init();
+	create_proc_sessions();
 
 	ksmbd_server_tcp_callbacks_init();
 
@@ -588,8 +596,14 @@ static int __init ksmbd_server_init(void)
 	if (ret)
 		goto err_crypto_destroy;
 
+	ret = ksmbd_conn_wq_init();
+	if (ret)
+		goto err_workqueue_destroy;
+
 	return 0;
 
+err_workqueue_destroy:
+	ksmbd_workqueue_destroy();
 err_crypto_destroy:
 	ksmbd_crypto_destroy();
 err_release_inode_hash:
@@ -615,16 +629,20 @@ static void __exit ksmbd_server_exit(void)
 {
 	ksmbd_server_shutdown();
 	rcu_barrier();
+	/*
+	 * ksmbd_conn_put() defers the final release onto ksmbd_conn_wq,
+	 * so drain it after rcu_barrier() has fired any pending RCU
+	 * callbacks that may have queued a release.
+	 */
+	ksmbd_conn_wq_destroy();
 	ksmbd_release_inode_hash();
 }
 
 MODULE_AUTHOR("Namjae Jeon <linkinjeon@kernel.org>");
 MODULE_DESCRIPTION("Linux kernel CIFS/SMB SERVER");
 MODULE_LICENSE("GPL");
-MODULE_SOFTDEP("pre: ecb");
 MODULE_SOFTDEP("pre: nls");
 MODULE_SOFTDEP("pre: aes");
-MODULE_SOFTDEP("pre: cmac");
 MODULE_SOFTDEP("pre: aead2");
 MODULE_SOFTDEP("pre: ccm");
 MODULE_SOFTDEP("pre: gcm");

@@ -12,6 +12,10 @@ static const u64 supported_tfs =
 	BIT(DRM_COLOROP_1D_CURVE_SRGB_EOTF) |
 	BIT(DRM_COLOROP_1D_CURVE_SRGB_INV_EOTF);
 
+static const struct drm_colorop_funcs vkms_colorop_funcs = {
+	.destroy = drm_colorop_destroy,
+};
+
 #define MAX_COLOR_PIPELINE_OPS 4
 
 static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_prop_enum_list *list)
@@ -24,14 +28,15 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 	memset(ops, 0, sizeof(ops));
 
 	/* 1st op: 1d curve */
-	ops[i] = kzalloc(sizeof(*ops[i]), GFP_KERNEL);
+	ops[i] = kzalloc_obj(*ops[i]);
 	if (!ops[i]) {
 		drm_err(dev, "KMS: Failed to allocate colorop\n");
 		ret = -ENOMEM;
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_curve_1d_init(dev, ops[i], plane, supported_tfs,
+	ret = drm_plane_colorop_curve_1d_init(dev, ops[i], plane, &vkms_colorop_funcs,
+					      supported_tfs,
 					      DRM_COLOROP_FLAG_ALLOW_BYPASS);
 	if (ret)
 		goto cleanup;
@@ -41,14 +46,15 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 	i++;
 
 	/* 2nd op: 3x4 matrix */
-	ops[i] = kzalloc(sizeof(*ops[i]), GFP_KERNEL);
+	ops[i] = kzalloc_obj(*ops[i]);
 	if (!ops[i]) {
 		drm_err(dev, "KMS: Failed to allocate colorop\n");
 		ret = -ENOMEM;
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_ctm_3x4_init(dev, ops[i], plane, DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	ret = drm_plane_colorop_ctm_3x4_init(dev, ops[i], plane, &vkms_colorop_funcs,
+					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
 	if (ret)
 		goto cleanup;
 
@@ -57,14 +63,15 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 	i++;
 
 	/* 3rd op: 3x4 matrix */
-	ops[i] = kzalloc(sizeof(*ops[i]), GFP_KERNEL);
+	ops[i] = kzalloc_obj(*ops[i]);
 	if (!ops[i]) {
 		drm_err(dev, "KMS: Failed to allocate colorop\n");
 		ret = -ENOMEM;
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_ctm_3x4_init(dev, ops[i], plane, DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	ret = drm_plane_colorop_ctm_3x4_init(dev, ops[i], plane, &vkms_colorop_funcs,
+					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
 	if (ret)
 		goto cleanup;
 
@@ -73,14 +80,15 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 	i++;
 
 	/* 4th op: 1d curve */
-	ops[i] = kzalloc(sizeof(*ops[i]), GFP_KERNEL);
+	ops[i] = kzalloc_obj(*ops[i]);
 	if (!ops[i]) {
 		drm_err(dev, "KMS: Failed to allocate colorop\n");
 		ret = -ENOMEM;
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_curve_1d_init(dev, ops[i], plane, supported_tfs,
+	ret = drm_plane_colorop_curve_1d_init(dev, ops[i], plane, &vkms_colorop_funcs,
+					      supported_tfs,
 					      DRM_COLOROP_FLAG_ALLOW_BYPASS);
 	if (ret)
 		goto cleanup;

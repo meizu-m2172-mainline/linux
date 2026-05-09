@@ -1539,7 +1539,7 @@ more_rgrps:
 			revokes = jblocks_rqsted;
 			if (meta)
 				revokes += end - start;
-			else if (ip->i_depth)
+			else if (ip->i_diskflags & GFS2_DIF_EXHASH)
 				revokes += sdp->sd_inptrs;
 			ret = gfs2_trans_begin(sdp, jblocks_rqsted, revokes);
 			if (ret)
@@ -2225,7 +2225,7 @@ static int gfs2_add_jextent(struct gfs2_jdesc *jd, u64 lblock, u64 dblock, u64 b
 		}
 	}
 
-	jext = kzalloc(sizeof(struct gfs2_journal_extent), GFP_NOFS);
+	jext = kzalloc_obj(struct gfs2_journal_extent, GFP_NOFS);
 	if (jext == NULL)
 		return -ENOMEM;
 	jext->dblock = dblock;

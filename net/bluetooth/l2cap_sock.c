@@ -885,7 +885,7 @@ static int l2cap_sock_setsockopt(struct socket *sock, int level, int optname,
 	struct bt_power pwr;
 	struct l2cap_conn *conn;
 	int err = 0;
-	u32 opt;
+	u32 opt, phys;
 	u16 mtu;
 	u8 mode;
 
@@ -1064,6 +1064,24 @@ static int l2cap_sock_setsockopt(struct socket *sock, int level, int optname,
 		else
 			chan->imtu = mtu;
 
+		break;
+
+	case BT_PHY:
+		if (sk->sk_state != BT_CONNECTED) {
+			err = -ENOTCONN;
+			break;
+		}
+
+		err = copy_safe_from_sockptr(&phys, sizeof(phys), optval,
+					     optlen);
+		if (err)
+			break;
+
+		if (!chan->conn)
+			break;
+
+		conn = chan->conn;
+		err = hci_conn_set_phy(conn->hcon, phys);
 		break;
 
 	case BT_MODE:
@@ -1480,6 +1498,9 @@ static struct l2cap_chan *l2cap_sock_new_connection_cb(struct l2cap_chan *chan)
 {
 	struct sock *sk, *parent = chan->data;
 
+	if (!parent)
+		return NULL;
+
 	lock_sock(parent);
 
 	/* Check for backlog size */
@@ -1553,8 +1574,7 @@ static int l2cap_sock_recv_cb(struct l2cap_chan *chan, struct sk_buff *skb)
 	    (chan->mode == L2CAP_MODE_ERTM ||
 	     chan->mode == L2CAP_MODE_LE_FLOWCTL ||
 	     chan->mode == L2CAP_MODE_EXT_FLOWCTL)) {
-		struct l2cap_rx_busy *rx_busy =
-			kmalloc(sizeof(*rx_busy), GFP_KERNEL);
+		struct l2cap_rx_busy *rx_busy = kmalloc_obj(*rx_busy);
 		if (!rx_busy) {
 			err = -ENOMEM;
 			goto done;
@@ -1640,6 +1660,9 @@ static void l2cap_sock_state_change_cb(struct l2cap_chan *chan, int state,
 {
 	struct sock *sk = chan->data;
 
+	if (!sk)
+		return;
+
 	sk->sk_state = state;
 
 	if (err)
@@ -1680,6 +1703,9 @@ static void l2cap_sock_ready_cb(struct l2cap_chan *chan)
 {
 	struct sock *sk = chan->data;
 	struct sock *parent;
+
+	if (!sk)
+		return;
 
 	lock_sock(sk);
 
@@ -1737,6 +1763,9 @@ static void l2cap_sock_set_shutdown_cb(struct l2cap_chan *chan)
 static long l2cap_sock_get_sndtimeo_cb(struct l2cap_chan *chan)
 {
 	struct sock *sk = chan->data;
+
+	if (!sk)
+		return 0;
 
 	return READ_ONCE(sk->sk_sndtimeo);
 }
@@ -1806,6 +1835,7 @@ static void l2cap_sock_destruct(struct sock *sk)
 
 	skb_queue_purge(&sk->sk_receive_queue);
 	skb_queue_purge(&sk->sk_write_queue);
+	skb_queue_purge(&sk->sk_error_queue);
 }
 
 static void l2cap_skb_msg_name(struct sk_buff *skb, void *msg_name,

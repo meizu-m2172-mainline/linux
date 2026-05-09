@@ -102,7 +102,6 @@ struct multipath {
 	struct bio_list queued_bios;
 
 	struct timer_list nopath_timer;	/* Timeout for queue_if_no_path */
-	bool is_suspending;
 };
 
 /*
@@ -160,7 +159,7 @@ static bool mpath_double_check_test_bit(int MPATHF_bit, struct multipath *m)
  */
 static struct pgpath *alloc_pgpath(void)
 {
-	struct pgpath *pgpath = kzalloc(sizeof(*pgpath), GFP_KERNEL);
+	struct pgpath *pgpath = kzalloc_obj(*pgpath);
 
 	if (!pgpath)
 		return NULL;
@@ -179,7 +178,7 @@ static struct priority_group *alloc_priority_group(void)
 {
 	struct priority_group *pg;
 
-	pg = kzalloc(sizeof(*pg), GFP_KERNEL);
+	pg = kzalloc_obj(*pg);
 
 	if (pg)
 		INIT_LIST_HEAD(&pg->pgpaths);
@@ -216,7 +215,7 @@ static struct multipath *alloc_multipath(struct dm_target *ti)
 {
 	struct multipath *m;
 
-	m = kzalloc(sizeof(*m), GFP_KERNEL);
+	m = kzalloc_obj(*m);
 	if (m) {
 		INIT_LIST_HEAD(&m->priority_groups);
 		spin_lock_init(&m->lock);
@@ -1749,9 +1748,6 @@ static void multipath_presuspend(struct dm_target *ti)
 {
 	struct multipath *m = ti->private;
 
-	spin_lock_irq(&m->lock);
-	m->is_suspending = true;
-	spin_unlock_irq(&m->lock);
 	/* FIXME: bio-based shouldn't need to always disable queue_if_no_path */
 	if (m->queue_mode == DM_TYPE_BIO_BASED || !dm_noflush_suspending(m->ti))
 		queue_if_no_path(m, false, true, __func__);
@@ -1774,7 +1770,6 @@ static void multipath_resume(struct dm_target *ti)
 	struct multipath *m = ti->private;
 
 	spin_lock_irq(&m->lock);
-	m->is_suspending = false;
 	if (test_bit(MPATHF_SAVED_QUEUE_IF_NO_PATH, &m->flags)) {
 		set_bit(MPATHF_QUEUE_IF_NO_PATH, &m->flags);
 		clear_bit(MPATHF_SAVED_QUEUE_IF_NO_PATH, &m->flags);
@@ -2098,7 +2093,7 @@ static int probe_active_paths(struct multipath *m)
 		if (m->current_pg == m->last_probed_pg)
 			goto skip_probe;
 	}
-	if (!m->current_pg || m->is_suspending ||
+	if (!m->current_pg || dm_suspended(m->ti) ||
 	    test_bit(MPATHF_QUEUE_IO, &m->flags))
 		goto skip_probe;
 	set_bit(MPATHF_DELAY_PG_SWITCH, &m->flags);
@@ -2107,7 +2102,7 @@ static int probe_active_paths(struct multipath *m)
 
 	list_for_each_entry(pgpath, &pg->pgpaths, list) {
 		if (pg != READ_ONCE(m->current_pg) ||
-		    READ_ONCE(m->is_suspending))
+		    dm_suspended(m->ti))
 			goto out;
 		if (!pgpath->is_active)
 			continue;
@@ -2328,7 +2323,8 @@ static int __init dm_multipath_init(void)
 {
 	int r = -ENOMEM;
 
-	kmultipathd = alloc_workqueue("kmpathd", WQ_MEM_RECLAIM, 0);
+	kmultipathd = alloc_workqueue("kmpathd", WQ_MEM_RECLAIM | WQ_PERCPU,
+				      0);
 	if (!kmultipathd) {
 		DMERR("failed to create workqueue kmpathd");
 		goto bad_alloc_kmultipathd;
@@ -2347,7 +2343,7 @@ static int __init dm_multipath_init(void)
 		goto bad_alloc_kmpath_handlerd;
 	}
 
-	dm_mpath_wq = alloc_workqueue("dm_mpath_wq", 0, 0);
+	dm_mpath_wq = alloc_workqueue("dm_mpath_wq", WQ_PERCPU, 0);
 	if (!dm_mpath_wq) {
 		DMERR("failed to create workqueue dm_mpath_wq");
 		goto bad_alloc_dm_mpath_wq;

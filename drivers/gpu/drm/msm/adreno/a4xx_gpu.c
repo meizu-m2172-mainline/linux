@@ -550,7 +550,7 @@ static const unsigned int a405_registers[] = {
 
 static struct msm_gpu_state *a4xx_gpu_state_get(struct msm_gpu *gpu)
 {
-	struct msm_gpu_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
+	struct msm_gpu_state *state = kzalloc_obj(*state);
 
 	if (!state)
 		return ERR_PTR(-ENOMEM);
@@ -604,11 +604,9 @@ static int a4xx_pm_suspend(struct msm_gpu *gpu) {
 	return 0;
 }
 
-static int a4xx_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
+static u64 a4xx_get_timestamp(struct msm_gpu *gpu)
 {
-	*value = gpu_read64(gpu, REG_A4XX_RBBM_PERFCTR_CP_0_LO);
-
-	return 0;
+	return gpu_read64(gpu, REG_A4XX_RBBM_PERFCTR_CP_0_LO);
 }
 
 static u64 a4xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate)
@@ -645,7 +643,7 @@ static struct msm_gpu *a4xx_gpu_init(struct drm_device *dev)
 		goto fail;
 	}
 
-	a4xx_gpu = kzalloc(sizeof(*a4xx_gpu), GFP_KERNEL);
+	a4xx_gpu = kzalloc_obj(*a4xx_gpu);
 	if (!a4xx_gpu) {
 		ret = -ENOMEM;
 		goto fail;

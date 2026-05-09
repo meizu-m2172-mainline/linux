@@ -381,7 +381,7 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 		return ERR_PTR(ret);
 	}
 
-	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
+	pdata = kzalloc_obj(*pdata);
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
@@ -425,7 +425,7 @@ ipu6_psys_init(struct pci_dev *pdev, struct device *parent,
 	struct ipu6_psys_pdata *pdata;
 	int ret;
 
-	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
+	pdata = kzalloc_obj(*pdata);
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
@@ -686,7 +686,7 @@ out_free_irq:
 out_ipu6_rpm_put:
 	pm_runtime_put_sync(&isp->psys->auxdev.dev);
 out_ipu6_bus_del_devices:
-	if (isp->psys) {
+	if (!IS_ERR_OR_NULL(isp->psys)) {
 		ipu6_cpd_free_pkg_dir(isp->psys);
 		ipu6_buttress_unmap_fw_image(isp->psys, &isp->psys->fw_sgt);
 	}
@@ -843,6 +843,6 @@ MODULE_AUTHOR("Tianshu Qiu <tian.shu.qiu@intel.com>");
 MODULE_AUTHOR("Bingbu Cao <bingbu.cao@intel.com>");
 MODULE_AUTHOR("Qingwu Zhang <qingwu.zhang@intel.com>");
 MODULE_AUTHOR("Yunliang Ding <yunliang.ding@intel.com>");
-MODULE_AUTHOR("Hongju Wang <hongju.wang@intel.com>");
+MODULE_AUTHOR("Hongju Wang");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Intel IPU6 PCI driver");

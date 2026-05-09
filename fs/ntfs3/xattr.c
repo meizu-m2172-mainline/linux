@@ -460,7 +460,7 @@ update_ea:
 
 	new_sz = size;
 	err = attr_set_size(ni, ATTR_EA, NULL, 0, &ea_run, new_sz, &new_sz,
-			    false, NULL);
+			    false);
 	if (err)
 		goto out;
 
@@ -640,13 +640,9 @@ static noinline int ntfs_set_acl_ex(struct mnt_idmap *idmap,
 		value = NULL;
 		flags = XATTR_REPLACE;
 	} else {
-		size = posix_acl_xattr_size(acl->a_count);
-		value = kmalloc(size, GFP_NOFS);
+		value = posix_acl_to_xattr(&init_user_ns, acl, &size, GFP_NOFS);
 		if (!value)
 			return -ENOMEM;
-		err = posix_acl_to_xattr(&init_user_ns, acl, value, size);
-		if (err < 0)
-			goto out;
 		flags = 0;
 	}
 
@@ -1035,7 +1031,7 @@ void ntfs_get_wsl_perm(struct inode *inode)
 		i_gid_write(inode, (gid_t)le32_to_cpu(value[1]));
 		inode->i_mode = le32_to_cpu(value[2]);
 
-		if (ntfs_get_ea(inode, "$LXDEV", sizeof("$$LXDEV") - 1,
+		if (ntfs_get_ea(inode, "$LXDEV", sizeof("$LXDEV") - 1,
 				&value[0], sizeof(value),
 				&sz) == sizeof(value[0])) {
 			inode->i_rdev = le32_to_cpu(value[0]);

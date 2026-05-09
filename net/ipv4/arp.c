@@ -79,6 +79,7 @@
 #include <linux/socket.h>
 #include <linux/sockios.h>
 #include <linux/errno.h>
+#include <linux/hex.h>
 #include <linux/in.h>
 #include <linux/mm.h>
 #include <linux/inet.h>
@@ -108,7 +109,6 @@
 #include <net/sock.h>
 #include <net/arp.h>
 #include <net/ax25.h>
-#include <net/netrom.h>
 #include <net/dst_metadata.h>
 #include <net/ip_tunnels.h>
 

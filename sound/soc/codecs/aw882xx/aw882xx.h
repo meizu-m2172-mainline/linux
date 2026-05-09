@@ -129,8 +129,8 @@ struct aw882xx {
 	unsigned int hagce_val;
 	unsigned int rmse_val;
 
-	int reset_gpio;
-	int irq_gpio;
+	struct gpio_desc *reset_gpiod;
+	struct gpio_desc *irq_gpiod;
 	int aw882xx_pa_switch;
 	int is_power_on;
 	int audio_stream_st;

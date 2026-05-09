@@ -20,9 +20,6 @@ use core::{
     ptr, //
 };
 
-#[cfg(CONFIG_PRINTK)]
-use crate::c_str;
-
 pub mod property;
 
 // Assert that we can `read()` / `write()` a `TypeId` instance from / into `struct driver_type`.
@@ -166,7 +163,7 @@ static_assert!(core::mem::size_of::<bindings::driver_type>() >= core::mem::size_
 /// `bindings::device::release` is valid to be called from any thread, hence `ARef<Device>` can be
 /// dropped from any thread.
 ///
-/// [`AlwaysRefCounted`]: kernel::types::AlwaysRefCounted
+/// [`AlwaysRefCounted`]: kernel::sync::aref::AlwaysRefCounted
 /// [`impl_device_context_deref`]: kernel::impl_device_context_deref
 /// [`platform::Device`]: kernel::platform::Device
 #[repr(transparent)]
@@ -472,7 +469,7 @@ impl<Ctx: DeviceContext> Device<Ctx> {
             bindings::_dev_printk(
                 klevel.as_ptr().cast::<crate::ffi::c_char>(),
                 self.as_raw(),
-                c_str!("%pA").as_char_ptr(),
+                c"%pA".as_char_ptr(),
                 core::ptr::from_ref(&msg).cast::<crate::ffi::c_void>(),
             )
         };
@@ -491,6 +488,17 @@ impl<Ctx: DeviceContext> Device<Ctx> {
         // `struct fwnode_handle*` to a `*const FwNode` because `FwNode` is
         // defined as a `#[repr(transparent)]` wrapper around `fwnode_handle`.
         Some(unsafe { &*fwnode_handle.cast() })
+    }
+
+    /// Returns the name of the device.
+    ///
+    /// This is the kobject name of the device, or its initial name if the kobject is not yet
+    /// available.
+    #[inline]
+    pub fn name(&self) -> &CStr {
+        // SAFETY: By its type invariant `self.as_raw()` is a valid pointer to a `struct device`.
+        // The returned string is valid for the lifetime of the device.
+        unsafe { CStr::from_char_ptr(bindings::dev_name(self.as_raw())) }
     }
 }
 
@@ -549,7 +557,7 @@ pub trait DeviceContext: private::Sealed {}
 /// [`Device<Normal>`]. It is the only [`DeviceContext`] for which it is valid to implement
 /// [`AlwaysRefCounted`] for.
 ///
-/// [`AlwaysRefCounted`]: kernel::types::AlwaysRefCounted
+/// [`AlwaysRefCounted`]: kernel::sync::aref::AlwaysRefCounted
 pub struct Normal;
 
 /// The [`Core`] context is the context of a bus specific device when it appears as argument of
@@ -578,7 +586,7 @@ pub struct CoreInternal;
 /// The bound context indicates that for the entire duration of the lifetime of a [`Device<Bound>`]
 /// reference, the [`Device`] is guaranteed to be bound to a driver.
 ///
-/// Some APIs, such as [`dma::CoherentAllocation`] or [`Devres`] rely on the [`Device`] to be bound,
+/// Some APIs, such as [`dma::Coherent`] or [`Devres`] rely on the [`Device`] to be bound,
 /// which can be proven with the [`Bound`] device context.
 ///
 /// Any abstraction that can guarantee a scope where the corresponding bus device is bound, should
@@ -587,7 +595,7 @@ pub struct CoreInternal;
 ///
 /// [`Devres`]: kernel::devres::Devres
 /// [`Devres::access`]: kernel::devres::Devres::access
-/// [`dma::CoherentAllocation`]: kernel::dma::CoherentAllocation
+/// [`dma::Coherent`]: kernel::dma::Coherent
 pub struct Bound;
 
 mod private {
@@ -603,6 +611,13 @@ impl DeviceContext for Bound {}
 impl DeviceContext for Core {}
 impl DeviceContext for CoreInternal {}
 impl DeviceContext for Normal {}
+
+impl<Ctx: DeviceContext> AsRef<Device<Ctx>> for Device<Ctx> {
+    #[inline]
+    fn as_ref(&self) -> &Device<Ctx> {
+        self
+    }
+}
 
 /// Convert device references to bus device references.
 ///
@@ -723,7 +738,7 @@ macro_rules! impl_device_context_into_aref {
 macro_rules! dev_printk {
     ($method:ident, $dev:expr, $($f:tt)*) => {
         {
-            ($dev).$method($crate::prelude::fmt!($($f)*));
+            $crate::device::Device::$method($dev.as_ref(), $crate::prelude::fmt!($($f)*))
         }
     }
 }

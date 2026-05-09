@@ -326,43 +326,39 @@ static void _dpu_crtc_setup_blend_cfg(struct dpu_crtc_mixer *mixer,
 {
 	struct dpu_hw_mixer *lm = mixer->hw_lm;
 	u32 blend_op;
-	u32 fg_alpha, bg_alpha, max_alpha;
+	u32 fg_alpha, bg_alpha;
 
-	if (mdss_ver->core_major_ver < 12) {
-		max_alpha = 0xff;
-		fg_alpha = pstate->base.alpha >> 8;
-	} else {
-		max_alpha = 0x3ff;
-		fg_alpha = pstate->base.alpha >> 6;
-	}
-	bg_alpha = max_alpha - fg_alpha;
+	fg_alpha = pstate->base.alpha;
 
 	/* default to opaque blending */
 	if (pstate->base.pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE ||
 	    !format->alpha_enable) {
 		blend_op = DPU_BLEND_FG_ALPHA_FG_CONST |
 			DPU_BLEND_BG_ALPHA_BG_CONST;
+		bg_alpha = DRM_BLEND_ALPHA_OPAQUE - fg_alpha;
 	} else if (pstate->base.pixel_blend_mode == DRM_MODE_BLEND_PREMULTI) {
 		blend_op = DPU_BLEND_FG_ALPHA_FG_CONST |
 			DPU_BLEND_BG_ALPHA_FG_PIXEL;
-		if (fg_alpha != max_alpha) {
+		if (fg_alpha != DRM_BLEND_ALPHA_OPAQUE) {
 			bg_alpha = fg_alpha;
 			blend_op |= DPU_BLEND_BG_MOD_ALPHA |
 				    DPU_BLEND_BG_INV_MOD_ALPHA;
 		} else {
+			bg_alpha = 0;
 			blend_op |= DPU_BLEND_BG_INV_ALPHA;
 		}
 	} else {
 		/* coverage blending */
 		blend_op = DPU_BLEND_FG_ALPHA_FG_PIXEL |
 			DPU_BLEND_BG_ALPHA_FG_PIXEL;
-		if (fg_alpha != max_alpha) {
+		if (fg_alpha != DRM_BLEND_ALPHA_OPAQUE) {
 			bg_alpha = fg_alpha;
 			blend_op |= DPU_BLEND_FG_MOD_ALPHA |
 				    DPU_BLEND_FG_INV_MOD_ALPHA |
 				    DPU_BLEND_BG_MOD_ALPHA |
 				    DPU_BLEND_BG_INV_MOD_ALPHA;
 		} else {
+			bg_alpha = 0;
 			blend_op |= DPU_BLEND_BG_INV_ALPHA;
 		}
 	}
@@ -819,12 +815,42 @@ static void _dpu_crtc_get_pcc_coeff(struct drm_crtc_state *state,
 	cfg->b.b = CONVERT_S3_15(ctm->matrix[8]);
 }
 
+static void _dpu_crtc_get_gc_lut(struct drm_crtc_state *state,
+		struct dpu_hw_gc_lut *gc_lut)
+{
+	struct drm_color_lut *lut;
+	int i;
+	u32 val_even, val_odd;
+
+	lut = (struct drm_color_lut *)state->gamma_lut->data;
+
+	if (!lut)
+		return;
+
+	/* Pack 1024 10-bit entries in 512 32-bit registers */
+	for (i = 0; i < PGC_TBL_LEN; i++) {
+		val_even = drm_color_lut_extract(lut[i * 2].green, 10);
+		val_odd = drm_color_lut_extract(lut[i * 2 + 1].green, 10);
+		gc_lut->c0[i] = val_even | (val_odd << 16);
+		val_even = drm_color_lut_extract(lut[i * 2].blue, 10);
+		val_odd = drm_color_lut_extract(lut[i * 2 + 1].blue, 10);
+		gc_lut->c1[i] = val_even | (val_odd << 16);
+		val_even = drm_color_lut_extract(lut[i * 2].red, 10);
+		val_odd = drm_color_lut_extract(lut[i * 2 + 1].red, 10);
+		gc_lut->c2[i] = val_even | (val_odd << 16);
+	}
+
+	/* Disable 8-bit rounding mode */
+	gc_lut->flags = 0;
+}
+
 static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
 {
 	struct drm_crtc_state *state = crtc->state;
 	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc->state);
 	struct dpu_crtc_mixer *mixer = cstate->mixers;
 	struct dpu_hw_pcc_cfg cfg;
+	struct dpu_hw_gc_lut *gc_lut;
 	struct dpu_hw_ctl *ctl;
 	struct dpu_hw_dspp *dspp;
 	int i;
@@ -837,19 +863,38 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
 		ctl = mixer[i].lm_ctl;
 		dspp = mixer[i].hw_dspp;
 
-		if (!dspp || !dspp->ops.setup_pcc)
+		if (!dspp)
 			continue;
 
-		if (!state->ctm) {
-			dspp->ops.setup_pcc(dspp, NULL);
-		} else {
-			_dpu_crtc_get_pcc_coeff(state, &cfg);
-			dspp->ops.setup_pcc(dspp, &cfg);
+		if (dspp->ops.setup_pcc) {
+			if (!state->ctm) {
+				dspp->ops.setup_pcc(dspp, NULL);
+			} else {
+				_dpu_crtc_get_pcc_coeff(state, &cfg);
+				dspp->ops.setup_pcc(dspp, &cfg);
+			}
+
+			/* stage config flush mask */
+			ctl->ops.update_pending_flush_dspp(ctl,
+				mixer[i].hw_dspp->idx, DPU_DSPP_PCC);
 		}
 
-		/* stage config flush mask */
-		ctl->ops.update_pending_flush_dspp(ctl,
-			mixer[i].hw_dspp->idx, DPU_DSPP_PCC);
+		if (dspp->ops.setup_gc) {
+			if (!state->gamma_lut) {
+				dspp->ops.setup_gc(dspp, NULL);
+			} else {
+				gc_lut = kzalloc_obj(*gc_lut);
+				if (!gc_lut)
+					continue;
+				_dpu_crtc_get_gc_lut(state, gc_lut);
+				dspp->ops.setup_gc(dspp, gc_lut);
+				kfree(gc_lut);
+			}
+
+			/* stage config flush mask */
+			ctl->ops.update_pending_flush_dspp(ctl,
+				mixer[i].hw_dspp->idx, DPU_DSPP_GC);
+		}
 	}
 }
 
@@ -1097,7 +1142,7 @@ end:
 
 static void dpu_crtc_reset(struct drm_crtc *crtc)
 {
-	struct dpu_crtc_state *cstate = kzalloc(sizeof(*cstate), GFP_KERNEL);
+	struct dpu_crtc_state *cstate = kzalloc_obj(*cstate);
 
 	if (crtc->state)
 		dpu_crtc_destroy_state(crtc, crtc->state);
@@ -1276,7 +1321,7 @@ static bool dpu_crtc_needs_dirtyfb(struct drm_crtc_state *cstate)
 	return false;
 }
 
-static int dpu_crtc_reassign_planes(struct drm_crtc *crtc, struct drm_crtc_state *crtc_state)
+static int dpu_crtc_assign_planes(struct drm_crtc *crtc, struct drm_crtc_state *crtc_state)
 {
 	int total_planes = crtc->dev->mode_config.num_total_plane;
 	struct drm_atomic_state *state = crtc_state->state;
@@ -1289,12 +1334,10 @@ static int dpu_crtc_reassign_planes(struct drm_crtc *crtc, struct drm_crtc_state
 	if (IS_ERR(global_state))
 		return PTR_ERR(global_state);
 
-	dpu_rm_release_all_sspp(global_state, crtc);
-
 	if (!crtc_state->enable)
 		return 0;
 
-	states = kcalloc(total_planes, sizeof(*states), GFP_KERNEL);
+	states = kzalloc_objs(*states, total_planes);
 	if (!states)
 		return -ENOMEM;
 
@@ -1315,6 +1358,19 @@ static int dpu_crtc_reassign_planes(struct drm_crtc *crtc, struct drm_crtc_state
 done:
 	kfree(states);
 	return ret;
+}
+
+static int dpu_crtc_reassign_planes(struct drm_crtc *crtc, struct drm_crtc_state *crtc_state)
+{
+	struct dpu_global_state *global_state;
+
+	global_state = dpu_kms_get_global_state(crtc_state->state);
+	if (IS_ERR(global_state))
+		return PTR_ERR(global_state);
+
+	dpu_rm_release_all_sspp(global_state, crtc);
+
+	return dpu_crtc_assign_planes(crtc, crtc_state);
 }
 
 #define MAX_CHANNELS_PER_CRTC PIPES_PER_PLANE
@@ -1347,7 +1403,7 @@ static struct msm_display_topology dpu_crtc_get_topology(
 	 *
 	 * If DSC is enabled, use 2 LMs for 2:2:1 topology
 	 *
-	 * Add dspps to the reservation requirements if ctm is requested
+	 * Add dspps to the reservation requirements if ctm or gamma_lut are requested
 	 *
 	 * Only hardcode num_lm to 2 for cases where num_intf == 2 and CWB is not
 	 * enabled. This is because in cases where CWB is enabled, num_intf will
@@ -1361,12 +1417,13 @@ static struct msm_display_topology dpu_crtc_get_topology(
 		topology.num_lm = 2;
 	else if (topology.num_dsc == 2)
 		topology.num_lm = 2;
-	else if (dpu_kms->catalog->caps->has_3d_merge)
+	else if (dpu_kms->catalog->caps->has_3d_merge &&
+		 topology.num_dsc == 0)
 		topology.num_lm = (mode->hdisplay > MAX_HDISPLAY_SPLIT) ? 2 : 1;
 	else
 		topology.num_lm = 1;
 
-	if (crtc_state->ctm)
+	if (crtc_state->ctm || crtc_state->gamma_lut)
 		topology.num_dspp = topology.num_lm;
 
 	return topology;
@@ -1478,15 +1535,18 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
 
 	/* don't reallocate resources if only ACTIVE has beeen changed */
-	if (crtc_state->mode_changed || crtc_state->connectors_changed) {
+	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+	    crtc_state->color_mgmt_changed) {
 		rc = dpu_crtc_assign_resources(crtc, crtc_state);
 		if (rc < 0)
 			return rc;
 	}
 
-	if (dpu_use_virtual_planes &&
-	    (crtc_state->planes_changed || crtc_state->zpos_changed)) {
-		rc = dpu_crtc_reassign_planes(crtc, crtc_state);
+	if (crtc_state->planes_changed || crtc_state->zpos_changed) {
+		if (dpu_use_virtual_planes)
+			rc = dpu_crtc_reassign_planes(crtc, crtc_state);
+		else
+			rc = dpu_crtc_assign_planes(crtc, crtc_state);
 		if (rc < 0)
 			return rc;
 	}
@@ -1605,6 +1665,17 @@ int dpu_crtc_vblank(struct drm_crtc *crtc, bool en)
 	}
 
 	return 0;
+}
+
+/**
+ * dpu_crtc_get_num_lm - Get mixer number in this CRTC pipeline
+ * @state: Pointer to drm crtc state object
+ */
+unsigned int dpu_crtc_get_num_lm(const struct drm_crtc_state *state)
+{
+	struct dpu_crtc_state *cstate = to_dpu_crtc_state(state);
+
+	return cstate->num_mixers;
 }
 
 #ifdef CONFIG_DEBUG_FS
@@ -1841,8 +1912,16 @@ struct drm_crtc *dpu_crtc_init(struct drm_device *dev, struct drm_plane *plane,
 
 	drm_crtc_helper_add(crtc, &dpu_crtc_helper_funcs);
 
-	if (dpu_kms->catalog->dspp_count)
-		drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
+	if (dpu_kms->catalog->dspp_count) {
+		const struct dpu_dspp_cfg *dspp = &dpu_kms->catalog->dspp[0];
+
+		if (dspp->sblk->gc.base) {
+			drm_mode_crtc_set_gamma_size(crtc, DPU_GAMMA_LUT_SIZE);
+			drm_crtc_enable_color_mgmt(crtc, 0, true, DPU_GAMMA_LUT_SIZE);
+		} else {
+			drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
+		}
+	}
 
 	/* save user friendly CRTC name for later */
 	snprintf(dpu_crtc->name, DPU_CRTC_NAME_SIZE, "crtc%u", crtc->base.id);

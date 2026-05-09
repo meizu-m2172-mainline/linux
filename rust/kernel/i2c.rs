@@ -16,10 +16,11 @@ use crate::{
     error::*,
     of,
     prelude::*,
-    types::{
-        AlwaysRefCounted,
-        Opaque, //
-    }, //
+    sync::aref::{
+        ARef,
+        AlwaysRefCounted, //
+    },
+    types::Opaque, //
 };
 
 use core::{
@@ -30,8 +31,6 @@ use core::{
         NonNull, //
     }, //
 };
-
-use kernel::types::ARef;
 
 /// An I2C device id table.
 #[repr(transparent)]
@@ -262,7 +261,7 @@ macro_rules! module_i2c_driver {
 /// # Example
 ///
 ///```
-/// # use kernel::{acpi, bindings, c_str, device::Core, i2c, of};
+/// # use kernel::{acpi, bindings, device::Core, i2c, of};
 ///
 /// struct MyDriver;
 ///
@@ -271,7 +270,7 @@ macro_rules! module_i2c_driver {
 ///     MODULE_ACPI_TABLE,
 ///     <MyDriver as i2c::Driver>::IdInfo,
 ///     [
-///         (acpi::DeviceId::new(c_str!("LNUXBEEF")), ())
+///         (acpi::DeviceId::new(c"LNUXBEEF"), ())
 ///     ]
 /// );
 ///
@@ -280,7 +279,7 @@ macro_rules! module_i2c_driver {
 ///     MODULE_I2C_TABLE,
 ///     <MyDriver as i2c::Driver>::IdInfo,
 ///     [
-///          (i2c::DeviceId::new(c_str!("rust_driver_i2c")), ())
+///          (i2c::DeviceId::new(c"rust_driver_i2c"), ())
 ///     ]
 /// );
 ///
@@ -289,7 +288,7 @@ macro_rules! module_i2c_driver {
 ///     MODULE_OF_TABLE,
 ///     <MyDriver as i2c::Driver>::IdInfo,
 ///     [
-///         (of::DeviceId::new(c_str!("test,device")), ())
+///         (of::DeviceId::new(c"test,device"), ())
 ///     ]
 /// );
 ///
@@ -416,7 +415,7 @@ kernel::impl_device_context_deref!(unsafe { I2cAdapter });
 kernel::impl_device_context_into_aref!(I2cAdapter);
 
 // SAFETY: Instances of `I2cAdapter` are always reference-counted.
-unsafe impl crate::types::AlwaysRefCounted for I2cAdapter {
+unsafe impl AlwaysRefCounted for I2cAdapter {
     fn inc_ref(&self) {
         // SAFETY: The existence of a shared reference guarantees that the refcount is non-zero.
         unsafe { bindings::i2c_get_adapter(self.index()) };

@@ -44,7 +44,7 @@ static int efivarfs_ops_notifier(struct notifier_block *nb, unsigned long event,
 
 static struct inode *efivarfs_alloc_inode(struct super_block *sb)
 {
-	struct efivar_entry *entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	struct efivar_entry *entry = kzalloc_obj(*entry);
 
 	if (!entry)
 		return NULL;
@@ -191,12 +191,9 @@ static const struct dentry_operations efivarfs_d_ops = {
 
 static struct dentry *efivarfs_alloc_dentry(struct dentry *parent, char *name)
 {
+	struct qstr q = QSTR(name);
 	struct dentry *d;
-	struct qstr q;
 	int err;
-
-	q.name = name;
-	q.len = strlen(name);
 
 	err = efivarfs_d_hash(parent, &q);
 	if (err)
@@ -505,7 +502,7 @@ static int efivarfs_init_fs_context(struct fs_context *fc)
 	if (!efivar_is_available())
 		return -EOPNOTSUPP;
 
-	sfi = kzalloc(sizeof(*sfi), GFP_KERNEL);
+	sfi = kzalloc_obj(*sfi);
 	if (!sfi)
 		return -ENOMEM;
 

@@ -831,7 +831,7 @@ hisi_acc_vf_pci_resume(struct hisi_acc_vf_core_device *hisi_acc_vdev)
 {
 	struct hisi_acc_vf_migration_file *migf;
 
-	migf = kzalloc(sizeof(*migf), GFP_KERNEL_ACCOUNT);
+	migf = kzalloc_obj(*migf, GFP_KERNEL_ACCOUNT);
 	if (!migf)
 		return ERR_PTR(-ENOMEM);
 
@@ -857,18 +857,12 @@ static long hisi_acc_vf_precopy_ioctl(struct file *filp,
 	struct hisi_acc_vf_core_device *hisi_acc_vdev = migf->hisi_acc_vdev;
 	loff_t *pos = &filp->f_pos;
 	struct vfio_precopy_info info;
-	unsigned long minsz;
 	int ret;
 
-	if (cmd != VFIO_MIG_GET_PRECOPY_INFO)
-		return -ENOTTY;
-
-	minsz = offsetofend(struct vfio_precopy_info, dirty_bytes);
-
-	if (copy_from_user(&info, (void __user *)arg, minsz))
-		return -EFAULT;
-	if (info.argsz < minsz)
-		return -EINVAL;
+	ret = vfio_check_precopy_ioctl(&hisi_acc_vdev->core_device.vdev, cmd,
+				       arg, &info);
+	if (ret)
+		return ret;
 
 	mutex_lock(&hisi_acc_vdev->state_mutex);
 	if (hisi_acc_vdev->mig_state != VFIO_DEVICE_STATE_PRE_COPY) {
@@ -893,7 +887,8 @@ static long hisi_acc_vf_precopy_ioctl(struct file *filp,
 	mutex_unlock(&migf->lock);
 	mutex_unlock(&hisi_acc_vdev->state_mutex);
 
-	return copy_to_user((void __user *)arg, &info, minsz) ? -EFAULT : 0;
+	return copy_to_user((void __user *)arg, &info,
+		offsetofend(struct vfio_precopy_info, dirty_bytes)) ? -EFAULT : 0;
 out:
 	mutex_unlock(&migf->lock);
 	mutex_unlock(&hisi_acc_vdev->state_mutex);
@@ -953,7 +948,7 @@ hisi_acc_open_saving_migf(struct hisi_acc_vf_core_device *hisi_acc_vdev)
 	struct hisi_acc_vf_migration_file *migf;
 	int ret;
 
-	migf = kzalloc(sizeof(*migf), GFP_KERNEL_ACCOUNT);
+	migf = kzalloc_obj(*migf, GFP_KERNEL_ACCOUNT);
 	if (!migf)
 		return ERR_PTR(-ENOMEM);
 
@@ -1498,7 +1493,7 @@ static int hisi_acc_vf_dev_read(struct seq_file *seq, void *data)
 	}
 
 	mutex_lock(&hisi_acc_vdev->state_mutex);
-	vf_data = kzalloc(sizeof(*vf_data), GFP_KERNEL);
+	vf_data = kzalloc_obj(*vf_data);
 	if (!vf_data) {
 		ret = -ENOMEM;
 		goto mutex_release;
@@ -1679,7 +1674,7 @@ static void hisi_acc_vfio_debug_init(struct hisi_acc_vf_core_device *hisi_acc_vd
 		return;
 	}
 
-	migf = kzalloc(sizeof(*migf), GFP_KERNEL);
+	migf = kzalloc_obj(*migf);
 	if (!migf) {
 		dput(vfio_dev_migration);
 		return;

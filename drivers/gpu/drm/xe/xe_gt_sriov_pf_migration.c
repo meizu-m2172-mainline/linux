@@ -14,7 +14,6 @@
 #include "xe_gt_sriov_pf.h"
 #include "xe_gt_sriov_pf_config.h"
 #include "xe_gt_sriov_pf_control.h"
-#include "xe_gt_sriov_pf_helpers.h"
 #include "xe_gt_sriov_pf_migration.h"
 #include "xe_gt_sriov_printk.h"
 #include "xe_guc.h"
@@ -25,6 +24,7 @@
 #include "xe_sriov.h"
 #include "xe_sriov_packet.h"
 #include "xe_sriov_packet_types.h"
+#include "xe_sriov_pf_helpers.h"
 #include "xe_sriov_pf_migration.h"
 
 #define XE_GT_SRIOV_PF_MIGRATION_RING_SIZE 5
@@ -385,10 +385,10 @@ static int pf_migration_mmio_save(struct xe_gt *gt, unsigned int vfid, void *buf
 
 	if (xe_gt_is_media_type(gt))
 		for (n = 0; n < MED_VF_SW_FLAG_COUNT; n++)
-			regs[n] = xe_mmio_read32(&gt->mmio, MED_VF_SW_FLAG(n));
+			regs[n] = xe_mmio_read32(&mmio, MED_VF_SW_FLAG(n));
 	else
 		for (n = 0; n < VF_SW_FLAG_COUNT; n++)
-			regs[n] = xe_mmio_read32(&gt->mmio, VF_SW_FLAG(n));
+			regs[n] = xe_mmio_read32(&mmio, VF_SW_FLAG(n));
 
 	return 0;
 }
@@ -407,10 +407,10 @@ static int pf_migration_mmio_restore(struct xe_gt *gt, unsigned int vfid,
 
 	if (xe_gt_is_media_type(gt))
 		for (n = 0; n < MED_VF_SW_FLAG_COUNT; n++)
-			xe_mmio_write32(&gt->mmio, MED_VF_SW_FLAG(n), regs[n]);
+			xe_mmio_write32(&mmio, MED_VF_SW_FLAG(n), regs[n]);
 	else
 		for (n = 0; n < VF_SW_FLAG_COUNT; n++)
-			xe_mmio_write32(&gt->mmio, VF_SW_FLAG(n), regs[n]);
+			xe_mmio_write32(&mmio, VF_SW_FLAG(n), regs[n]);
 
 	return 0;
 }
@@ -1026,7 +1026,7 @@ static void action_ring_cleanup(void *arg)
 
 static void pf_gt_migration_check_support(struct xe_gt *gt)
 {
-	if (GUC_FIRMWARE_VER(&gt->uc.guc) < MAKE_GUC_VER(70, 54, 0))
+	if (!GUC_FIRMWARE_VER_AT_LEAST(&gt->uc.guc, 70, 54))
 		xe_sriov_pf_migration_disable(gt_to_xe(gt), "requires GuC version >= 70.54.0");
 }
 

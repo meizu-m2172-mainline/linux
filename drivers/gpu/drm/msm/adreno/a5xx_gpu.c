@@ -1435,11 +1435,9 @@ static int a5xx_pm_suspend(struct msm_gpu *gpu)
 	return 0;
 }
 
-static int a5xx_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
+static u64 a5xx_get_timestamp(struct msm_gpu *gpu)
 {
-	*value = gpu_read64(gpu, REG_A5XX_RBBM_ALWAYSON_COUNTER_LO);
-
-	return 0;
+	return gpu_read64(gpu, REG_A5XX_RBBM_ALWAYSON_COUNTER_LO);
 }
 
 struct a5xx_crashdumper {
@@ -1570,8 +1568,7 @@ static void a5xx_gpu_state_get_hlsq_regs(struct msm_gpu *gpu,
 
 static struct msm_gpu_state *a5xx_gpu_state_get(struct msm_gpu *gpu)
 {
-	struct a5xx_gpu_state *a5xx_state = kzalloc(sizeof(*a5xx_state),
-			GFP_KERNEL);
+	struct a5xx_gpu_state *a5xx_state = kzalloc_obj(*a5xx_state);
 	bool stalled = !!(gpu_read(gpu, REG_A5XX_RBBM_STATUS3) & BIT(24));
 
 	if (!a5xx_state)
@@ -1733,9 +1730,10 @@ static struct msm_gpu *a5xx_gpu_init(struct drm_device *dev)
 	struct adreno_gpu *adreno_gpu;
 	struct msm_gpu *gpu;
 	unsigned int nr_rings;
+	u32 speedbin;
 	int ret;
 
-	a5xx_gpu = kzalloc(sizeof(*a5xx_gpu), GFP_KERNEL);
+	a5xx_gpu = kzalloc_obj(*a5xx_gpu);
 	if (!a5xx_gpu)
 		return ERR_PTR(-ENOMEM);
 
@@ -1758,6 +1756,11 @@ static struct msm_gpu *a5xx_gpu_init(struct drm_device *dev)
 		a5xx_destroy(&(a5xx_gpu->base.base));
 		return ERR_PTR(ret);
 	}
+
+	/* Set the speedbin value that is passed to userspace */
+	if (adreno_read_speedbin(&pdev->dev, &speedbin) || !speedbin)
+		speedbin = 0xffff;
+	adreno_gpu->speedbin = (uint16_t) (0xffff & speedbin);
 
 	msm_mmu_set_fault_handler(to_msm_vm(gpu->vm)->mmu, gpu,
 				  a5xx_fault_handler);

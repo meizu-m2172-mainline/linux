@@ -222,7 +222,7 @@ static void dmemcs_free(struct cgroup_subsys_state *css)
 static struct cgroup_subsys_state *
 dmemcs_alloc(struct cgroup_subsys_state *parent_css)
 {
-	struct dmemcg_state *dmemcs = kzalloc(sizeof(*dmemcs), GFP_KERNEL);
+	struct dmemcg_state *dmemcs = kzalloc_obj(*dmemcs);
 	if (!dmemcs)
 		return ERR_PTR(-ENOMEM);
 
@@ -359,7 +359,7 @@ alloc_pool_single(struct dmemcg_state *dmemcs, struct dmem_cgroup_region *region
 	struct dmem_cgroup_pool_state *pool, *ppool = NULL;
 
 	if (!*allocpool) {
-		pool = kzalloc(sizeof(*pool), GFP_NOWAIT);
+		pool = kzalloc_obj(*pool, GFP_NOWAIT);
 		if (!pool)
 			return ERR_PTR(-ENOMEM);
 	} else {
@@ -521,7 +521,7 @@ struct dmem_cgroup_region *dmem_cgroup_register_region(u64 size, const char *fmt
 	if (!region_name)
 		return ERR_PTR(-ENOMEM);
 
-	ret = kzalloc(sizeof(*ret), GFP_KERNEL);
+	ret = kzalloc_obj(*ret);
 	if (!ret) {
 		kfree(region_name);
 		return ERR_PTR(-ENOMEM);
@@ -597,7 +597,7 @@ get_cg_pool_unlocked(struct dmemcg_state *cg, struct dmem_cgroup_region *region)
 			if (WARN_ON(allocpool))
 				continue;
 
-			allocpool = kzalloc(sizeof(*allocpool), GFP_KERNEL);
+			allocpool = kzalloc_obj(*allocpool);
 			if (allocpool) {
 				pool = NULL;
 				continue;
@@ -707,8 +707,7 @@ static int dmem_cgroup_region_capacity_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
-static int dmemcg_parse_limit(char *options, struct dmem_cgroup_region *region,
-			      u64 *new_limit)
+static int dmemcg_parse_limit(char *options, u64 *new_limit)
 {
 	char *end;
 
@@ -762,7 +761,7 @@ static ssize_t dmemcg_limit_write(struct kernfs_open_file *of,
 		if (!region)
 			return -EINVAL;
 
-		err = dmemcg_parse_limit(options, region, &new_limit);
+		err = dmemcg_parse_limit(options, &new_limit);
 		if (err < 0)
 			goto out_put;
 

@@ -9,6 +9,7 @@
 #include <drm/drm_managed.h>
 
 #include "xe_assert.h"
+#include "xe_device.h"
 #include "xe_pci_sriov.h"
 #include "xe_pm.h"
 #include "xe_sriov.h"
@@ -44,7 +45,8 @@ static int emit_choice(char *buf, int choice, const char * const *array, size_t 
  *     ├── .bulk_profile
  *     │   ├── exec_quantum_ms
  *     │   ├── preempt_timeout_us
- *     │   └── sched_priority
+ *     │   ├── sched_priority
+ *     │   └── vram_quota
  *     ├── pf/
  *     │   ├── ...
  *     │   ├── device -> ../../../BDF
@@ -59,7 +61,8 @@ static int emit_choice(char *buf, int choice, const char * const *array, size_t 
  *     │   └── profile
  *     │       ├── exec_quantum_ms
  *     │       ├── preempt_timeout_us
- *     │       └── sched_priority
+ *     │       ├── sched_priority
+ *     │       └── vram_quota
  *     ├── vf2/
  *     :
  *     └── vfN/
@@ -132,6 +135,7 @@ static XE_SRIOV_DEV_ATTR_WO(NAME)
 
 DEFINE_SIMPLE_BULK_PROVISIONING_SRIOV_DEV_ATTR_WO(exec_quantum_ms, eq, u32);
 DEFINE_SIMPLE_BULK_PROVISIONING_SRIOV_DEV_ATTR_WO(preempt_timeout_us, pt, u32);
+DEFINE_SIMPLE_BULK_PROVISIONING_SRIOV_DEV_ATTR_WO(vram_quota, vram, u64);
 
 static const char * const sched_priority_names[] = {
 	[GUC_SCHED_PRIORITY_LOW] = "low",
@@ -181,12 +185,26 @@ static struct attribute *bulk_profile_dev_attrs[] = {
 	&xe_sriov_dev_attr_exec_quantum_ms.attr,
 	&xe_sriov_dev_attr_preempt_timeout_us.attr,
 	&xe_sriov_dev_attr_sched_priority.attr,
+	&xe_sriov_dev_attr_vram_quota.attr,
 	NULL
 };
+
+static umode_t profile_dev_attr_is_visible(struct kobject *kobj,
+					   struct attribute *attr, int index)
+{
+	struct xe_sriov_kobj *vkobj = to_xe_sriov_kobj(kobj);
+
+	if (attr == &xe_sriov_dev_attr_vram_quota.attr &&
+	    !xe_device_has_lmtt(vkobj->xe))
+		return 0;
+
+	return attr->mode;
+}
 
 static const struct attribute_group bulk_profile_dev_attr_group = {
 	.name = ".bulk_profile",
 	.attrs = bulk_profile_dev_attrs,
+	.is_visible = profile_dev_attr_is_visible,
 };
 
 static const struct attribute_group *xe_sriov_dev_attr_groups[] = {
@@ -228,6 +246,7 @@ static XE_SRIOV_VF_ATTR(NAME)
 
 DEFINE_SIMPLE_PROVISIONING_SRIOV_VF_ATTR(exec_quantum_ms, eq, u32, "%u\n");
 DEFINE_SIMPLE_PROVISIONING_SRIOV_VF_ATTR(preempt_timeout_us, pt, u32, "%u\n");
+DEFINE_SIMPLE_PROVISIONING_SRIOV_VF_ATTR(vram_quota, vram, u64, "%llu\n");
 
 static ssize_t xe_sriov_vf_attr_sched_priority_show(struct xe_device *xe, unsigned int vfid,
 						    char *buf)
@@ -274,6 +293,7 @@ static struct attribute *profile_vf_attrs[] = {
 	&xe_sriov_vf_attr_exec_quantum_ms.attr,
 	&xe_sriov_vf_attr_preempt_timeout_us.attr,
 	&xe_sriov_vf_attr_sched_priority.attr,
+	&xe_sriov_vf_attr_vram_quota.attr,
 	NULL
 };
 
@@ -285,6 +305,13 @@ static umode_t profile_vf_attr_is_visible(struct kobject *kobj,
 	if (attr == &xe_sriov_vf_attr_sched_priority.attr &&
 	    !sched_priority_change_allowed(vkobj->vfid))
 		return attr->mode & 0444;
+
+	if (attr == &xe_sriov_vf_attr_vram_quota.attr) {
+		if (!IS_DGFX(vkobj->xe) || vkobj->vfid == PFID)
+			return 0;
+		if (!xe_device_has_lmtt(vkobj->xe))
+			return attr->mode & 0444;
+	}
 
 	return attr->mode;
 }
@@ -364,7 +391,7 @@ static struct kobject *create_xe_sriov_kobj(struct xe_device *xe, unsigned int v
 
 	xe_sriov_pf_assert_vfid(xe, vfid);
 
-	vkobj = kzalloc(sizeof(*vkobj), GFP_KERNEL);
+	vkobj = kzalloc_obj(*vkobj);
 	if (!vkobj)
 		return ERR_PTR(-ENOMEM);
 
@@ -404,16 +431,12 @@ static ssize_t xe_sriov_dev_attr_store(struct kobject *kobj, struct attribute *a
 	struct xe_sriov_dev_attr *vattr = to_xe_sriov_dev_attr(attr);
 	struct xe_sriov_kobj *vkobj = to_xe_sriov_kobj(kobj);
 	struct xe_device *xe = vkobj->xe;
-	ssize_t ret;
 
 	if (!vattr->store)
 		return -EPERM;
 
-	xe_pm_runtime_get(xe);
-	ret = xe_sriov_pf_wait_ready(xe) ?: vattr->store(xe, buf, count);
-	xe_pm_runtime_put(xe);
-
-	return ret;
+	guard(xe_pm_runtime)(xe);
+	return xe_sriov_pf_wait_ready(xe) ?: vattr->store(xe, buf, count);
 }
 
 static ssize_t xe_sriov_vf_attr_show(struct kobject *kobj, struct attribute *attr, char *buf)
@@ -438,18 +461,14 @@ static ssize_t xe_sriov_vf_attr_store(struct kobject *kobj, struct attribute *at
 	struct xe_sriov_kobj *vkobj = to_xe_sriov_kobj(kobj);
 	struct xe_device *xe = vkobj->xe;
 	unsigned int vfid = vkobj->vfid;
-	ssize_t ret;
 
 	xe_sriov_pf_assert_vfid(xe, vfid);
 
 	if (!vattr->store)
 		return -EPERM;
 
-	xe_pm_runtime_get(xe);
-	ret = xe_sriov_pf_wait_ready(xe) ?: vattr->store(xe, vfid, buf, count);
-	xe_pm_runtime_get(xe);
-
-	return ret;
+	guard(xe_pm_runtime)(xe);
+	return xe_sriov_pf_wait_ready(xe) ?: vattr->store(xe, vfid, buf, count);
 }
 
 static const struct sysfs_ops xe_sriov_dev_sysfs_ops = {

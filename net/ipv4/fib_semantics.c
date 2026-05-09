@@ -365,8 +365,7 @@ static struct hlist_head *fib_info_laddrhash_bucket(const struct net *net,
 static struct hlist_head *fib_info_hash_alloc(unsigned int hash_bits)
 {
 	/* The second half is used for prefsrc */
-	return kvcalloc((1 << hash_bits) * 2, sizeof(struct hlist_head),
-			GFP_KERNEL);
+	return kvzalloc_objs(struct hlist_head, (1 << hash_bits) * 2);
 }
 
 static void fib_info_hash_free(struct hlist_head *head)
@@ -586,9 +585,8 @@ static int fib_detect_death(struct fib_info *fi, int order,
 
 	if (likely(nhc->nhc_gw_family == AF_INET))
 		n = neigh_lookup(&arp_tbl, &nhc->nhc_gw.ipv4, nhc->nhc_dev);
-	else if (nhc->nhc_gw_family == AF_INET6)
-		n = neigh_lookup(ipv6_stub->nd_tbl, &nhc->nhc_gw.ipv6,
-				 nhc->nhc_dev);
+	else if (IS_ENABLED(CONFIG_IPV6) && nhc->nhc_gw_family == AF_INET6)
+		n = neigh_lookup(&nd_tbl, &nhc->nhc_gw.ipv6, nhc->nhc_dev);
 	else
 		n = NULL;
 
@@ -1084,7 +1082,7 @@ static int fib_check_nh_v6_gw(struct net *net, struct fib_nh *nh,
 	struct fib6_nh fib6_nh = {};
 	int err;
 
-	err = ipv6_stub->fib6_nh_init(net, &fib6_nh, &cfg, GFP_KERNEL, extack);
+	err = fib6_nh_init(net, &fib6_nh, &cfg, GFP_KERNEL, extack);
 	if (!err) {
 		nh->fib_nh_dev = fib6_nh.fib_nh_dev;
 		netdev_hold(nh->fib_nh_dev, &nh->fib_nh_dev_tracker,
@@ -1092,7 +1090,7 @@ static int fib_check_nh_v6_gw(struct net *net, struct fib_nh *nh,
 		nh->fib_nh_oif = nh->fib_nh_dev->ifindex;
 		nh->fib_nh_scope = RT_SCOPE_LINK;
 
-		ipv6_stub->fib6_nh_release(&fib6_nh);
+		fib6_nh_release(&fib6_nh);
 	}
 
 	return err;
@@ -1399,7 +1397,7 @@ struct fib_info *fib_create_info(struct fib_config *cfg,
 
 	fib_info_hash_grow(net);
 
-	fi = kzalloc(struct_size(fi, fib_nh, nhs), GFP_KERNEL);
+	fi = kzalloc_flex(*fi, fib_nh, nhs);
 	if (!fi) {
 		err = -ENOBUFS;
 		goto failure;
@@ -2148,9 +2146,10 @@ static bool fib_good_nh(const struct fib_nh *nh)
 		if (likely(nh->fib_nh_gw_family == AF_INET))
 			n = __ipv4_neigh_lookup_noref(nh->fib_nh_dev,
 						   (__force u32)nh->fib_nh_gw4);
-		else if (nh->fib_nh_gw_family == AF_INET6)
-			n = __ipv6_neigh_lookup_noref_stub(nh->fib_nh_dev,
-							   &nh->fib_nh_gw6);
+		else if (IS_ENABLED(CONFIG_IPV6) &&
+			 nh->fib_nh_gw_family == AF_INET6)
+			n = __ipv6_neigh_lookup_noref(nh->fib_nh_dev,
+						      &nh->fib_nh_gw6);
 		else
 			n = NULL;
 		if (n)

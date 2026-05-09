@@ -14,6 +14,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
+#include <linux/tegra-mipi-cal.h>
 
 #include <video/mipi_display.h>
 
@@ -772,7 +773,7 @@ static void tegra_dsi_soft_reset(struct tegra_dsi *dsi)
 
 static void tegra_dsi_connector_reset(struct drm_connector *connector)
 {
-	struct tegra_dsi_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
+	struct tegra_dsi_state *state = kzalloc_obj(*state);
 
 	if (!state)
 		return;

@@ -154,6 +154,7 @@ enum resp_states {
 	RESPST_ERR_MISSING_OPCODE_LAST_D1E,
 	RESPST_ERR_TOO_MANY_RDMA_ATM_REQ,
 	RESPST_ERR_RNR,
+	RESPST_ERR_RKEY_VIOLATION_EVENT,
 	RESPST_ERR_RKEY_VIOLATION,
 	RESPST_ERR_INVALIDATE_RKEY,
 	RESPST_ERR_LENGTH,
@@ -352,7 +353,6 @@ struct rxe_mr {
 	int			access;
 	atomic_t		num_mw;
 
-	unsigned int		page_offset;
 	unsigned int		page_shift;
 	u64			page_mask;
 

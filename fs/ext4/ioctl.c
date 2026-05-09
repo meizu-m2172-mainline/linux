@@ -26,6 +26,7 @@
 #include <linux/fsmap.h>
 #include "fsmap.h"
 #include <trace/events/ext4.h>
+#include <linux/fserror.h>
 
 typedef void ext4_update_sb_callback(struct ext4_sb_info *sbi,
 				     struct ext4_super_block *es,
@@ -476,7 +477,7 @@ static long swap_inode_boot_loader(struct super_block *sb,
 	if (err < 0) {
 		/* No need to update quota information. */
 		ext4_warning(inode->i_sb,
-			"couldn't mark inode #%lu dirty (err %d)",
+			"couldn't mark inode #%llu dirty (err %d)",
 			inode->i_ino, err);
 		/* Revert all changes: */
 		swap_inode_data(inode, inode_bl);
@@ -492,7 +493,7 @@ static long swap_inode_boot_loader(struct super_block *sb,
 	if (err < 0) {
 		/* No need to update quota information. */
 		ext4_warning(inode_bl->i_sb,
-			"couldn't mark inode #%lu dirty (err %d)",
+			"couldn't mark inode #%llu dirty (err %d)",
 			inode_bl->i_ino, err);
 		goto revert;
 	}
@@ -844,6 +845,7 @@ int ext4_force_shutdown(struct super_block *sb, u32 flags)
 		return -EINVAL;
 	}
 	clear_opt(sb, DISCARD);
+	fserror_report_shutdown(sb, GFP_KERNEL);
 	return 0;
 }
 

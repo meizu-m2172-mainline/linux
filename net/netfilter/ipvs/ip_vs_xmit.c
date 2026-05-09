@@ -57,7 +57,7 @@ enum {
 
 static inline struct ip_vs_dest_dst *ip_vs_dest_dst_alloc(void)
 {
-	return kmalloc(sizeof(struct ip_vs_dest_dst), GFP_ATOMIC);
+	return kmalloc_obj(struct ip_vs_dest_dst, GFP_ATOMIC);
 }
 
 static inline void ip_vs_dest_dst_free(struct ip_vs_dest_dst *dest_dst)
@@ -102,6 +102,18 @@ __ip_vs_dst_check(struct ip_vs_dest *dest)
 	return dest_dst;
 }
 
+/* Based on ip_exceeds_mtu(). */
+static bool ip_vs_exceeds_mtu(const struct sk_buff *skb, unsigned int mtu)
+{
+	if (skb->len <= mtu)
+		return false;
+
+	if (skb_is_gso(skb) && skb_gso_validate_network_len(skb, mtu))
+		return false;
+
+	return true;
+}
+
 static inline bool
 __mtu_check_toobig_v6(const struct sk_buff *skb, u32 mtu)
 {
@@ -111,10 +123,9 @@ __mtu_check_toobig_v6(const struct sk_buff *skb, u32 mtu)
 		 */
 		if (IP6CB(skb)->frag_max_size > mtu)
 			return true; /* largest fragment violate MTU */
-	}
-	else if (skb->len > mtu && !skb_is_gso(skb)) {
+	} else if (ip_vs_exceeds_mtu(skb, mtu))
 		return true; /* Packet size violate MTU size */
-	}
+
 	return false;
 }
 
@@ -232,7 +243,7 @@ static inline bool ensure_mtu_is_adequate(struct netns_ipvs *ipvs, int skb_af,
 			return true;
 
 		if (unlikely(ip_hdr(skb)->frag_off & htons(IP_DF) &&
-			     skb->len > mtu && !skb_is_gso(skb) &&
+			     ip_vs_exceeds_mtu(skb, mtu) &&
 			     !ip_vs_iph_icmp(ipvsh))) {
 			icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED,
 				  htonl(mtu));
@@ -336,9 +347,11 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 				goto err_unreach;
 			}
 			/* It is forbidden to attach dest->dest_dst if
-			 * device is going down.
+			 * device is going down or if server is removed and
+			 * stored in dest_trash.
 			 */
-			if (!rt_dev_is_down(dst_dev_rcu(&rt->dst)))
+			if (!rt_dev_is_down(dst_dev_rcu(&rt->dst)) &&
+			    dest->flags & IP_VS_DEST_F_AVAILABLE)
 				__ip_vs_dst_set(dest, dest_dst, &rt->dst, 0);
 			else
 				noref = 0;
@@ -513,9 +526,11 @@ __ip_vs_get_out_rt_v6(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 			rt = dst_rt6_info(dst);
 			cookie = rt6_get_cookie(rt);
 			/* It is forbidden to attach dest->dest_dst if
-			 * device is going down.
+			 * device is going down or if server is removed and
+			 * stored in dest_trash.
 			 */
-			if (!rt_dev_is_down(dst_dev_rcu(&rt->dst)))
+			if (!rt_dev_is_down(dst_dev_rcu(&rt->dst)) &&
+			    dest->flags & IP_VS_DEST_F_AVAILABLE)
 				__ip_vs_dst_set(dest, dest_dst, &rt->dst, cookie);
 			else
 				noref = 0;
@@ -975,7 +990,7 @@ ip_vs_prepare_tunneled_skb(struct sk_buff *skb, int skb_af,
 		*next_protocol = IPPROTO_IPV6;
 		if (payload_len)
 			*payload_len =
-				ntohs(old_ipv6h->payload_len) +
+				ipv6_payload_len(skb, old_ipv6h) +
 				sizeof(*old_ipv6h);
 		old_dsfield = ipv6_get_dsfield(old_ipv6h);
 		*ttl = old_ipv6h->hop_limit;

@@ -2,6 +2,7 @@
 
 #ifndef __Q6AFE_H__
 #define __Q6AFE_H__
+#include "../common.h"
 
 #define AFE_PORT_MAX		139
 

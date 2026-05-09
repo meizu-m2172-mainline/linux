@@ -373,9 +373,15 @@ msm_gem_vma_new(struct drm_gpuvm *gpuvm, struct drm_gem_object *obj,
 	struct msm_gem_vma *vma;
 	int ret;
 
+	/* _NO_SHARE objs cannot be mapped outside of their "host" vm: */
+	if (obj && (to_msm_bo(obj)->flags & MSM_BO_NO_SHARE) &&
+	    GEM_WARN_ON(obj->resv != drm_gpuvm_resv(gpuvm))) {
+		return ERR_PTR(-EINVAL);
+	}
+
 	drm_gpuvm_resv_assert_held(&vm->base);
 
-	vma = kzalloc(sizeof(*vma), GFP_KERNEL);
+	vma = kzalloc_obj(*vma);
 	if (!vma)
 		return ERR_PTR(-ENOMEM);
 
@@ -413,7 +419,7 @@ msm_gem_vma_new(struct drm_gpuvm *gpuvm, struct drm_gem_object *obj,
 	if (!obj)
 		return &vma->base;
 
-	vm_bo = drm_gpuvm_bo_obtain(&vm->base, obj);
+	vm_bo = drm_gpuvm_bo_obtain_locked(&vm->base, obj);
 	if (IS_ERR(vm_bo)) {
 		ret = PTR_ERR(vm_bo);
 		goto err_va_remove;
@@ -465,7 +471,7 @@ struct op_arg {
 static int
 vm_op_enqueue(struct op_arg *arg, struct msm_vm_op _op)
 {
-	struct msm_vm_op *op = kmalloc(sizeof(*op), GFP_KERNEL);
+	struct msm_vm_op *op = kmalloc_obj(*op);
 	if (!op)
 		return -ENOMEM;
 
@@ -696,6 +702,7 @@ static struct dma_fence *
 msm_vma_job_run(struct drm_sched_job *_job)
 {
 	struct msm_vm_bind_job *job = to_msm_vm_bind_job(_job);
+	struct msm_drm_private *priv = job->vm->drm->dev_private;
 	struct msm_gem_vm *vm = to_msm_vm(job->vm);
 	struct drm_gem_object *obj;
 	int ret = vm->unusable ? -EINVAL : 0;
@@ -738,11 +745,13 @@ msm_vma_job_run(struct drm_sched_job *_job)
 	if (ret)
 		msm_gem_vm_unusable(job->vm);
 
+	mutex_lock(&priv->lru.lock);
+
 	job_foreach_bo (obj, job) {
-		msm_gem_lock(obj);
-		msm_gem_unpin_locked(obj);
-		msm_gem_unlock(obj);
+		msm_gem_unpin_active(obj);
 	}
+
+	mutex_unlock(&priv->lru.lock);
 
 	/* VM_BIND ops are synchronous, so no fence to wait on: */
 	return NULL;
@@ -819,7 +828,7 @@ msm_gem_vm_create(struct drm_device *drm, struct msm_mmu *mmu, const char *name,
 	if (IS_ERR(mmu))
 		return ERR_CAST(mmu);
 
-	vm = kzalloc(sizeof(*vm), GFP_KERNEL);
+	vm = kzalloc_obj(*vm);
 	if (!vm)
 		return ERR_PTR(-ENOMEM);
 
@@ -869,8 +878,8 @@ msm_gem_vm_create(struct drm_device *drm, struct msm_mmu *mmu, const char *name,
 		vm->log_shift = MIN(vm_log_shift, 8);
 
 	if (vm->log_shift) {
-		vm->log = kmalloc_array(1 << vm->log_shift, sizeof(vm->log[0]),
-					GFP_KERNEL | __GFP_ZERO);
+		vm->log = kmalloc_objs(vm->log[0], 1 << vm->log_shift,
+				       GFP_KERNEL | __GFP_ZERO);
 	}
 
 	return &vm->base;
@@ -950,15 +959,9 @@ vm_bind_job_create(struct drm_device *dev, struct drm_file *file,
 		   struct msm_gpu_submitqueue *queue, uint32_t nr_ops)
 {
 	struct msm_vm_bind_job *job;
-	uint64_t sz;
 	int ret;
 
-	sz = struct_size(job, ops, nr_ops);
-
-	if (sz > SIZE_MAX)
-		return ERR_PTR(-ENOMEM);
-
-	job = kzalloc(sz, GFP_KERNEL | __GFP_NOWARN);
+	job = kzalloc_flex(*job, ops, nr_ops, GFP_KERNEL | __GFP_NOWARN);
 	if (!job)
 		return ERR_PTR(-ENOMEM);
 
@@ -1248,7 +1251,7 @@ vm_bind_job_lock_objects(struct msm_vm_bind_job *job, struct drm_exec *exec)
 			case MSM_VM_BIND_OP_UNMAP:
 				ret = drm_gpuvm_sm_unmap_exec_lock(job->vm, exec,
 							      op->iova,
-							      op->obj_offset);
+							      op->range);
 				break;
 			case MSM_VM_BIND_OP_MAP:
 			case MSM_VM_BIND_OP_MAP_NULL: {

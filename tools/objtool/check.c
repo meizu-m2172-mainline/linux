@@ -522,21 +522,58 @@ static int decode_instructions(struct objtool_file *file)
 }
 
 /*
- * Read the pv_ops[] .data table to find the static initialized values.
+ * Known pv_ops*[] arrays.
  */
-static int add_pv_ops(struct objtool_file *file, const char *symname)
+static struct {
+	const char *name;
+	int idx_off;
+} pv_ops_tables[] = {
+	{ .name = "pv_ops", },
+	{ .name = "pv_ops_lock", },
+	{ .name = NULL, .idx_off = -1 }
+};
+
+/*
+ * Get index offset for a pv_ops* array.
+ */
+int pv_ops_idx_off(const char *symname)
+{
+	int idx;
+
+	for (idx = 0; pv_ops_tables[idx].name; idx++) {
+		if (!strcmp(symname, pv_ops_tables[idx].name))
+			break;
+	}
+
+	return pv_ops_tables[idx].idx_off;
+}
+
+/*
+ * Read a pv_ops*[] .data table to find the static initialized values.
+ */
+static int add_pv_ops(struct objtool_file *file, int pv_ops_idx)
 {
 	struct symbol *sym, *func;
 	unsigned long off, end;
 	struct reloc *reloc;
-	int idx;
+	int idx, idx_off;
+	const char *symname;
 
+	symname = pv_ops_tables[pv_ops_idx].name;
 	sym = find_symbol_by_name(file->elf, symname);
-	if (!sym)
-		return 0;
+	if (!sym) {
+		ERROR("Unknown pv_ops array %s", symname);
+		return -1;
+	}
 
 	off = sym->offset;
 	end = off + sym->len;
+	idx_off = pv_ops_tables[pv_ops_idx].idx_off;
+	if (idx_off < 0) {
+		ERROR("pv_ops array %s has unknown index offset", symname);
+		return -1;
+	}
+
 	for (;;) {
 		reloc = find_reloc_by_dest_range(file->elf, sym->sec, off, end - off);
 		if (!reloc)
@@ -554,7 +591,7 @@ static int add_pv_ops(struct objtool_file *file, const char *symname)
 			return -1;
 		}
 
-		if (objtool_pv_add(file, idx, func))
+		if (objtool_pv_add(file, idx + idx_off, func))
 			return -1;
 
 		off = reloc_offset(reloc) + 1;
@@ -570,14 +607,6 @@ static int add_pv_ops(struct objtool_file *file, const char *symname)
  */
 static int init_pv_ops(struct objtool_file *file)
 {
-	static const char *pv_ops_tables[] = {
-		"pv_ops",
-		"xen_cpu_ops",
-		"xen_irq_ops",
-		"xen_mmu_ops",
-		NULL,
-	};
-	const char *pv_ops;
 	struct symbol *sym;
 	int idx, nr;
 
@@ -586,11 +615,20 @@ static int init_pv_ops(struct objtool_file *file)
 
 	file->pv_ops = NULL;
 
-	sym = find_symbol_by_name(file->elf, "pv_ops");
-	if (!sym)
+	nr = 0;
+	for (idx = 0; pv_ops_tables[idx].name; idx++) {
+		sym = find_symbol_by_name(file->elf, pv_ops_tables[idx].name);
+		if (!sym) {
+			pv_ops_tables[idx].idx_off = -1;
+			continue;
+		}
+		pv_ops_tables[idx].idx_off = nr;
+		nr += sym->len / sizeof(unsigned long);
+	}
+
+	if (nr == 0)
 		return 0;
 
-	nr = sym->len / sizeof(unsigned long);
 	file->pv_ops = calloc(nr, sizeof(struct pv_state));
 	if (!file->pv_ops) {
 		ERROR_GLIBC("calloc");
@@ -600,8 +638,10 @@ static int init_pv_ops(struct objtool_file *file)
 	for (idx = 0; idx < nr; idx++)
 		INIT_LIST_HEAD(&file->pv_ops[idx].targets);
 
-	for (idx = 0; (pv_ops = pv_ops_tables[idx]); idx++) {
-		if (add_pv_ops(file, pv_ops))
+	for (idx = 0; pv_ops_tables[idx].name; idx++) {
+		if (pv_ops_tables[idx].idx_off < 0)
+			continue;
+		if (add_pv_ops(file, idx))
 			return -1;
 	}
 
@@ -1261,7 +1301,7 @@ static const char *uaccess_safe_builtin[] = {
 	"copy_mc_enhanced_fast_string",
 	"rep_stos_alternative",
 	"rep_movs_alternative",
-	"__copy_user_nocache",
+	"copy_to_nontemporal",
 	NULL
 };
 
@@ -2144,12 +2184,11 @@ static void mark_func_jump_tables(struct objtool_file *file,
 			last = insn;
 
 		/*
-		 * Store back-pointers for unconditional forward jumps such
+		 * Store back-pointers for forward jumps such
 		 * that find_jump_table() can back-track using those and
 		 * avoid some potentially confusing code.
 		 */
-		if (insn->type == INSN_JUMP_UNCONDITIONAL && insn->jump_dest &&
-		    insn->offset > last->offset &&
+		if (insn->jump_dest &&
 		    insn->jump_dest->offset > insn->offset &&
 		    !insn->jump_dest->first_jump_src) {
 
@@ -2960,6 +2999,20 @@ static int update_cfi_state(struct instruction *insn,
 				cfi->stack_size += 8;
 			}
 
+			else if (cfi->vals[op->src.reg].base == CFI_CFA) {
+				/*
+				 * Clang RSP musical chairs:
+				 *
+				 *   mov %rsp, %rdx [handled above]
+				 *   ...
+				 *   mov %rdx, %rbx [handled here]
+				 *   ...
+				 *   mov %rbx, %rsp [handled above]
+				 */
+				cfi->vals[op->dest.reg].base = CFI_CFA;
+				cfi->vals[op->dest.reg].offset = cfi->vals[op->src.reg].offset;
+			}
+
 
 			break;
 
@@ -3694,7 +3747,7 @@ static void checksum_update_insn(struct objtool_file *file, struct symbol *func,
 static int validate_branch(struct objtool_file *file, struct symbol *func,
 			   struct instruction *insn, struct insn_state state);
 static int do_validate_branch(struct objtool_file *file, struct symbol *func,
-			      struct instruction *insn, struct insn_state state);
+			      struct instruction *insn, struct insn_state *state);
 
 static int validate_insn(struct objtool_file *file, struct symbol *func,
 			 struct instruction *insn, struct insn_state *statep,
@@ -3959,7 +4012,7 @@ static int validate_insn(struct objtool_file *file, struct symbol *func,
  * tools/objtool/Documentation/objtool.txt.
  */
 static int do_validate_branch(struct objtool_file *file, struct symbol *func,
-			      struct instruction *insn, struct insn_state state)
+			      struct instruction *insn, struct insn_state *state)
 {
 	struct instruction *next_insn, *prev_insn = NULL;
 	bool dead_end;
@@ -3990,7 +4043,7 @@ static int do_validate_branch(struct objtool_file *file, struct symbol *func,
 			return 1;
 		}
 
-		ret = validate_insn(file, func, insn, &state, prev_insn, next_insn,
+		ret = validate_insn(file, func, insn, state, prev_insn, next_insn,
 				    &dead_end);
 
 		if (!insn->trace) {
@@ -4001,7 +4054,7 @@ static int do_validate_branch(struct objtool_file *file, struct symbol *func,
 		}
 
 		if (!dead_end && !next_insn) {
-			if (state.cfi.cfa.base == CFI_UNDEFINED)
+			if (state->cfi.cfa.base == CFI_UNDEFINED)
 				return 0;
 			if (file->ignore_unreachables)
 				return 0;
@@ -4026,7 +4079,7 @@ static int validate_branch(struct objtool_file *file, struct symbol *func,
 	int ret;
 
 	trace_depth_inc();
-	ret = do_validate_branch(file, func, insn, state);
+	ret = do_validate_branch(file, func, insn, &state);
 	trace_depth_dec();
 
 	return ret;
@@ -4253,8 +4306,8 @@ static int validate_retpoline(struct objtool_file *file)
 	list_for_each_entry(insn, &file->retpoline_call_list, call_node) {
 		struct symbol *sym = insn->sym;
 
-		if (sym && (sym->type == STT_NOTYPE ||
-			    sym->type == STT_FUNC) && !sym->nocfi) {
+		if (sym && (is_notype_sym(sym) ||
+			    is_func_sym(sym)) && !sym->nocfi) {
 			struct instruction *prev =
 				prev_insn_same_sym(file, insn);
 

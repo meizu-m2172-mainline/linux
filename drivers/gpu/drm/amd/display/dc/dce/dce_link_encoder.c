@@ -118,6 +118,35 @@ static const struct link_encoder_funcs dce110_lnk_enc_funcs = {
 	.destroy = dce110_link_encoder_destroy,
 	.get_max_link_cap = dce110_link_encoder_get_max_link_cap,
 	.get_dig_frontend = dce110_get_dig_frontend,
+	.get_hpd_state = dce110_get_hpd_state,
+	.program_hpd_filter = dce110_program_hpd_filter,
+};
+
+static const struct link_encoder_funcs dce110_lnk_enc_funcs_no_hpd = {
+	.validate_output_with_stream =
+		dce110_link_encoder_validate_output_with_stream,
+	.hw_init = dce110_link_encoder_hw_init,
+	.setup = dce110_link_encoder_setup,
+	.enable_tmds_output = dce110_link_encoder_enable_tmds_output,
+	.enable_dp_output = dce110_link_encoder_enable_dp_output,
+	.enable_dp_mst_output = dce110_link_encoder_enable_dp_mst_output,
+	.enable_lvds_output = dce110_link_encoder_enable_lvds_output,
+	.enable_analog_output = dce110_link_encoder_enable_analog_output,
+	.disable_output = dce110_link_encoder_disable_output,
+	.dp_set_lane_settings = dce110_link_encoder_dp_set_lane_settings,
+	.dp_set_phy_pattern = dce110_link_encoder_dp_set_phy_pattern,
+	.update_mst_stream_allocation_table =
+		dce110_link_encoder_update_mst_stream_allocation_table,
+	.psr_program_dp_dphy_fast_training =
+			dce110_psr_program_dp_dphy_fast_training,
+	.psr_program_secondary_packet = dce110_psr_program_secondary_packet,
+	.connect_dig_be_to_fe = dce110_link_encoder_connect_dig_be_to_fe,
+	.is_dig_enabled = dce110_is_dig_enabled,
+	.destroy = dce110_link_encoder_destroy,
+	.get_max_link_cap = dce110_link_encoder_get_max_link_cap,
+	.get_dig_frontend = dce110_get_dig_frontend,
+	.get_hpd_state = dce110_get_hpd_state,
+	.program_hpd_filter = dce110_program_hpd_filter,
 };
 
 static enum bp_result link_transmitter_control(
@@ -818,6 +847,7 @@ bool dce110_link_encoder_validate_dp_output(
 	const struct dce110_link_encoder *enc110,
 	const struct dc_crtc_timing *crtc_timing)
 {
+	(void)enc110;
 	if (crtc_timing->pixel_encoding == PIXEL_ENCODING_YCBCR420)
 		return false;
 
@@ -863,11 +893,15 @@ void dce110_link_encoder_construct(
 	const struct dc_vbios_funcs *bp_funcs = init_data->ctx->dc_bios->funcs;
 	enum bp_result result = BP_RESULT_OK;
 
-	enc110->base.funcs = &dce110_lnk_enc_funcs;
+	if (hpd_regs)
+		enc110->base.funcs = &dce110_lnk_enc_funcs;
+	else
+		enc110->base.funcs = &dce110_lnk_enc_funcs_no_hpd;
 	enc110->base.ctx = init_data->ctx;
 	enc110->base.id = init_data->encoder;
 	enc110->base.analog_id = init_data->analog_encoder;
 
+	enc110->base.hpd_gpio = init_data->hpd_gpio;
 	enc110->base.hpd_source = init_data->hpd_source;
 	enc110->base.connector = init_data->connector;
 
@@ -1068,7 +1102,9 @@ void dce110_link_encoder_hw_init(
 		ASSERT(result == BP_RESULT_OK);
 
 	}
-	aux_initialize(enc110);
+
+	if (enc110->aux_regs)
+		aux_initialize(enc110);
 
 	/* reinitialize HPD.
 	 * hpd_initialize() will pass DIG_FE id to HW context.
@@ -1080,6 +1116,11 @@ void dce110_link_encoder_hw_init(
 
 void dce110_link_encoder_destroy(struct link_encoder **enc)
 {
+	if ((*enc)->hpd_gpio) {
+		dal_gpio_destroy_irq(&(*enc)->hpd_gpio);
+		(*enc)->hpd_gpio = NULL;
+	}
+
 	kfree(TO_DCE110_LINK_ENC(*enc));
 	*enc = NULL;
 }
@@ -1783,6 +1824,40 @@ void dce110_link_encoder_get_max_link_cap(struct link_encoder *enc,
 	*link_settings = max_link_cap;
 }
 
+bool dce110_get_hpd_state(struct link_encoder *enc)
+{
+	uint32_t state = 0;
+
+	if (!enc->hpd_gpio)
+		return false;
+
+	dal_gpio_lock_pin(enc->hpd_gpio);
+	dal_gpio_get_value(enc->hpd_gpio, &state);
+	dal_gpio_unlock_pin(enc->hpd_gpio);
+
+	return state;
+}
+
+bool dce110_program_hpd_filter(struct link_encoder *enc, int delay_on_connect_in_ms, int delay_on_disconnect_in_ms)
+{
+	/* Setup HPD filtering */
+	if (enc->hpd_gpio && dal_gpio_lock_pin(enc->hpd_gpio) == GPIO_RESULT_OK) {
+		struct gpio_hpd_config config;
+
+		config.delay_on_connect = delay_on_connect_in_ms;
+		config.delay_on_disconnect = delay_on_disconnect_in_ms;
+
+		dal_irq_setup_hpd_filter(enc->hpd_gpio, &config);
+
+		dal_gpio_unlock_pin(enc->hpd_gpio);
+
+		return true;
+	} else {
+		ASSERT(0);
+		return false;
+	}
+}
+
 #if defined(CONFIG_DRM_AMD_DC_SI)
 static const struct link_encoder_funcs dce60_lnk_enc_funcs = {
 	.validate_output_with_stream =
@@ -1808,7 +1883,36 @@ static const struct link_encoder_funcs dce60_lnk_enc_funcs = {
 	.is_dig_enabled = dce110_is_dig_enabled,
 	.destroy = dce110_link_encoder_destroy,
 	.get_max_link_cap = dce110_link_encoder_get_max_link_cap,
-	.get_dig_frontend = dce110_get_dig_frontend
+	.get_dig_frontend = dce110_get_dig_frontend,
+	.get_hpd_state = dce110_get_hpd_state,
+	.program_hpd_filter = dce110_program_hpd_filter,
+};
+
+static const struct link_encoder_funcs dce60_lnk_enc_funcs_no_hpd = {
+	.validate_output_with_stream =
+		dce110_link_encoder_validate_output_with_stream,
+	.hw_init = dce110_link_encoder_hw_init,
+	.setup = dce110_link_encoder_setup,
+	.enable_tmds_output = dce110_link_encoder_enable_tmds_output,
+	.enable_dp_output = dce60_link_encoder_enable_dp_output,
+	.enable_dp_mst_output = dce60_link_encoder_enable_dp_mst_output,
+	.enable_lvds_output = dce110_link_encoder_enable_lvds_output,
+	.enable_analog_output = dce110_link_encoder_enable_analog_output,
+	.disable_output = dce110_link_encoder_disable_output,
+	.dp_set_lane_settings = dce110_link_encoder_dp_set_lane_settings,
+	.dp_set_phy_pattern = dce60_link_encoder_dp_set_phy_pattern,
+	.update_mst_stream_allocation_table =
+		dce110_link_encoder_update_mst_stream_allocation_table,
+	.psr_program_dp_dphy_fast_training =
+			dce110_psr_program_dp_dphy_fast_training,
+	.psr_program_secondary_packet = dce110_psr_program_secondary_packet,
+	.connect_dig_be_to_fe = dce110_link_encoder_connect_dig_be_to_fe,
+	.is_dig_enabled = dce110_is_dig_enabled,
+	.destroy = dce110_link_encoder_destroy,
+	.get_max_link_cap = dce110_link_encoder_get_max_link_cap,
+	.get_dig_frontend = dce110_get_dig_frontend,
+	.get_hpd_state = dce110_get_hpd_state,
+	.program_hpd_filter = dce110_program_hpd_filter,
 };
 
 void dce60_link_encoder_construct(
@@ -1823,11 +1927,15 @@ void dce60_link_encoder_construct(
 	const struct dc_vbios_funcs *bp_funcs = init_data->ctx->dc_bios->funcs;
 	enum bp_result result = BP_RESULT_OK;
 
-	enc110->base.funcs = &dce60_lnk_enc_funcs;
+	if (hpd_regs)
+		enc110->base.funcs = &dce60_lnk_enc_funcs;
+	else
+		enc110->base.funcs = &dce60_lnk_enc_funcs_no_hpd;
 	enc110->base.ctx = init_data->ctx;
 	enc110->base.id = init_data->encoder;
 	enc110->base.analog_id = init_data->analog_encoder;
 
+	enc110->base.hpd_gpio = init_data->hpd_gpio;
 	enc110->base.hpd_source = init_data->hpd_source;
 	enc110->base.connector = init_data->connector;
 

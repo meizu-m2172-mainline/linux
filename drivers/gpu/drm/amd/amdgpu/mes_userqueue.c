@@ -31,70 +31,70 @@
 #define AMDGPU_USERQ_GANG_CTX_SZ PAGE_SIZE
 
 static int
-mes_userq_map_gtt_bo_to_gart(struct amdgpu_bo *bo)
-{
-	int ret;
-
-	ret = amdgpu_bo_reserve(bo, true);
-	if (ret) {
-		DRM_ERROR("Failed to reserve bo. ret %d\n", ret);
-		goto err_reserve_bo_failed;
-	}
-
-	ret = amdgpu_ttm_alloc_gart(&bo->tbo);
-	if (ret) {
-		DRM_ERROR("Failed to bind bo to GART. ret %d\n", ret);
-		goto err_map_bo_gart_failed;
-	}
-
-	amdgpu_bo_unreserve(bo);
-	bo = amdgpu_bo_ref(bo);
-
-	return 0;
-
-err_map_bo_gart_failed:
-	amdgpu_bo_unreserve(bo);
-err_reserve_bo_failed:
-	return ret;
-}
-
-static int
-mes_userq_create_wptr_mapping(struct amdgpu_userq_mgr *uq_mgr,
+mes_userq_create_wptr_mapping(struct amdgpu_device *adev,
+			      struct amdgpu_userq_mgr *uq_mgr,
 			      struct amdgpu_usermode_queue *queue,
 			      uint64_t wptr)
 {
 	struct amdgpu_bo_va_mapping *wptr_mapping;
-	struct amdgpu_vm *wptr_vm;
 	struct amdgpu_userq_obj *wptr_obj = &queue->wptr_obj;
+	struct amdgpu_bo *obj;
+	struct amdgpu_vm *vm = queue->vm;
+	struct drm_exec exec;
 	int ret;
 
-	wptr_vm = queue->vm;
-	ret = amdgpu_bo_reserve(wptr_vm->root.bo, false);
-	if (ret)
-		return ret;
-
 	wptr &= AMDGPU_GMC_HOLE_MASK;
-	wptr_mapping = amdgpu_vm_bo_lookup_mapping(wptr_vm, wptr >> PAGE_SHIFT);
-	amdgpu_bo_unreserve(wptr_vm->root.bo);
-	if (!wptr_mapping) {
-		DRM_ERROR("Failed to lookup wptr bo\n");
-		return -EINVAL;
+
+	drm_exec_init(&exec, DRM_EXEC_IGNORE_DUPLICATES, 2);
+	drm_exec_until_all_locked(&exec) {
+		ret = amdgpu_vm_lock_pd(vm, &exec, 1);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(ret))
+			goto fail_lock;
+
+		wptr_mapping = amdgpu_vm_bo_lookup_mapping(vm, wptr >> PAGE_SHIFT);
+		if (!wptr_mapping) {
+			ret = -EINVAL;
+			goto fail_lock;
+		}
+
+		obj = wptr_mapping->bo_va->base.bo;
+		ret = drm_exec_lock_obj(&exec, &obj->tbo.base);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(ret))
+			goto fail_lock;
 	}
 
-	wptr_obj->obj = wptr_mapping->bo_va->base.bo;
+	wptr_obj->obj = amdgpu_bo_ref(wptr_mapping->bo_va->base.bo);
 	if (wptr_obj->obj->tbo.base.size > PAGE_SIZE) {
-		DRM_ERROR("Requested GART mapping for wptr bo larger than one page\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto fail_map;
 	}
 
-	ret = mes_userq_map_gtt_bo_to_gart(wptr_obj->obj);
+	/* TODO use eviction fence instead of pinning. */
+	ret = amdgpu_bo_pin(wptr_obj->obj, AMDGPU_GEM_DOMAIN_GTT);
 	if (ret) {
-		DRM_ERROR("Failed to map wptr bo to GART\n");
-		return ret;
+		DRM_ERROR("Failed to pin wptr bo. ret %d\n", ret);
+		goto fail_map;
 	}
 
-	queue->wptr_obj.gpu_addr = amdgpu_bo_gpu_offset_no_check(wptr_obj->obj);
+	ret = amdgpu_ttm_alloc_gart(&wptr_obj->obj->tbo);
+	if (ret) {
+		DRM_ERROR("Failed to bind bo to GART. ret %d\n", ret);
+		goto fail_map;
+	}
+
+	queue->wptr_obj.gpu_addr = amdgpu_bo_gpu_offset(wptr_obj->obj);
+
+	drm_exec_fini(&exec);
 	return 0;
+
+fail_map:
+	amdgpu_bo_unref(&wptr_obj->obj);
+fail_lock:
+	drm_exec_fini(&exec);
+	return ret;
+
 }
 
 static int convert_to_mes_priority(int priority)
@@ -112,9 +112,9 @@ static int convert_to_mes_priority(int priority)
 	}
 }
 
-static int mes_userq_map(struct amdgpu_userq_mgr *uq_mgr,
-			 struct amdgpu_usermode_queue *queue)
+static int mes_userq_map(struct amdgpu_usermode_queue *queue)
 {
+	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
 	struct amdgpu_device *adev = uq_mgr->adev;
 	struct amdgpu_userq_obj *ctx = &queue->fw_obj;
 	struct amdgpu_mqd_prop *userq_props = queue->userq_prop;
@@ -157,9 +157,9 @@ static int mes_userq_map(struct amdgpu_userq_mgr *uq_mgr,
 	return 0;
 }
 
-static int mes_userq_unmap(struct amdgpu_userq_mgr *uq_mgr,
-			   struct amdgpu_usermode_queue *queue)
+static int mes_userq_unmap(struct amdgpu_usermode_queue *queue)
 {
+	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
 	struct amdgpu_device *adev = uq_mgr->adev;
 	struct mes_remove_queue_input queue_input;
 	struct amdgpu_userq_obj *ctx = &queue->fw_obj;
@@ -223,7 +223,7 @@ static int mes_userq_detect_and_reset(struct amdgpu_device *adev,
 
 	amdgpu_mes_lock(&adev->mes);
 	r = amdgpu_mes_detect_and_reset_hung_queues(adev, queue_type, false,
-						    &hung_db_num, db_array);
+						    &hung_db_num, db_array, 0);
 	amdgpu_mes_unlock(&adev->mes);
 	if (r) {
 		dev_err(adev->dev, "Failed to detect and reset queues, err (%d)\n", r);
@@ -251,10 +251,10 @@ static int mes_userq_detect_and_reset(struct amdgpu_device *adev,
 	return r;
 }
 
-static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
-				struct drm_amdgpu_userq_in *args_in,
-				struct amdgpu_usermode_queue *queue)
+static int mes_userq_mqd_create(struct amdgpu_usermode_queue *queue,
+				struct drm_amdgpu_userq_in *args_in)
 {
+	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
 	struct amdgpu_device *adev = uq_mgr->adev;
 	struct amdgpu_mqd *mqd_hw_default = &adev->mqds[queue->queue_type];
 	struct drm_amdgpu_userq_in *mqd_user = args_in;
@@ -262,13 +262,14 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 	int r;
 
 	/* Structure to initialize MQD for userqueue using generic MQD init function */
-	userq_props = kzalloc(sizeof(struct amdgpu_mqd_prop), GFP_KERNEL);
+	userq_props = kzalloc_obj(struct amdgpu_mqd_prop);
 	if (!userq_props) {
 		DRM_ERROR("Failed to allocate memory for userq_props\n");
 		return -ENOMEM;
 	}
 
-	r = amdgpu_userq_create_object(uq_mgr, &queue->mqd, mqd_hw_default->mqd_size);
+	r = amdgpu_userq_create_object(uq_mgr, &queue->mqd,
+			AMDGPU_MQD_SIZE_ALIGN(mqd_hw_default->mqd_size));
 	if (r) {
 		DRM_ERROR("Failed to create MQD object for userqueue\n");
 		goto free_props;
@@ -300,10 +301,18 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 			goto free_mqd;
 		}
 
-		r = amdgpu_userq_input_va_validate(queue, compute_mqd->eop_va,
-						   2048);
-		if (r)
+		r = amdgpu_bo_reserve(queue->vm->root.bo, false);
+		if (r) {
+			kfree(compute_mqd);
 			goto free_mqd;
+		}
+		r = amdgpu_userq_input_va_validate(adev, queue, compute_mqd->eop_va,
+						   2048);
+		amdgpu_bo_unreserve(queue->vm->root.bo);
+		if (r) {
+			kfree(compute_mqd);
+			goto free_mqd;
+		}
 
 		userq_props->eop_gpu_addr = compute_mqd->eop_va;
 		userq_props->hqd_pipe_priority = AMDGPU_GFX_PIPE_PRIO_NORMAL;
@@ -341,14 +350,26 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 		userq_props->tmz_queue =
 			mqd_user->flags & AMDGPU_USERQ_CREATE_FLAGS_QUEUE_SECURE;
 
-		r = amdgpu_userq_input_va_validate(queue, mqd_gfx_v11->shadow_va,
+		r = amdgpu_bo_reserve(queue->vm->root.bo, false);
+		if (r) {
+			kfree(mqd_gfx_v11);
+			goto free_mqd;
+		}
+		r = amdgpu_userq_input_va_validate(adev, queue, mqd_gfx_v11->shadow_va,
 						   shadow_info.shadow_size);
-		if (r)
+		if (r) {
+			amdgpu_bo_unreserve(queue->vm->root.bo);
+			kfree(mqd_gfx_v11);
 			goto free_mqd;
-		r = amdgpu_userq_input_va_validate(queue, mqd_gfx_v11->csa_va,
+		}
+
+		r = amdgpu_userq_input_va_validate(adev, queue, mqd_gfx_v11->csa_va,
 						   shadow_info.csa_size);
-		if (r)
+		amdgpu_bo_unreserve(queue->vm->root.bo);
+		if (r) {
+			kfree(mqd_gfx_v11);
 			goto free_mqd;
+		}
 
 		kfree(mqd_gfx_v11);
 	} else if (queue->queue_type == AMDGPU_HW_IP_DMA) {
@@ -366,10 +387,19 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 			r = -ENOMEM;
 			goto free_mqd;
 		}
-		r = amdgpu_userq_input_va_validate(queue, mqd_sdma_v11->csa_va,
-						   32);
-		if (r)
+
+		r = amdgpu_bo_reserve(queue->vm->root.bo, false);
+		if (r) {
+			kfree(mqd_sdma_v11);
 			goto free_mqd;
+		}
+		r = amdgpu_userq_input_va_validate(adev, queue, mqd_sdma_v11->csa_va,
+						   32);
+		amdgpu_bo_unreserve(queue->vm->root.bo);
+		if (r) {
+			kfree(mqd_sdma_v11);
+			goto free_mqd;
+		}
 
 		userq_props->csa_addr = mqd_sdma_v11->csa_va;
 		kfree(mqd_sdma_v11);
@@ -391,7 +421,7 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 	}
 
 	/* FW expects WPTR BOs to be mapped into GART */
-	r = mes_userq_create_wptr_mapping(uq_mgr, queue, userq_props->wptr_gpu_addr);
+	r = mes_userq_create_wptr_mapping(adev, uq_mgr, queue, userq_props->wptr_gpu_addr);
 	if (r) {
 		DRM_ERROR("Failed to create WPTR mapping\n");
 		goto free_ctx;
@@ -411,18 +441,18 @@ free_props:
 	return r;
 }
 
-static void
-mes_userq_mqd_destroy(struct amdgpu_userq_mgr *uq_mgr,
-		      struct amdgpu_usermode_queue *queue)
+static void mes_userq_mqd_destroy(struct amdgpu_usermode_queue *queue)
 {
+	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
+
 	amdgpu_userq_destroy_object(uq_mgr, &queue->fw_obj);
 	kfree(queue->userq_prop);
 	amdgpu_userq_destroy_object(uq_mgr, &queue->mqd);
 }
 
-static int mes_userq_preempt(struct amdgpu_userq_mgr *uq_mgr,
-				struct amdgpu_usermode_queue *queue)
+static int mes_userq_preempt(struct amdgpu_usermode_queue *queue)
 {
+	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
 	struct amdgpu_device *adev = uq_mgr->adev;
 	struct mes_suspend_gang_input queue_input;
 	struct amdgpu_userq_obj *ctx = &queue->fw_obj;
@@ -466,9 +496,9 @@ out:
 	return r;
 }
 
-static int mes_userq_restore(struct amdgpu_userq_mgr *uq_mgr,
-				struct amdgpu_usermode_queue *queue)
+static int mes_userq_restore(struct amdgpu_usermode_queue *queue)
 {
+	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
 	struct amdgpu_device *adev = uq_mgr->adev;
 	struct mes_resume_gang_input queue_input;
 	struct amdgpu_userq_obj *ctx = &queue->fw_obj;

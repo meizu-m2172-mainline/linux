@@ -222,7 +222,7 @@ static int h5_open(struct hci_uart *hu)
 	if (hu->serdev) {
 		h5 = serdev_device_get_drvdata(hu->serdev);
 	} else {
-		h5 = kzalloc(sizeof(*h5), GFP_KERNEL);
+		h5 = kzalloc_obj(*h5);
 		if (!h5)
 			return -ENOMEM;
 	}
@@ -586,6 +586,9 @@ static int h5_recv(struct hci_uart *hu, const void *data, int count)
 {
 	struct h5 *h5 = hu->priv;
 	const unsigned char *ptr = data;
+
+	if (!h5)
+		return -ENODEV;
 
 	BT_DBG("%s pending %zu count %d", hu->hdev->name, h5->rx_pending,
 	       count);
@@ -1069,7 +1072,7 @@ static int h5_btrtl_resume(struct h5 *h5)
 	if (test_bit(H5_WAKEUP_DISABLE, &h5->flags)) {
 		struct h5_btrtl_reprobe *reprobe;
 
-		reprobe = kzalloc(sizeof(*reprobe), GFP_KERNEL);
+		reprobe = kzalloc_obj(*reprobe);
 		if (!reprobe)
 			return -ENOMEM;
 

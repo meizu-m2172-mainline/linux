@@ -9,6 +9,12 @@
 #ifdef CONFIG_RSEQ
 struct rseq;
 
+/*
+ * rseq_event::has_rseq contains the ABI version number so preserving it
+ * in AND operations requires a mask.
+ */
+#define RSEQ_HAS_RSEQ_VERSION_MASK	0xff
+
 /**
  * struct rseq_event - Storage for rseq related event management
  * @all:		Compound to initialize and clear the data efficiently
@@ -17,7 +23,8 @@ struct rseq;
  *			exit to user
  * @ids_changed:	Indicator that IDs need to be updated
  * @user_irq:		True on interrupt entry from user mode
- * @has_rseq:		True if the task has a rseq pointer installed
+ * @has_rseq:		Greater than 0 if the task has a rseq pointer installed.
+ *			Contains the RSEQ version number
  * @error:		Compound error code for the slow path to analyze
  * @fatal:		User space data corrupted or invalid
  * @slowpath:		Indicator that slow path processing via TIF_NOTIFY_RESUME
@@ -59,8 +66,9 @@ struct rseq_event {
  *		compiler emit a single compare on 64-bit
  * @cpu_id:	The CPU ID which was written last to user space
  * @mm_cid:	The MM CID which was written last to user space
+ * @node_id:	The node ID which was written last to user space
  *
- * @cpu_id and @mm_cid are updated when the data is written to user space.
+ * @cpu_id, @mm_cid and @node_id are updated when the data is written to user space.
  */
 struct rseq_ids {
 	union {
@@ -70,15 +78,43 @@ struct rseq_ids {
 			u32	mm_cid;
 		};
 	};
+	u32			node_id;
+};
+
+/**
+ * union rseq_slice_state - Status information for rseq time slice extension
+ * @state:	Compound to access the overall state
+ * @enabled:	Time slice extension is enabled for the task
+ * @granted:	Time slice extension was granted to the task
+ */
+union rseq_slice_state {
+	u16			state;
+	struct {
+		u8		enabled;
+		u8		granted;
+	};
+};
+
+/**
+ * struct rseq_slice - Status information for rseq time slice extension
+ * @state:	Time slice extension state
+ * @expires:	The time when a grant expires
+ * @yielded:	Indicator for rseq_slice_yield()
+ */
+struct rseq_slice {
+	union rseq_slice_state	state;
+	u64			expires;
+	u8			yielded;
 };
 
 /**
  * struct rseq_data - Storage for all rseq related data
  * @usrptr:	Pointer to the registered user space RSEQ memory
  * @len:	Length of the RSEQ region
- * @sig:	Signature of critial section abort IPs
+ * @sig:	Signature of critical section abort IPs
  * @event:	Storage for event management
  * @ids:	Storage for cached CPU ID and MM CID
+ * @slice:	Storage for time slice extension data
  */
 struct rseq_data {
 	struct rseq __user		*usrptr;
@@ -86,6 +122,9 @@ struct rseq_data {
 	u32				sig;
 	struct rseq_event		event;
 	struct rseq_ids			ids;
+#ifdef CONFIG_RSEQ_SLICE_EXTENSION
+	struct rseq_slice		slice;
+#endif
 };
 
 #else /* CONFIG_RSEQ */
@@ -103,10 +142,12 @@ struct rseq_data { };
  * @active:	MM CID is active for the task
  * @cid:	The CID associated to the task either permanently or
  *		borrowed from the CPU
+ * @node:	Queued in the per MM MMCID list
  */
 struct sched_mm_cid {
 	unsigned int		active;
 	unsigned int		cid;
+	struct hlist_node	node;
 };
 
 /**
@@ -127,6 +168,7 @@ struct mm_cid_pcpu {
  * @work:		Regular work to handle the affinity mode change case
  * @lock:		Spinlock to protect against affinity setting which can't take @mutex
  * @mutex:		Mutex to serialize forks and exits related to this mm
+ * @user_list:		List of the MM CID users of a MM
  * @nr_cpus_allowed:	The number of CPUs in the per MM allowed CPUs map. The map
  *			is growth only.
  * @users:		The number of tasks sharing this MM. Separate from mm::mm_users
@@ -147,13 +189,14 @@ struct mm_mm_cid {
 
 	raw_spinlock_t		lock;
 	struct mutex		mutex;
+	struct hlist_head	user_list;
 
 	/* Low frequency modified */
 	unsigned int		nr_cpus_allowed;
 	unsigned int		users;
 	unsigned int		pcpu_thrs;
 	unsigned int		update_deferred;
-}____cacheline_aligned_in_smp;
+} ____cacheline_aligned;
 #else /* CONFIG_SCHED_MM_CID */
 struct mm_mm_cid { };
 struct sched_mm_cid { };

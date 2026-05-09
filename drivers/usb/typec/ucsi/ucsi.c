@@ -13,6 +13,7 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/usb/typec_dp.h>
+#include <linux/usb/typec_tbt.h>
 
 #include "ucsi.h"
 #include "trace.h"
@@ -42,8 +43,14 @@ void ucsi_notify_common(struct ucsi *ucsi, u32 cci)
 	if (cci & UCSI_CCI_BUSY)
 		return;
 
-	if (UCSI_CCI_CONNECTOR(cci))
-		ucsi_connector_change(ucsi, UCSI_CCI_CONNECTOR(cci));
+	if (UCSI_CCI_CONNECTOR(cci)) {
+		if (!ucsi->cap.num_connectors ||
+		    UCSI_CCI_CONNECTOR(cci) <= ucsi->cap.num_connectors)
+			ucsi_connector_change(ucsi, UCSI_CCI_CONNECTOR(cci));
+		else
+			dev_err(ucsi->dev, "bogus connector number in CCI: %lu\n",
+				UCSI_CCI_CONNECTOR(cci));
+	}
 
 	if (cci & UCSI_CCI_ACK_COMPLETE &&
 	    test_and_clear_bit(ACK_PENDING, &ucsi->flags))
@@ -234,6 +241,8 @@ static int ucsi_send_command_common(struct ucsi *ucsi, u64 cmd,
 	if (cci & UCSI_CCI_ERROR)
 		ret = ucsi_read_error(ucsi, connector_num);
 
+	trace_ucsi_run_command(cmd, ret);
+
 	mutex_unlock(&ucsi->ppm_lock);
 	return ret;
 }
@@ -292,7 +301,7 @@ static int ucsi_partner_task(struct ucsi_connector *con,
 	if (!con->partner)
 		return 0;
 
-	uwork = kzalloc(sizeof(*uwork), GFP_KERNEL);
+	uwork = kzalloc_obj(*uwork);
 	if (!uwork)
 		return -ENOMEM;
 
@@ -314,6 +323,7 @@ void ucsi_altmode_update_active(struct ucsi_connector *con)
 {
 	const struct typec_altmode *altmode = NULL;
 	u64 command;
+	u16 svid = 0;
 	int ret;
 	u8 cur;
 	int i;
@@ -335,6 +345,10 @@ void ucsi_altmode_update_active(struct ucsi_connector *con)
 	for (i = 0; con->partner_altmode[i]; i++)
 		typec_altmode_update_active(con->partner_altmode[i],
 					    con->partner_altmode[i] == altmode);
+
+	if (altmode)
+		svid = altmode->svid;
+	typec_altmode_state_update(con->partner, svid, 0);
 }
 
 static int ucsi_altmode_next_mode(struct typec_altmode **alt, u16 svid)
@@ -411,6 +425,9 @@ static int ucsi_register_altmode(struct ucsi_connector *con,
 			else
 				alt = ucsi_register_displayport(con, override,
 								i, desc);
+			break;
+		case USB_TYPEC_TBT_SID:
+			alt = ucsi_register_thunderbolt(con, override, i, desc);
 			break;
 		default:
 			alt = typec_port_register_altmode(con->port, desc);
@@ -609,6 +626,8 @@ static int ucsi_register_altmodes(struct ucsi_connector *con, u8 recipient)
 			desc.vdo = alt[j].mid;
 			desc.svid = alt[j].svid;
 			desc.roles = TYPEC_PORT_DRD;
+			desc.mode_selection = con->ucsi->ops->add_partner_altmodes &&
+					!con->typec_cap.no_mode_control;
 
 			ret = ucsi_register_altmode(con, &desc, recipient);
 			if (ret)
@@ -640,12 +659,15 @@ static void ucsi_unregister_altmodes(struct ucsi_connector *con, u8 recipient)
 	}
 
 	while (adev[i]) {
-		if (recipient == UCSI_RECIPIENT_SOP &&
-		    (adev[i]->svid == USB_TYPEC_DP_SID ||
-			(adev[i]->svid == USB_TYPEC_NVIDIA_VLINK_SID &&
-			adev[i]->vdo != USB_TYPEC_NVIDIA_VLINK_DBG_VDO))) {
+		if (recipient == UCSI_RECIPIENT_SOP) {
 			pdev = typec_altmode_get_partner(adev[i]);
-			ucsi_displayport_remove_partner((void *)pdev);
+
+			if (adev[i]->svid == USB_TYPEC_DP_SID ||
+			    (adev[i]->svid == USB_TYPEC_NVIDIA_VLINK_SID &&
+			     adev[i]->vdo != USB_TYPEC_NVIDIA_VLINK_DBG_VDO))
+				ucsi_displayport_remove_partner((void *)pdev);
+			else if (adev[i]->svid == USB_TYPEC_TBT_SID)
+				ucsi_thunderbolt_remove_partner((void *)pdev);
 		}
 		typec_unregister_altmode(adev[i]);
 		adev[i++] = NULL;
@@ -831,6 +853,8 @@ static int ucsi_check_altmodes(struct ucsi_connector *con)
 	if (con->partner_altmode[0]) {
 		num_partner_am = ucsi_get_num_altmode(con->partner_altmode);
 		typec_partner_set_num_altmodes(con->partner, num_partner_am);
+		if (con->ucsi->ops->add_partner_altmodes)
+			con->ucsi->ops->add_partner_altmodes(con);
 		ucsi_altmode_update_active(con);
 		return 0;
 	} else {
@@ -1119,6 +1143,8 @@ static void ucsi_unregister_partner(struct ucsi_connector *con)
 		return;
 
 	typec_set_mode(con->port, TYPEC_STATE_SAFE);
+	if (con->ucsi->ops->remove_partner_altmodes)
+		con->ucsi->ops->remove_partner_altmodes(con);
 
 	typec_partner_set_usb_power_delivery(con->partner, NULL);
 	ucsi_unregister_partner_pdos(con);
@@ -1162,10 +1188,18 @@ static void ucsi_partner_change(struct ucsi_connector *con)
 			if (UCSI_CONSTAT(con, PARTNER_FLAG_USB))
 				typec_set_mode(con->port, TYPEC_STATE_USB);
 		}
+
+		if (((con->ucsi->version >= UCSI_VERSION_3_0 &&
+		    UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN4)) ||
+		    (con->ucsi->version >= UCSI_VERSION_2_0 &&
+		    UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN3))) && con->partner)
+			typec_partner_set_usb_mode(con->partner, USB_MODE_USB4);
 	}
 
-	/* Only notify USB controller if partner supports USB data */
-	if (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB)))
+	if ((!UCSI_CONSTAT(con, PARTNER_FLAG_USB)) &&
+	    ((con->ucsi->quirks & UCSI_USB4_IMPLIES_USB) &&
+	     (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN3) ||
+		UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN4)))))
 		u_role = USB_ROLE_NONE;
 
 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);
@@ -1307,6 +1341,7 @@ static void ucsi_handle_connector_change(struct work_struct *work)
 
 	if (con->partner && (change & UCSI_CONSTAT_PARTNER_CHANGE)) {
 		ucsi_partner_change(con);
+		ucsi_altmode_update_active(con);
 
 		/* Complete pending data role swap */
 		if (!completion_done(&con->complete))
@@ -1659,6 +1694,7 @@ static int ucsi_register_port(struct ucsi *ucsi, struct ucsi_connector *con)
 
 	cap->driver_data = con;
 	cap->ops = &ucsi_ops;
+	cap->no_mode_control = !(con->ucsi->cap.features & UCSI_CAP_ALT_MODE_OVERRIDE);
 
 	if (ucsi->version >= UCSI_VERSION_2_0)
 		con->typec_cap.orientation_aware = true;
@@ -1845,7 +1881,7 @@ static int ucsi_init(struct ucsi *ucsi)
 	}
 
 	/* Allocate the connectors. Released in ucsi_unregister() */
-	connector = kcalloc(ucsi->cap.num_connectors + 1, sizeof(*connector), GFP_KERNEL);
+	connector = kzalloc_objs(*connector, ucsi->cap.num_connectors + 1);
 	if (!connector) {
 		ret = -ENOMEM;
 		goto err_reset;
@@ -2023,7 +2059,7 @@ struct ucsi *ucsi_create(struct device *dev, const struct ucsi_operations *ops)
 	    !ops->read_message_in || !ops->sync_control || !ops->async_control)
 		return ERR_PTR(-EINVAL);
 
-	ucsi = kzalloc(sizeof(*ucsi), GFP_KERNEL);
+	ucsi = kzalloc_obj(*ucsi);
 	if (!ucsi)
 		return ERR_PTR(-ENOMEM);
 

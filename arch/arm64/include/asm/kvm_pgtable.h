@@ -87,15 +87,9 @@ typedef u64 kvm_pte_t;
 
 #define KVM_PTE_LEAF_ATTR_HI_SW		GENMASK(58, 55)
 
-#define __KVM_PTE_LEAF_ATTR_HI_S1_XN	BIT(54)
-#define __KVM_PTE_LEAF_ATTR_HI_S1_UXN	BIT(54)
-#define __KVM_PTE_LEAF_ATTR_HI_S1_PXN	BIT(53)
-
-#define KVM_PTE_LEAF_ATTR_HI_S1_XN					\
-	({ cpus_have_final_cap(ARM64_KVM_HVHE) ?			\
-			(__KVM_PTE_LEAF_ATTR_HI_S1_UXN |		\
-			 __KVM_PTE_LEAF_ATTR_HI_S1_PXN) :		\
-			__KVM_PTE_LEAF_ATTR_HI_S1_XN; })
+#define KVM_PTE_LEAF_ATTR_HI_S1_XN	BIT(54)
+#define KVM_PTE_LEAF_ATTR_HI_S1_UXN	BIT(54)
+#define KVM_PTE_LEAF_ATTR_HI_S1_PXN	BIT(53)
 
 #define KVM_PTE_LEAF_ATTR_HI_S2_XN	GENMASK(54, 53)
 
@@ -105,14 +99,30 @@ typedef u64 kvm_pte_t;
 					 KVM_PTE_LEAF_ATTR_LO_S2_S2AP_W | \
 					 KVM_PTE_LEAF_ATTR_HI_S2_XN)
 
-#define KVM_INVALID_PTE_OWNER_MASK	GENMASK(9, 2)
-#define KVM_MAX_OWNER_ID		1
+/* pKVM invalid pte encodings */
+#define KVM_INVALID_PTE_TYPE_MASK	GENMASK(63, 60)
+#define KVM_INVALID_PTE_ANNOT_MASK	~(KVM_PTE_VALID | \
+					  KVM_INVALID_PTE_TYPE_MASK)
 
-/*
- * Used to indicate a pte for which a 'break-before-make' sequence is in
- * progress.
- */
-#define KVM_INVALID_PTE_LOCKED		BIT(10)
+enum kvm_invalid_pte_type {
+	/*
+	 * Used to indicate a pte for which a 'break-before-make'
+	 * sequence is in progress.
+	 */
+	KVM_INVALID_PTE_TYPE_LOCKED	= 1,
+
+	/*
+	 * pKVM has unmapped the page from the host due to a change of
+	 * ownership.
+	 */
+	KVM_HOST_INVALID_PTE_TYPE_DONATION,
+
+	/*
+	 * The page has been forcefully reclaimed from the guest by the
+	 * host.
+	 */
+	KVM_GUEST_INVALID_PTE_TYPE_POISONED,
+};
 
 static inline bool kvm_pte_valid(kvm_pte_t pte)
 {
@@ -237,13 +247,12 @@ struct kvm_pgtable_mm_ops {
 
 /**
  * enum kvm_pgtable_stage2_flags - Stage-2 page-table flags.
- * @KVM_PGTABLE_S2_NOFWB:	Don't enforce Normal-WB even if the CPUs have
- *				ARM64_HAS_STAGE2_FWB.
  * @KVM_PGTABLE_S2_IDMAP:	Only use identity mappings.
+ * @KVM_PGTABLE_S2_AS_S1:	Final memory attributes are that of Stage-1.
  */
 enum kvm_pgtable_stage2_flags {
-	KVM_PGTABLE_S2_NOFWB			= BIT(0),
-	KVM_PGTABLE_S2_IDMAP			= BIT(1),
+	KVM_PGTABLE_S2_IDMAP			= BIT(0),
+	KVM_PGTABLE_S2_AS_S1			= BIT(1),
 };
 
 /**
@@ -665,14 +674,18 @@ int kvm_pgtable_stage2_map(struct kvm_pgtable *pgt, u64 addr, u64 size,
 			   void *mc, enum kvm_pgtable_walk_flags flags);
 
 /**
- * kvm_pgtable_stage2_set_owner() - Unmap and annotate pages in the IPA space to
- *				    track ownership.
+ * kvm_pgtable_stage2_annotate() - Unmap and annotate pages in the IPA space
+ *				   to track ownership (and more).
  * @pgt:	Page-table structure initialised by kvm_pgtable_stage2_init*().
  * @addr:	Base intermediate physical address to annotate.
  * @size:	Size of the annotated range.
  * @mc:		Cache of pre-allocated and zeroed memory from which to allocate
  *		page-table pages.
- * @owner_id:	Unique identifier for the owner of the page.
+ * @type:	The type of the annotation, determining its meaning and format.
+ * @annotation:	A 59-bit value that will be stored in the page tables.
+ *		@annotation[0] and @annotation[63:60] must be 0.
+ * 		@annotation[59:1] is stored in the page tables, along
+ *		with @type.
  *
  * By default, all page-tables are owned by identifier 0. This function can be
  * used to mark portions of the IPA space as owned by other entities. When a
@@ -681,8 +694,9 @@ int kvm_pgtable_stage2_map(struct kvm_pgtable *pgt, u64 addr, u64 size,
  *
  * Return: 0 on success, negative error code on failure.
  */
-int kvm_pgtable_stage2_set_owner(struct kvm_pgtable *pgt, u64 addr, u64 size,
-				 void *mc, u8 owner_id);
+int kvm_pgtable_stage2_annotate(struct kvm_pgtable *pgt, u64 addr, u64 size,
+				void *mc, enum kvm_invalid_pte_type type,
+				kvm_pte_t annotation);
 
 /**
  * kvm_pgtable_stage2_unmap() - Remove a mapping from a guest stage-2 page-table.

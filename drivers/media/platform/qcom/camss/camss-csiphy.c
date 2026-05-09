@@ -558,12 +558,16 @@ static int csiphy_init_formats(struct v4l2_subdev *sd,
 	return csiphy_set_format(sd, fh ? fh->state : NULL, &format);
 }
 
-static bool csiphy_match_clock_name(const char *clock_name, const char *format,
-				    int index)
+static bool __printf(2, 3)
+csiphy_match_clock_name(const char *clock_name, const char *format, ...)
 {
 	char name[16]; /* csiphyXXX_timer\0 */
+	va_list args;
 
-	snprintf(name, sizeof(name), format, index);
+	va_start(args, format);
+	vsnprintf(name, sizeof(name), format, args);
+	va_end(args);
+
 	return !strcmp(clock_name, name);
 }
 
@@ -695,24 +699,13 @@ int msm_csiphy_subdev_init(struct camss *camss,
 
 	/* CSIPHY supplies */
 	for (i = 0; i < ARRAY_SIZE(res->regulators); i++) {
-		if (res->regulators[i])
+		if (res->regulators[i].supply)
 			csiphy->num_supplies++;
 	}
 
-	if (csiphy->num_supplies) {
-		csiphy->supplies = devm_kmalloc_array(camss->dev,
-						      csiphy->num_supplies,
-						      sizeof(*csiphy->supplies),
-						      GFP_KERNEL);
-		if (!csiphy->supplies)
-			return -ENOMEM;
-	}
-
-	for (i = 0; i < csiphy->num_supplies; i++)
-		csiphy->supplies[i].supply = res->regulators[i];
-
-	ret = devm_regulator_bulk_get(camss->dev, csiphy->num_supplies,
-				      csiphy->supplies);
+	if (csiphy->num_supplies > 0)
+		ret = devm_regulator_bulk_get_const(camss->dev, csiphy->num_supplies,
+						    res->regulators, &csiphy->supplies);
 	return ret;
 }
 

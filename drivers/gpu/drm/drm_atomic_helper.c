@@ -1916,7 +1916,7 @@ drm_atomic_helper_wait_for_vblanks(struct drm_device *dev,
 		ret = wait_event_timeout(*queue,
 					 state->crtcs[i].last_vblank_count !=
 						drm_crtc_vblank_count(crtc),
-					 msecs_to_jiffies(100));
+					 msecs_to_jiffies(1000));
 
 		WARN(!ret, "[CRTC:%d:%s] vblank wait timed out\n",
 		     crtc->base.id, crtc->name);
@@ -2301,13 +2301,13 @@ int drm_atomic_helper_commit(struct drm_device *dev,
 	 * current layout.
 	 *
 	 * NOTE: Commit work has multiple phases, first hardware commit, then
-	 * cleanup. We want them to overlap, hence need system_unbound_wq to
+	 * cleanup. We want them to overlap, hence need system_dfl_wq to
 	 * make sure work items don't artificially stall on each another.
 	 */
 
 	drm_atomic_state_get(state);
 	if (nonblock)
-		queue_work(system_unbound_wq, &state->commit_work);
+		queue_work(system_dfl_wq, &state->commit_work);
 	else
 		commit_tail(state);
 
@@ -2340,7 +2340,7 @@ EXPORT_SYMBOL(drm_atomic_helper_commit);
  *
  * Asynchronous workers need to have sufficient parallelism to be able to run
  * different atomic commits on different CRTCs in parallel. The simplest way to
- * achieve this is by running them on the &system_unbound_wq work queue. Note
+ * achieve this is by running them on the &system_dfl_wq work queue. Note
  * that drivers are not required to split up atomic commits and run an
  * individual commit in parallel - userspace is supposed to do that if it cares.
  * But it might be beneficial to do that for modesets, since those necessarily
@@ -2453,7 +2453,7 @@ crtc_or_fake_commit(struct drm_atomic_state *state, struct drm_crtc *crtc)
 	}
 
 	if (!state->fake_commit) {
-		state->fake_commit = kzalloc(sizeof(*state->fake_commit), GFP_KERNEL);
+		state->fake_commit = kzalloc_obj(*state->fake_commit);
 		if (!state->fake_commit)
 			return NULL;
 
@@ -2524,7 +2524,7 @@ int drm_atomic_helper_setup_commit(struct drm_atomic_state *state,
 	funcs = state->dev->mode_config.helper_private;
 
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
-		commit = kzalloc(sizeof(*commit), GFP_KERNEL);
+		commit = kzalloc_obj(*commit);
 		if (!commit)
 			return -ENOMEM;
 
@@ -2553,8 +2553,7 @@ int drm_atomic_helper_setup_commit(struct drm_atomic_state *state,
 		}
 
 		if (!new_crtc_state->event) {
-			commit->event = kzalloc(sizeof(*commit->event),
-						GFP_KERNEL);
+			commit->event = kzalloc_obj(*commit->event);
 			if (!commit->event)
 				return -ENOMEM;
 
@@ -3752,6 +3751,13 @@ drm_atomic_helper_duplicate_state(struct drm_device *dev,
 			err = PTR_ERR(plane_state);
 			goto free;
 		}
+
+		if (plane_state->color_pipeline) {
+			err = drm_atomic_add_affected_colorops(state, plane);
+			if (err)
+				goto free;
+		}
+
 	}
 
 	drm_connector_list_iter_begin(dev, &conn_iter);
@@ -3857,12 +3863,17 @@ int drm_atomic_helper_commit_duplicated_state(struct drm_atomic_state *state,
 	int i, ret;
 	struct drm_plane *plane;
 	struct drm_plane_state *new_plane_state;
+	struct drm_colorop *colorop;
+	struct drm_colorop_state *new_colorop_state;
 	struct drm_connector *connector;
 	struct drm_connector_state *new_conn_state;
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *new_crtc_state;
 
 	state->acquire_ctx = ctx;
+
+	for_each_new_colorop_in_state(state, colorop, new_colorop_state, i)
+		state->colorops[i].old_state = colorop->state;
 
 	for_each_new_plane_in_state(state, plane, new_plane_state, i)
 		state->planes[i].old_state = plane->state;
@@ -4080,7 +4091,7 @@ drm_atomic_helper_bridge_propagate_bus_fmt(struct drm_bridge *bridge,
 {
 	u32 *input_fmts;
 
-	input_fmts = kzalloc(sizeof(*input_fmts), GFP_KERNEL);
+	input_fmts = kzalloc_obj(*input_fmts);
 	if (!input_fmts) {
 		*num_input_fmts = 0;
 		return NULL;
