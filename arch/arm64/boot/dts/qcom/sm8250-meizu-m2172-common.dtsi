@@ -661,14 +661,15 @@
 		compatible = "awinic,aw882xx_smartpa";
 		reg = <0x34>;
 		monitor-flag = <0x01>;
+		firmware-name = "aw882xx_spk_reg_r.bin";
 
 		reset-gpio = <&tlmm 116 GPIO_ACTIVE_HIGH>;
 		//irq-gpio = <&tlmm 117 0x2008>;
 
-		sound-channel = <0>;
+		sound-channel = "right";
 		sync-flag = <0x00>;
 
-		#sound-dai-cells = <1>;
+		#sound-dai-cells = <0>;
 		aw-cali-mode = "aw_misc";
 	};
 
@@ -677,14 +678,15 @@
 		compatible = "awinic,aw882xx_smartpa";
 		reg = <0x35>;
 		monitor-flag = <0x01>;
+		firmware-name = "aw882xx_spk_reg_l.bin";
 
 		reset-gpio = <&tlmm 115 GPIO_ACTIVE_HIGH>;
 		// irq-gpio = <&tlmm 118 0x2008>;
 
-		sound-channel = <1>;
+		sound-channel = "left";
 		sync-flag = <0x00>;
 
-		#sound-dai-cells = <1>;
+		#sound-dai-cells = <0>;
 		aw-cali-mode = "aw_misc";
 	};
 };
@@ -910,7 +912,7 @@
 };
 
 &q6afedai {
-	dai@20 {
+	dai@137 {
 		// reg = <TERTIARY_TDM_RX_0>;
 		// qcom,tdm-sync-mode = <0>;
 		// qcom,tdm-sync-src = <1>;
@@ -918,14 +920,14 @@
 		// qcom,tdm-invert-sync = <1>;
 		// qcom,tdm-data-delay = <1>;
 		// qcom,tdm-data-align = <0>;
-		reg = <TERTIARY_MI2S_RX>;
+		reg = <SENARY_MI2S_RX>;
 		// qcom,tdm-sync-mode = <1>;     /* Sync mode: 1=secondary (for AW88261) */
 		// qcom,tdm-sync-src = <1>;      /* Sync source: 1=internal */
 		// qcom,tdm-data-out = <0>;      /* Data out: 0=enabled */
 		// qcom,tdm-invert-sync = <0>;   /* Don't invert sync for AW88261 */
 		// qcom,tdm-data-delay = <1>;    /* 1-bit data delay for proper alignment */
 		// qcom,tdm-data-align = <0>;    /* No special alignment needed */
-		qcom,sd-lines = <0>;
+		qcom,sd-lines = <1>;
 	};
 };
 
@@ -942,13 +944,39 @@
 
 &lpass_tlmm {
 	status = "okay";
+
+	sen_mi2s_active: sen-mi2s-active-state {
+		clk-pins {
+			pins = "gpio10";
+			function = "i2s2_clk";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+
+		ws-pins {
+			pins = "gpio11";
+			function = "i2s2_ws";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+
+		data-pins {
+			pins = "gpio12", "gpio13";
+			function = "i2s2_data";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+	};
 };
 
 &sound {
 	compatible = "qcom,sm8250-sndcard";
 	model = "meizu-m2172-sndcard";
 	pinctrl-names = "default";
-	pinctrl-0 = <&tert_mi2s_active>;
+	pinctrl-0 = <&sen_mi2s_active>;
 	status = "okay";
 
 
@@ -961,11 +989,11 @@
 	};
 
 	speaker-dai-link {
-		link-name = "Tertiary TDM Playback";
+		link-name = "Senary MI2S Playback";
 		// no-pcm;
 
 		cpu {
-			sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
+			sound-dai = <&q6afedai SENARY_MI2S_RX>;
 		};
 
 		platform {
@@ -973,7 +1001,7 @@
 		};
 
 		codec {
-			sound-dai = <&aw882xx_r 0>, <&aw882xx_l 0>;
+			sound-dai = <&aw882xx_r>, <&aw882xx_l>;
 		};
 	};
 };
