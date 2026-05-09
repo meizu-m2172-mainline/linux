@@ -2388,10 +2388,8 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 		if (!err) {
 			src_perms = BIT(QCOM_SCM_VMID_HLOS);
 
-			err = qcom_scm_assign_mem(res.start, resource_size(&res), &src_perms,
+			qcom_scm_assign_mem(res.start, resource_size(&res), &src_perms,
 				    data->vmperms, data->vmcount);
-			if (err)
-				goto err_free_data;
 		}
 
 	}
