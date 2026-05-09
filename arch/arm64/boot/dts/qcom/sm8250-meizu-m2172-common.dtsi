@@ -898,6 +898,10 @@
 	status = "okay";
 };
 
+&pm8009_pon {
+	status = "disabled";
+};
+
 &qupv3_id_0 {
 	status = "okay";
 };
