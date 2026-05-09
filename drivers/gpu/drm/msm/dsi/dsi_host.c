@@ -1736,6 +1736,26 @@ static int dsi_host_attach(struct mipi_dsi_host *host,
 		}
 	}
 
+	if (msm_host->format == MIPI_DSI_FMT_RGB101010) {
+		if (!msm_dsi_host_version_geq(msm_host, MSM_DSI_VER_MAJOR_6G,
+					      MSM_DSI_6G_VER_MINOR_V2_1_0)) {
+			DRM_DEV_ERROR(&msm_host->pdev->dev,
+				      "RGB101010 not supported on this DSI controller\n");
+			return -EINVAL;
+		}
+
+		/*
+		 * Downstream overrides RGB101010 back to RGB888 when DSC is enabled
+		 * but widebus is not. Using RGB101010 in this case may require some
+		 * extra changes.
+		 */
+		if (msm_host->dsc &&
+		    !msm_dsi_host_is_wide_bus_enabled(&msm_host->base)) {
+			dev_warn(&msm_host->pdev->dev,
+				 "RGB101010 with DSC but without widebus, may need extra changes\n");
+		}
+	}
+
 	ret = dsi_dev_attach(msm_host->pdev);
 	if (ret)
 		return ret;

@@ -1673,8 +1673,6 @@ class KernelDoc:
 
             self.emit_unused_warnings()
 
-            self.emit_unused_warnings()
-
         except OSError:
             self.config.log.error(f"Error: Cannot open file {self.fname}")
 

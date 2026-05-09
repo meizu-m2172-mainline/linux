@@ -368,13 +368,6 @@ void pci_bus_add_device(struct pci_dev *dev)
 	 */
 	pm_runtime_enable(&dev->dev);
 
-	/*
-	 * Enable runtime PM, which potentially allows the device to
-	 * suspend immediately, only after the PCI state has been
-	 * configured completely.
-	 */
-	pm_runtime_enable(&dev->dev);
-
 	if (!dn || of_device_is_available(dn))
 		pci_dev_allow_binding(dev);
 
