@@ -64,6 +64,7 @@ struct q6asm_dai_rtd {
 	uint64_t copied_total;
 	uint16_t bits_per_sample;
 	snd_pcm_uframes_t queue_ptr;
+	unsigned int queued_periods;
 	uint16_t source; /* Encoding source bit mask */
 	struct audio_client *audio_client;
 	uint32_t next_track_stream_id;
@@ -176,6 +177,46 @@ static const struct snd_compr_codec_caps q6asm_compr_caps = {
 	.descriptor[0].formats = 0,
 };
 
+static int q6asm_dai_queue_available(struct q6asm_dai_rtd *prtd)
+{
+	struct snd_pcm_substream *substream = prtd->substream;
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	snd_pcm_sframes_t avail;
+	unsigned int avail_periods, free_periods;
+	int i, ret;
+
+	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK ||
+	    prtd->state != Q6ASM_STREAM_RUNNING)
+		return 0;
+
+	avail = runtime->control->appl_ptr - prtd->queue_ptr;
+	if (avail < (snd_pcm_sframes_t)runtime->period_size)
+		return 0;
+
+	avail_periods = avail / runtime->period_size;
+	if (prtd->queued_periods >= prtd->periods)
+		return 0;
+
+	free_periods = prtd->periods - prtd->queued_periods;
+	avail_periods = min(avail_periods, free_periods);
+
+	for (i = 0; i < avail_periods; i++) {
+		ret = q6asm_write_async(prtd->audio_client, prtd->stream_id,
+					prtd->pcm_count, 0, 0, 0);
+		if (ret < 0) {
+			dev_err_ratelimited(substream->pcm->card->dev,
+					    "Error queuing playback buffer %d\n",
+					    ret);
+			return ret;
+		}
+
+		prtd->queue_ptr += runtime->period_size;
+		prtd->queued_periods++;
+	}
+
+	return 0;
+}
+
 static void event_handler(uint32_t opcode, uint32_t token,
 			  void *payload, void *priv)
 {
@@ -184,12 +225,17 @@ static void event_handler(uint32_t opcode, uint32_t token,
 
 	switch (opcode) {
 	case ASM_CLIENT_EVENT_CMD_RUN_DONE:
+		q6asm_dai_queue_available(prtd);
 		break;
 	case ASM_CLIENT_EVENT_CMD_EOS_DONE:
 		prtd->state = Q6ASM_STREAM_STOPPED;
 		break;
 	case ASM_CLIENT_EVENT_DATA_WRITE_DONE: {
+		if (prtd->queued_periods)
+			prtd->queued_periods--;
+
 		snd_pcm_period_elapsed(substream);
+		q6asm_dai_queue_available(prtd);
 		break;
 		}
 	case ASM_CLIENT_EVENT_DATA_READ_DONE:
@@ -224,15 +270,17 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
 	}
 
 	prtd->pcm_count = snd_pcm_lib_period_bytes(substream);
+	prtd->queue_ptr = 0;
+	prtd->queued_periods = 0;
 	/* rate and channels are sent to audio driver */
-	if (prtd->state == Q6ASM_STREAM_RUNNING) {
+	if (prtd->state != Q6ASM_STREAM_IDLE) {
 		/* clear the previous setup if any  */
 		q6asm_cmd(prtd->audio_client, prtd->stream_id, CMD_CLOSE);
 		q6asm_unmap_memory_regions(substream->stream,
 					   prtd->audio_client);
 		q6routing_stream_close(soc_prtd->dai_link->id,
 					 substream->stream);
-		prtd->state = Q6ASM_STREAM_STOPPED;
+		prtd->state = Q6ASM_STREAM_IDLE;
 	}
 
 	ret = q6asm_map_memory_regions(substream->stream, prtd->audio_client,
@@ -305,25 +353,9 @@ open_err:
 
 static int q6asm_dai_ack(struct snd_soc_component *component, struct snd_pcm_substream *substream)
 {
-	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct q6asm_dai_rtd *prtd = runtime->private_data;
-	int i, ret = 0, avail_periods;
+	struct q6asm_dai_rtd *prtd = substream->runtime->private_data;
 
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK && prtd->state == Q6ASM_STREAM_RUNNING) {
-		avail_periods = (runtime->control->appl_ptr - prtd->queue_ptr)/runtime->period_size;
-		for (i = 0; i < avail_periods; i++) {
-			ret = q6asm_write_async(prtd->audio_client, prtd->stream_id,
-					   prtd->pcm_count, 0, 0, 0);
-
-			if (ret < 0) {
-				dev_err(component->dev, "Error queuing playback buffer %d\n", ret);
-				return ret;
-			}
-			prtd->queue_ptr += runtime->period_size;
-		}
-	}
-
-	return ret;
+	return q6asm_dai_queue_available(prtd);
 }
 
 static int q6asm_dai_trigger(struct snd_soc_component *component,
@@ -341,6 +373,9 @@ static int q6asm_dai_trigger(struct snd_soc_component *component,
 				       0, 0, 0);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
+		if (prtd->state != Q6ASM_STREAM_RUNNING)
+			break;
+
 		prtd->state = Q6ASM_STREAM_STOPPED;
 		ret = q6asm_cmd_nowait(prtd->audio_client, prtd->stream_id,
 				       CMD_EOS);

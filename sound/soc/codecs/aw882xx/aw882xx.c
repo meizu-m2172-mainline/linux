@@ -404,6 +404,18 @@ static void aw882xx_run_i2s_tx(struct aw882xx *aw882xx, bool flag)
 	}
 }
 
+static void aw882xx_enable_playback_path(struct aw882xx *aw882xx)
+{
+	aw_dev_dbg(aw882xx->dev, "%s: enter\n", __func__);
+
+	aw882xx_i2c_write_bits(aw882xx, AW882XX_SYSCTRL_REG,
+			AW882XX_I2SEN_MASK,
+			AW882XX_I2SEN_ENABLE_VALUE);
+	aw882xx_i2c_write_bits(aw882xx, AW882XX_SYSCTRL_REG,
+			AW882XX_AMPPD_MASK,
+			AW882XX_AMPPD_NORMAL_WORKING_VALUE);
+}
+
 static void aw882xx_run_pwd(struct aw882xx *aw882xx, bool pwd)
 {
 	aw_dev_dbg(aw882xx->dev, "%s: enter\n", __func__);
@@ -584,6 +596,7 @@ static int aw882xx_start(struct aw882xx *aw882xx)
 	aw_dev_dbg(aw882xx->dev, "%s: enter\n", __func__);
 
 	aw882xx_run_i2s_tx(aw882xx, true);
+	aw882xx_enable_playback_path(aw882xx);
 	aw882xx_run_pwd(aw882xx, false);
 	msleep(2);
 	ret = aw882xx_sysst_check(aw882xx);
