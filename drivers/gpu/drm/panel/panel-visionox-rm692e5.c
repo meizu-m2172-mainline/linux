@@ -28,6 +28,7 @@ struct visionox_rm692e5 {
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
+	bool supplies_enabled;
 };
 
 static const struct regulator_bulk_data visionox_rm692e5_supplies[] = {
@@ -177,12 +178,17 @@ static int visionox_rm692e5_disable(struct drm_panel *panel)
 	struct mipi_dsi_device *dsi = ctx->dsi;
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 
-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
-	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
-	mipi_dsi_usleep_range(&dsi_ctx, 1000, 2000);
-	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
-	mipi_dsi_usleep_range(&dsi_ctx, 1000, 2000);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfe, 0x00);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_EXIT_IDLE_MODE, 0x00);
+	mipi_dsi_msleep(&dsi_ctx, 80);
+
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_OFF, 0x00);
+	mipi_dsi_msleep(&dsi_ctx, 34);
+
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_ENTER_SLEEP_MODE, 0x00);
+	mipi_dsi_msleep(&dsi_ctx, 100);
 
 	return dsi_ctx.accum_err;
 }
@@ -192,14 +198,18 @@ static int visionox_rm692e5_prepare(struct drm_panel *panel)
 	struct visionox_rm692e5 *ctx = to_visionox_rm692e5(panel);
 	struct drm_dsc_picture_parameter_set pps;
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	bool was_supplies_enabled = ctx->supplies_enabled;
 	int ret;
 
-	ret = regulator_bulk_enable(ARRAY_SIZE(visionox_rm692e5_supplies),
-				    ctx->supplies);
-	if (ret < 0)
-		return ret;
+	if (!ctx->supplies_enabled) {
+		ret = regulator_bulk_enable(ARRAY_SIZE(visionox_rm692e5_supplies),
+					    ctx->supplies);
+		if (ret < 0)
+			return ret;
 
-	visionox_rm692e5_reset(ctx);
+		ctx->supplies_enabled = true;
+		visionox_rm692e5_reset(ctx);
+	}
 
 	ret = visionox_rm692e5_on(ctx);
 	if (ret < 0) {
@@ -220,18 +230,22 @@ static int visionox_rm692e5_prepare(struct drm_panel *panel)
 
 	return dsi_ctx.accum_err;
 err:
-	regulator_bulk_disable(ARRAY_SIZE(visionox_rm692e5_supplies),
-			ctx->supplies);
+	if (!was_supplies_enabled) {
+		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+		regulator_bulk_disable(ARRAY_SIZE(visionox_rm692e5_supplies),
+				       ctx->supplies);
+		ctx->supplies_enabled = false;
+	}
+
 	return ret;
 }
 
 static int visionox_rm692e5_unprepare(struct drm_panel *panel)
 {
-	struct visionox_rm692e5 *ctx = to_visionox_rm692e5(panel);
-
-	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-	regulator_bulk_disable(ARRAY_SIZE(visionox_rm692e5_supplies),
-			       ctx->supplies);
+	/*
+	 * The panel reliably resumes from DCS sleep mode, but does not recover
+	 * after cutting supplies and asserting reset on runtime blanking.
+	 */
 
 	return 0;
 }
