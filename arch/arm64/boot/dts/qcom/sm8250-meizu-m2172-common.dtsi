@@ -64,8 +64,8 @@
 
 	battery: battery {
 		compatible = "simple-battery";
-		charge-full-design-microamp-hours = <4520000>;
-		energy-full-design-microwatt-hours = <17500000>;
+		charge-full-design-microamp-hours = <4300000>;
+		energy-full-design-microwatt-hours = <17000000>;
 		voltage-min-design-microvolt = <3400000>;
 		voltage-max-design-microvolt = <4450000>;
 	};
@@ -835,8 +835,7 @@
 		sink-pdos = <PDO_FIXED(5000, 3000,
 					   PDO_FIXED_DUAL_ROLE |
 					   PDO_FIXED_USB_COMM |
-					   PDO_FIXED_DATA_SWAP)
-					   PDO_VAR(5000, 9000, 3500)>;
+					   PDO_FIXED_DATA_SWAP)>;
 
 		ports {
 			#address-cells = <1>;

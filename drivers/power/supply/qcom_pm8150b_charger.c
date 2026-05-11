@@ -421,11 +421,6 @@ static int smb5_get_prop_status(struct smb5_chip *chip, int *val)
 		return rc;
 	}
 
-	if (stat[1] & VBATT_GTET_INHIBIT_BIT) {
-		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
-		return 0;
-	}
-
 	stat[0] = stat[0] & BATTERY_CHARGER_STATUS_MASK;
 
 	switch (stat[0]) {
@@ -444,7 +439,10 @@ static int smb5_get_prop_status(struct smb5_chip *chip, int *val)
 		*val = POWER_SUPPLY_STATUS_FULL;
 		return rc;
 	default:
-		*val = POWER_SUPPLY_STATUS_UNKNOWN;
+		if (stat[1] & VBATT_GTET_INHIBIT_BIT)
+			*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		else
+			*val = POWER_SUPPLY_STATUS_UNKNOWN;
 		return rc;
 	}
 }
@@ -766,8 +764,10 @@ static const struct smb5_register smb5_init_seq[] = {
 	  .val = CHARGING_ENABLE_CMD_BIT },
 	/* Enable BC1P2 Src detect */
 	{ .addr = USBIN_OPTIONS_1_CFG,
-	  .mask = BC1P2_SRC_DETECT_BIT,
-	  .val = BC1P2_SRC_DETECT_BIT },
+	  .mask = HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT |
+		 BC1P2_SRC_DETECT_BIT,
+	  .val = HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT |
+		 BC1P2_SRC_DETECT_BIT },
 	/* Set the default SDP charger type to a 500ma USB 2.0 port */
 	{ .addr = USBIN_ICL_OPTIONS,
 	  .mask = USBIN_MODE_CHG_BIT,
