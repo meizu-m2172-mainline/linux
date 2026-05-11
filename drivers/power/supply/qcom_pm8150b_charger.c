@@ -358,7 +358,7 @@ static int smb5_apsd_get_charger_type(struct smb5_chip *chip, int *val)
 		return rc;
 	}
 	if (!(apsd_stat & APSD_DTC_STATUS_DONE_BIT)) {
-		dev_err(chip->dev, "Apsd not ready");
+		dev_dbg(chip->dev, "Apsd not ready");
 		return -EAGAIN;
 	}
 
@@ -744,13 +744,10 @@ static const struct smb5_register smb5_init_seq[] = {
 	{ .addr = TYPE_C_EXIT_STATE_CFG,
 	  .mask = SEL_SRC_UPPER_REF_BIT,
 	  .val = SEL_SRC_UPPER_REF_BIT },
-	/*
-	 * Disable Type-C factory mode and stay in Attached.SRC state when VCONN
-	 * over-current happens
-	 */
+		/* Enable automatic BC1.2/APSD detection on CC attach */
 	{ .addr = TYPE_C_CFG,
 	  .mask = BC1P2_START_ON_CC_BIT,
-	  .val = 0 },
+	  .val = BC1P2_START_ON_CC_BIT },
 	{ .addr = TYPE_C_DEBUG_ACCESS_SINK,
 	  .mask = TYPEC_DEBUG_ACCESS_SINK_MASK,
 	  .val = 0x17 },

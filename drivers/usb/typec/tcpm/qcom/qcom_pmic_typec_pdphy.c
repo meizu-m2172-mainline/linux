@@ -380,7 +380,7 @@ static irqreturn_t qcom_pmic_typec_pdphy_isr(int irq, void *dev_id)
 
 	switch (irq_data->virq) {
 	case PMIC_PDPHY_SIG_TX_IRQ:
-		dev_err(dev, "isr: tx_sig\n");
+		dev_dbg(dev, "isr: tx_sig\n");
 		break;
 	case PMIC_PDPHY_SIG_RX_IRQ:
 		schedule_work(&pmic_typec_pdphy->reset_work);
