@@ -1331,11 +1331,10 @@ static int qcom_fg_probe(struct platform_device *pdev)
 	if (chip->batt_psy->num_supplies > 0) {
 		chip->chg_psy = power_supply_get_by_name(
 			chip->batt_psy->supplied_from[0]);
-		if (IS_ERR(chip->chg_psy)) {
-			dev_warn(chip->dev, "Failed to get charger supply: %ld\n",
-				 PTR_ERR(chip->chg_psy));
-			chip->chg_psy = NULL;
-		}
+		if (!chip->chg_psy)
+			dev_warn(chip->dev,
+				 "Failed to get charger supply '%s'\n",
+				 chip->batt_psy->supplied_from[0]);
 	}
 
 	if (chip->chg_psy) {
