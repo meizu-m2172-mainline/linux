@@ -35,7 +35,6 @@
 #define BATTERY_CHARGER_STATUS_2			0x07
 #define DROP_IN_BATTERY_VOLTAGE_REFERENCE_BIT		BIT(7)
 #define VBATT_LTET_RECHARGE_BIT				BIT(6)
-#define VBATT_GTET_INHIBIT_BIT				BIT(5)
 #define VBATT_GTET_FLOAT_VOLTAGE_BIT			BIT(4)
 #define BATT_GT_FULL_ON_BIT				BIT(3)
 #define CHARGER_ERROR_STATUS_SFT_EXPIRE_BIT		BIT(2)
@@ -145,6 +144,7 @@
 
 #define USBIN_ADAPTER_ALLOW_CFG			0x360
 #define USBIN_ADAPTER_ALLOW_MASK		GENMASK(3, 0)
+#define USBIN_ADAPTER_ALLOW_5V			0x0
 
 #define USBIN_OPTIONS_1_CFG			0x362
 #define HVDCP_AUTH_ALG_EN_CFG_BIT		BIT(6)
@@ -337,6 +337,55 @@ static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
 }
 
 /*
+ * If TCPM has an active PD contract on the same port, its reported usb_type
+ * is the authoritative one (APSD on the PMIC side classifies a PD source as
+ * DCP because it only sees a 5V high-current rail). Walk all power supplies
+ * looking for the TCPM source PSY and read its usb_type.
+ */
+static int smb5_tcpm_match_cb(struct power_supply *psy, void *data)
+{
+	struct power_supply **out = data;
+	const char *name = psy->desc->name;
+
+	if (name && !strncmp(name, "tcpm-source-psy-", 16)) {
+		*out = psy;
+		return 1; /* stop iteration */
+	}
+	return 0;
+}
+
+static int smb5_tcpm_get_usb_type(int *val)
+{
+	struct power_supply *tcpm = NULL;
+	union power_supply_propval prop;
+	int rc;
+
+	power_supply_for_each_psy(&tcpm, smb5_tcpm_match_cb);
+	if (!tcpm)
+		return -ENODEV;
+
+	rc = power_supply_get_property(tcpm, POWER_SUPPLY_PROP_ONLINE, &prop);
+	if (rc || !prop.intval)
+		return -ENODEV;
+
+	rc = power_supply_get_property(tcpm, POWER_SUPPLY_PROP_USB_TYPE, &prop);
+	if (rc)
+		return rc;
+
+	switch (prop.intval) {
+	case POWER_SUPPLY_USB_TYPE_PD:
+	case POWER_SUPPLY_USB_TYPE_PD_PPS:
+	case POWER_SUPPLY_USB_TYPE_PD_DRP:
+	case POWER_SUPPLY_USB_TYPE_PD_SPR_AVS:
+	case POWER_SUPPLY_USB_TYPE_PD_PPS_SPR_AVS:
+		*val = prop.intval;
+		return 0;
+	default:
+		return -ENODEV;
+	}
+}
+
+/*
  * Qualcomm "automatic power source detection" aka APSD
  * tells us what type of charger we're connected to.
  */
@@ -439,10 +488,12 @@ static int smb5_get_prop_status(struct smb5_chip *chip, int *val)
 		*val = POWER_SUPPLY_STATUS_FULL;
 		return rc;
 	default:
-		if (stat[1] & VBATT_GTET_INHIBIT_BIT)
-			*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
-		else
-			*val = POWER_SUPPLY_STATUS_UNKNOWN;
+		/*
+		 * BATTERY_CHARGER_STATUS_MASK covers all 8 enum values, so this
+		 * branch is unreachable on healthy hardware. Treat any future
+		 * unknown value defensively.
+		 */
+		*val = POWER_SUPPLY_STATUS_UNKNOWN;
 		return rc;
 	}
 }
@@ -616,6 +667,9 @@ static int smb5_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_HEALTH:
 		return smb5_get_prop_health(chip, &val->intval);
 	case POWER_SUPPLY_PROP_USB_TYPE:
+		/* Prefer TCPM's PD verdict; fall back to PMIC APSD. */
+		if (!smb5_tcpm_get_usb_type(&val->intval))
+			return 0;
 		return smb5_apsd_get_charger_type(chip, &val->intval);
 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
 		return smb5_get_prop_charging_enabled(chip, &val->intval);
@@ -712,7 +766,12 @@ static const struct power_supply_desc smb5_psy_desc = {
 	.type = POWER_SUPPLY_TYPE_USB,
 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
- 		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+		     BIT(POWER_SUPPLY_USB_TYPE_PD) |
+		     BIT(POWER_SUPPLY_USB_TYPE_PD_PPS) |
+		     BIT(POWER_SUPPLY_USB_TYPE_PD_DRP) |
+		     BIT(POWER_SUPPLY_USB_TYPE_PD_SPR_AVS) |
+		     BIT(POWER_SUPPLY_USB_TYPE_PD_PPS_SPR_AVS) |
 		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
 	.properties = smb5_properties,
 	.num_properties = ARRAY_SIZE(smb5_properties),
@@ -762,12 +821,22 @@ static const struct smb5_register smb5_init_seq[] = {
 	{ .addr = CHARGING_ENABLE_CMD,
 	  .mask = CHARGING_ENABLE_CMD_BIT,
 	  .val = CHARGING_ENABLE_CMD_BIT },
-	/* Enable BC1P2 Src detect */
+	/*
+	 * Restrict USBIN to 5V. HVDCP would otherwise let a QC2/QC3 adapter
+	 * autonomously pull VBUS to 9V before the 9V DCDC path is supported.
+	 * HW reset default of this register is 0x07 (5V-to-9V continuous).
+	 */
+	{ .addr = USBIN_ADAPTER_ALLOW_CFG,
+	  .mask = USBIN_ADAPTER_ALLOW_MASK,
+	  .val = USBIN_ADAPTER_ALLOW_5V },
+	/*
+	 * Enable BC1.2 source detect. Keep HVDCP disabled until the 9V DCDC
+	 * path is wired up; pairs with the 5V-only adapter_allow above.
+	 */
 	{ .addr = USBIN_OPTIONS_1_CFG,
 	  .mask = HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT |
 		 BC1P2_SRC_DETECT_BIT,
-	  .val = HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT |
-		 BC1P2_SRC_DETECT_BIT },
+	  .val = BC1P2_SRC_DETECT_BIT },
 	/* Set the default SDP charger type to a 500ma USB 2.0 port */
 	{ .addr = USBIN_ICL_OPTIONS,
 	  .mask = USBIN_MODE_CHG_BIT,
