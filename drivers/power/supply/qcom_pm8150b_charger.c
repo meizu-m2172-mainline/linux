@@ -822,16 +822,20 @@ static const struct smb5_register smb5_init_seq[] = {
 	  .mask = CHARGING_ENABLE_CMD_BIT,
 	  .val = CHARGING_ENABLE_CMD_BIT },
 	/*
-	 * Restrict USBIN to 5V. HVDCP would otherwise let a QC2/QC3 adapter
-	 * autonomously pull VBUS to 9V before the 9V DCDC path is supported.
-	 * HW reset default of this register is 0x07 (5V-to-9V continuous).
+	 * Restrict USBIN to 5V. Although the PM8150B silicon accepts up to
+	 * ~14V on USBIN, this upstream charger driver has no glue between
+	 * TCPM and the charger FSM, so a runtime 5V->9V PD transition
+	 * leaves the FSM stuck in DISABLE_CHARGE even after an unplug-
+	 * replug. Keep VBUS at 5V until that handler is added; HVDCP is
+	 * disabled below for the same reason.
 	 */
 	{ .addr = USBIN_ADAPTER_ALLOW_CFG,
 	  .mask = USBIN_ADAPTER_ALLOW_MASK,
 	  .val = USBIN_ADAPTER_ALLOW_5V },
 	/*
-	 * Enable BC1.2 source detect. Keep HVDCP disabled until the 9V DCDC
-	 * path is wired up; pairs with the 5V-only adapter_allow above.
+	 * Enable BC1.2 source detect. Keep HVDCP disabled so QC2/QC3 adapters
+	 * cannot autonomously bypass TCPM and pull VBUS to 9V on their own;
+	 * pairs with the 5V-only adapter_allow above.
 	 */
 	{ .addr = USBIN_OPTIONS_1_CFG,
 	  .mask = HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT |
