@@ -526,7 +526,14 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
-		/* L3 & L4 are unused. */
+		/* L3 is unused. */
+
+		vreg_l4f_1p2: ldo4 {
+			regulator-name = "vreg_l4f_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
 
 		vreg_l5f_2p8: ldo5 {
 			regulator-name = "vreg_l5f_2p8";
@@ -1085,6 +1092,13 @@
 		bias-pull-down;
 	};
 
+	cam_mclk1_active: cam-mclk1-active-state {
+		pins = "gpio95";
+		function = "cam_mclk";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	tert_tdm_active: tert-tdm-active-state {
 		sck-pins {
 			pins = "gpio133";
@@ -1289,4 +1303,65 @@
 &venus {
 	firmware-name = "qcom/sm8250/meizu/m2172/venus.mbn";
 	status = "okay";
+};
+
+/*
+ * Android's CSIPHY nodes use refgen-supply. The mainline qcom-camss binding
+ * has no per-CSIPHY refgen supply, so keep the shared reference enabled.
+ */
+&refgen {
+	regulator-always-on;
+};
+
+&camss {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+
+	status = "okay";
+
+	ports {
+		port@1 {
+			csiphy1_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				remote-endpoint = <&camera_uw_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci0_i2c1 {
+	camera_uw: camera@21 {
+		compatible = "hynix,hi846";
+		reg = <0x21>;
+
+		vddio-supply = <&vreg_l7f_1p8>;
+		vdda-supply = <&vreg_l6f_2p8>;
+		vddd-supply = <&vreg_l4f_1p2>;
+
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		reset-gpios = <&tlmm 92 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk1_active>;
+
+		orientation = <1>; /* Rear facing */
+		rotation = <180>;
+
+		port {
+			camera_uw_ep: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <80000000 180000000>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
 };
