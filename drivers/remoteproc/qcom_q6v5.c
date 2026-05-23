@@ -165,7 +165,14 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
 	struct qcom_q6v5 *q6v5 = data;
 
 	if (q6v5->handover_issued) {
-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
+		/*
+		 * Some SLPI firmware (e.g. Meizu m2172 sm8250 slpi.mbn) periodically
+		 * re-toggles SMP2P bits 1+2 at ~5 Hz as part of normal power-management
+		 * activity, even after the initial handover. Downstream PIL silently
+		 * tolerates this via refcounted pil_proxy_unvote(); here we just skip
+		 * the redundant unvote and stay quiet by default.
+		 */
+		dev_dbg(q6v5->dev, "Handover signaled, but it already happened\n");
 		return IRQ_HANDLED;
 	}
 
