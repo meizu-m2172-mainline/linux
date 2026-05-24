@@ -1381,7 +1381,9 @@
 			camera_main_ep: endpoint {
 				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 				data-lanes = <1 2 3 4>;
-				link-frequencies = /bits/ 64 <600000000 660000000>;
+				link-frequencies = /bits/ 64 <600000000 660000000
+							 888000000 1000000000
+							 1050000000>;
 				remote-endpoint = <&csiphy0_ep>;
 			};
 		};

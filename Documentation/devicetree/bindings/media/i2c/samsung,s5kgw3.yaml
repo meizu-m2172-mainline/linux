@@ -88,7 +88,9 @@ examples:
               port {
                   endpoint {
                       data-lanes = <1 2 3 4>;
-                      link-frequencies = /bits/ 64 <600000000 660000000>;
+                      link-frequencies = /bits/ 64 <600000000 660000000
+                                                       888000000 1000000000
+                                                       1050000000>;
                       remote-endpoint = <&mipi_csi2_ep>;
                   };
               };

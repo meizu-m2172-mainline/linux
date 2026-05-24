@@ -24,6 +24,9 @@
 
 #define S5KGW3_LINK_FREQ_600MHZ		(600ULL * HZ_PER_MHZ)
 #define S5KGW3_LINK_FREQ_660MHZ		(660ULL * HZ_PER_MHZ)
+#define S5KGW3_LINK_FREQ_888MHZ		(888ULL * HZ_PER_MHZ)
+#define S5KGW3_LINK_FREQ_1000MHZ	(1000ULL * HZ_PER_MHZ)
+#define S5KGW3_LINK_FREQ_1050MHZ	(1050ULL * HZ_PER_MHZ)
 #define S5KGW3_MCLK_FREQ_24MHZ		(24 * HZ_PER_MHZ)
 #define S5KGW3_DATA_LANES		4
 #define S5KGW3_NATIVE_WIDTH		9312
@@ -55,11 +58,17 @@
 enum s5kgw3_link_freq_index {
 	S5KGW3_LINK_FREQ_600MHZ_INDEX,
 	S5KGW3_LINK_FREQ_660MHZ_INDEX,
+	S5KGW3_LINK_FREQ_888MHZ_INDEX,
+	S5KGW3_LINK_FREQ_1000MHZ_INDEX,
+	S5KGW3_LINK_FREQ_1050MHZ_INDEX,
 };
 
 static const s64 s5kgw3_link_freq_menu[] = {
 	S5KGW3_LINK_FREQ_600MHZ,
 	S5KGW3_LINK_FREQ_660MHZ,
+	S5KGW3_LINK_FREQ_888MHZ,
+	S5KGW3_LINK_FREQ_1000MHZ,
+	S5KGW3_LINK_FREQ_1050MHZ,
 };
 
 static const u32 s5kgw3_mbus_formats[] = {
@@ -1339,8 +1348,8 @@ static const struct s5kgw3_reg s5kgw3_mode1_4640x3472_30fps_regs[] = {
 	{ 0x0306, 0x0096 },
 	{ 0x030c, 0x0000 },
 	{ 0x030e, 0x0004 },
-	{ 0x0310, 0x00c8 },
-	{ 0x0312, 0x0001 },
+	{ 0x0310, 0x0087 },
+	{ 0x0312, 0x0000 },
 	{ 0x602a, 0x68d0 },
 	{ 0x6f12, 0x9600 },
 	{ 0x602a, 0x720e },
@@ -1876,10 +1885,10 @@ static const struct s5kgw3_reg s5kgw3_mode4_3840x2160_60fps_regs[] = {
 	{ 0x0136, 0x1800 },
 	{ 0x013e, 0x0000 },
 	{ 0x0304, 0x0004 },
-	{ 0x0306, 0x0096 },
+	{ 0x0306, 0x0097 },
 	{ 0x030c, 0x0000 },
 	{ 0x030e, 0x0004 },
-	{ 0x0310, 0x006e },
+	{ 0x0310, 0x0094 },
 	{ 0x0312, 0x0000 },
 	{ 0x602a, 0x68d0 },
 	{ 0x6f12, 0x9600 },
@@ -2148,10 +2157,10 @@ static const struct s5kgw3_reg s5kgw3_mode5_1920x1080_120fps_regs[] = {
 	{ 0x0136, 0x1800 },
 	{ 0x013e, 0x0000 },
 	{ 0x0304, 0x0004 },
-	{ 0x0306, 0x0096 },
+	{ 0x0306, 0x0097 },
 	{ 0x030c, 0x0000 },
 	{ 0x030e, 0x0004 },
-	{ 0x0310, 0x006e },
+	{ 0x0310, 0x00af },
 	{ 0x0312, 0x0000 },
 	{ 0x602a, 0x68d0 },
 	{ 0x6f12, 0x9600 },
@@ -2418,10 +2427,10 @@ static const struct s5kgw3_reg s5kgw3_mode6_1920x1080_240fps_regs[] = {
 	{ 0x0136, 0x1800 },
 	{ 0x013e, 0x0000 },
 	{ 0x0304, 0x0004 },
-	{ 0x0306, 0x0096 },
+	{ 0x0306, 0x0097 },
 	{ 0x030c, 0x0000 },
 	{ 0x030e, 0x0004 },
-	{ 0x0310, 0x006e },
+	{ 0x0310, 0x00af },
 	{ 0x0312, 0x0000 },
 	{ 0x602a, 0x68d0 },
 	{ 0x6f12, 0x9600 },
@@ -3130,6 +3139,7 @@ static const struct s5kgw3_reg s5kgw3_mode8_1280x720_120fps_regs[] = {
 
 static const struct s5kgw3_reg s5kgw3_stream_on_regs[] = {
 	{ 0x0100, 0x01, 0, 1 },
+	{ 0x0101, 0x03, 0, 1 },
 };
 
 static const struct s5kgw3_reg s5kgw3_stream_off_regs[] = {
@@ -3184,7 +3194,7 @@ static const struct s5kgw3_mode s5kgw3_supported_modes[] = {
 		.hts = 2700,
 		.vts = 2484,
 		.fps_milli = 120000,
-		.link_freq_index = S5KGW3_LINK_FREQ_660MHZ_INDEX,
+		.link_freq_index = S5KGW3_LINK_FREQ_1050MHZ_INDEX,
 		.pixel_rate = 840000000,
 		.crop = {
 			.left = 800,
@@ -3204,7 +3214,7 @@ static const struct s5kgw3_mode s5kgw3_supported_modes[] = {
 		.hts = 2700,
 		.vts = 1242,
 		.fps_milli = 240150,
-		.link_freq_index = S5KGW3_LINK_FREQ_660MHZ_INDEX,
+		.link_freq_index = S5KGW3_LINK_FREQ_1050MHZ_INDEX,
 		.pixel_rate = 840000000,
 		.crop = {
 			.left = 800,
@@ -3224,7 +3234,7 @@ static const struct s5kgw3_mode s5kgw3_supported_modes[] = {
 		.hts = 5824,
 		.vts = 2304,
 		.fps_milli = 60000,
-		.link_freq_index = S5KGW3_LINK_FREQ_660MHZ_INDEX,
+		.link_freq_index = S5KGW3_LINK_FREQ_888MHZ_INDEX,
 		.pixel_rate = 710400000,
 		.crop = {
 			.left = 800,
@@ -3264,7 +3274,7 @@ static const struct s5kgw3_mode s5kgw3_supported_modes[] = {
 		.hts = 7360,
 		.vts = 3616,
 		.fps_milli = 30010,
-		.link_freq_index = S5KGW3_LINK_FREQ_660MHZ_INDEX,
+		.link_freq_index = S5KGW3_LINK_FREQ_1000MHZ_INDEX,
 		.pixel_rate = 800000000,
 		.crop = {
 			.left = 0,
