@@ -29,6 +29,11 @@ properties:
   vdd-supply:
     description: VDD power supply
 
+  vio-supply:
+    description:
+      Optional I/O power supply for modules where the I2C pads are powered
+      separately from VDD.
+
   dongwoon,sac-mode:
     description: |
       Slew Rate Control mode to use: direct, LSC (Linear Slope Control) or
