@@ -37,6 +37,10 @@
 #define S5KGW3_REG_CHIP_ID		CCI_REG16(0x0000)
 #define S5KGW3_CHIP_ID			0x7309
 #define S5KGW3_REG_GROUP_HOLD		CCI_REG8(0x0104)
+#define S5KGW3_REG_ORIENTATION		CCI_REG8(0x0101)
+#define S5KGW3_ORIENTATION_DEFAULT	0x03
+#define S5KGW3_VFLIP			BIT(1)
+#define S5KGW3_HFLIP			BIT(0)
 #define S5KGW3_REG_EXPOSURE		CCI_REG16(0x0202)
 #define S5KGW3_REG_ANALOG_GAIN		CCI_REG16(0x0204)
 #define S5KGW3_REG_FRAME_LENGTH		CCI_REG16(0x0340)
@@ -56,6 +60,13 @@ enum s5kgw3_link_freq_index {
 static const s64 s5kgw3_link_freq_menu[] = {
 	S5KGW3_LINK_FREQ_600MHZ,
 	S5KGW3_LINK_FREQ_660MHZ,
+};
+
+static const u32 s5kgw3_mbus_formats[] = {
+	MEDIA_BUS_FMT_SGRBG10_1X10,
+	MEDIA_BUS_FMT_SRGGB10_1X10,
+	MEDIA_BUS_FMT_SBGGR10_1X10,
+	MEDIA_BUS_FMT_SGBRG10_1X10,
 };
 
 static const char * const s5kgw3_test_pattern_menu[] = {
@@ -114,6 +125,8 @@ struct s5kgw3 {
 	struct v4l2_ctrl *exposure;
 	struct v4l2_ctrl *analogue_gain;
 	struct v4l2_ctrl *digital_gain;
+	struct v4l2_ctrl *hflip;
+	struct v4l2_ctrl *vflip;
 
 	const struct s5kgw3_mode *mode;
 };
@@ -3117,7 +3130,6 @@ static const struct s5kgw3_reg s5kgw3_mode8_1280x720_120fps_regs[] = {
 
 static const struct s5kgw3_reg s5kgw3_stream_on_regs[] = {
 	{ 0x0100, 0x01, 0, 1 },
-	{ 0x0101, 0x03, 0, 1 },
 };
 
 static const struct s5kgw3_reg s5kgw3_stream_off_regs[] = {
@@ -3309,12 +3321,14 @@ static int s5kgw3_set_ctrl(struct v4l2_ctrl *ctrl)
 	if (ctrl->id == V4L2_CID_VBLANK) {
 		u32 exposure_max = s5kgw3->mode->height + ctrl->val -
 				   S5KGW3_EXPOSURE_MARGIN;
+		u32 exposure_def = min_t(u32, exposure_max,
+					 s5kgw3->exposure->val);
 
 		ret = __v4l2_ctrl_modify_range(s5kgw3->exposure,
 						s5kgw3->exposure->minimum,
 						exposure_max,
 						s5kgw3->exposure->step,
-						s5kgw3->exposure->default_value);
+						exposure_def);
 		if (ret)
 			return ret;
 	}
@@ -3334,6 +3348,14 @@ static int s5kgw3_set_ctrl(struct v4l2_ctrl *ctrl)
 						  S5KGW3_REG_FRAME_LENGTH,
 						  ctrl->val +
 						  s5kgw3->mode->height);
+		break;
+	case V4L2_CID_HFLIP:
+	case V4L2_CID_VFLIP:
+		ret = cci_write(s5kgw3->regmap, S5KGW3_REG_ORIENTATION,
+				S5KGW3_ORIENTATION_DEFAULT ^
+				(s5kgw3->vflip->val ? S5KGW3_VFLIP : 0) ^
+				(s5kgw3->hflip->val ? S5KGW3_HFLIP : 0),
+				NULL);
 		break;
 	case V4L2_CID_DIGITAL_GAIN:
 		cci_write(s5kgw3->regmap, S5KGW3_REG_GROUP_HOLD, 1, &ret);
@@ -3423,6 +3445,24 @@ static int s5kgw3_update_controls(struct s5kgw3 *s5kgw3,
 	return __v4l2_ctrl_s_ctrl(s5kgw3->exposure, exposure_def);
 }
 
+static int s5kgw3_set_active_mode(struct s5kgw3 *s5kgw3,
+				  const struct s5kgw3_mode *mode)
+{
+	const struct s5kgw3_mode *old_mode = s5kgw3->mode;
+	int ret;
+
+	if (old_mode == mode)
+		return 0;
+
+	s5kgw3->mode = mode;
+
+	ret = s5kgw3_update_controls(s5kgw3, mode);
+	if (ret)
+		s5kgw3->mode = old_mode;
+
+	return ret;
+}
+
 static int s5kgw3_init_controls(struct s5kgw3 *s5kgw3)
 {
 	struct v4l2_ctrl_handler *ctrl_hdlr = &s5kgw3->ctrl_handler;
@@ -3432,7 +3472,7 @@ static int s5kgw3_init_controls(struct s5kgw3 *s5kgw3)
 	u32 exposure_max, exposure_def;
 	int ret;
 
-	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
+	v4l2_ctrl_handler_init(ctrl_hdlr, 11);
 
 	s5kgw3->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, NULL,
 						   V4L2_CID_LINK_FREQ,
@@ -3477,6 +3517,15 @@ static int s5kgw3_init_controls(struct s5kgw3 *s5kgw3)
 				     V4L2_CID_TEST_PATTERN,
 				     ARRAY_SIZE(s5kgw3_test_pattern_menu) - 1,
 				     0, 0, s5kgw3_test_pattern_menu);
+	s5kgw3->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &s5kgw3_ctrl_ops,
+					  V4L2_CID_HFLIP, 0, 1, 1, 0);
+	if (s5kgw3->hflip)
+		s5kgw3->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+
+	s5kgw3->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &s5kgw3_ctrl_ops,
+					  V4L2_CID_VFLIP, 0, 1, 1, 0);
+	if (s5kgw3->vflip)
+		s5kgw3->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
 	ret = v4l2_fwnode_device_parse(s5kgw3->dev, &props);
 	if (ret)
@@ -3558,10 +3607,21 @@ static int s5kgw3_disable_streams(struct v4l2_subdev *sd,
 	return ret;
 }
 
-static void s5kgw3_update_pad_format(const struct s5kgw3_mode *mode,
+static u32 s5kgw3_get_format_code(struct s5kgw3 *s5kgw3)
+{
+	unsigned int index;
+
+	index = (s5kgw3->vflip->val ? 2 : 0) |
+		(s5kgw3->hflip->val ? 1 : 0);
+
+	return s5kgw3_mbus_formats[index];
+}
+
+static void s5kgw3_update_pad_format(struct s5kgw3 *s5kgw3,
+				     const struct s5kgw3_mode *mode,
 				     struct v4l2_mbus_framefmt *fmt)
 {
-	fmt->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	fmt->code = s5kgw3_get_format_code(s5kgw3);
 	fmt->width = mode->width;
 	fmt->height = mode->height;
 	fmt->field = V4L2_FIELD_NONE;
@@ -3657,19 +3717,16 @@ static int s5kgw3_set_pad_format(struct v4l2_subdev *sd,
 	mode = s5kgw3_find_nearest_mode(s5kgw3, fmt->format.width,
 					     fmt->format.height, &interval);
 
-	s5kgw3_update_pad_format(mode, &fmt->format);
+	s5kgw3_update_pad_format(s5kgw3, mode, &fmt->format);
+
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+		ret = s5kgw3_set_active_mode(s5kgw3, mode);
+		if (ret)
+			return ret;
+	}
+
 	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
 	*v4l2_subdev_state_get_crop(state, fmt->pad) = mode->crop;
-
-	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || s5kgw3->mode == mode)
-		return 0;
-
-	ret = s5kgw3_update_controls(s5kgw3, mode);
-	if (ret)
-		return ret;
-
-	s5kgw3->mode = mode;
-
 	return 0;
 }
 
@@ -3677,10 +3734,12 @@ static int s5kgw3_enum_mbus_code(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
+	struct s5kgw3 *s5kgw3 = to_s5kgw3(sd);
+
 	if (code->index > 0)
 		return -EINVAL;
 
-	code->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	code->code = s5kgw3_get_format_code(s5kgw3);
 
 	return 0;
 }
@@ -3694,7 +3753,7 @@ static int s5kgw3_enum_frame_size(struct v4l2_subdev *sd,
 	if (fse->pad)
 		return -EINVAL;
 
-	if (fse->code != MEDIA_BUS_FMT_SGRBG10_1X10)
+	if (fse->code != s5kgw3_get_format_code(to_s5kgw3(sd)))
 		return -EINVAL;
 
 	for (i = 0; i < ARRAY_SIZE(s5kgw3_supported_modes); i++) {
@@ -3725,7 +3784,7 @@ static int s5kgw3_enum_frame_interval(struct v4l2_subdev *sd,
 	if (fie->pad)
 		return -EINVAL;
 
-	if (fie->code != MEDIA_BUS_FMT_SGRBG10_1X10)
+	if (fie->code != s5kgw3_get_format_code(to_s5kgw3(sd)))
 		return -EINVAL;
 
 	for (i = 0; i < ARRAY_SIZE(s5kgw3_supported_modes); i++) {
@@ -3788,13 +3847,9 @@ static int s5kgw3_set_frame_interval_op(struct v4l2_subdev *sd,
 		mode = s5kgw3_find_nearest_mode(s5kgw3, s5kgw3->mode->width,
 						     s5kgw3->mode->height,
 						     &interval->interval);
-		if (mode != s5kgw3->mode) {
-			ret = s5kgw3_update_controls(s5kgw3, mode);
-			if (ret)
-				return ret;
-
-			s5kgw3->mode = mode;
-		}
+		ret = s5kgw3_set_active_mode(s5kgw3, mode);
+		if (ret)
+			return ret;
 	}
 
 	s5kgw3_set_frame_interval(&interval->interval, mode);
