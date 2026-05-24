@@ -1364,6 +1364,7 @@
 		vddio-supply = <&vreg_l7f_1p8>;
 		vdda-supply = <&vreg_l5f_2p8>;
 		vddd-supply = <&vreg_l1f_1p056>;
+		lens-focus = <&camera_main_lens>;
 
 		clocks = <&camcc CAM_CC_MCLK0_CLK>;
 		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
@@ -1384,6 +1385,17 @@
 				remote-endpoint = <&csiphy0_ep>;
 			};
 		};
+	};
+
+	camera_main_lens: lens@c {
+		compatible = "dongwoon,dw9800k";
+		reg = <0x0c>;
+
+		vdd-supply = <&vreg_l7c_2p85>;
+		vio-supply = <&vreg_l7f_1p8>;
+
+		dongwoon,sac-mode = <2>;
+		dongwoon,vcm-prescale = <0x5f>;
 	};
 };
 
