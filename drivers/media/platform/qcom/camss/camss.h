@@ -40,8 +40,11 @@
 #define to_device_index(ptr_module, index)	\
 	(to_camss_index(ptr_module, index)->dev)
 
-#define CAMSS_RES_MAX 17
-#define CAMSS_INIT_BUF_COUNT 2
+#define CAMSS_RES_MAX			17
+#define CAMSS_INIT_BUF_COUNT		2
+#define CAMSS_FRAME_MAX_WIDTH		16383
+#define CAMSS_FRAME_MAX_HEIGHT_RDI	8191
+#define CAMSS_FRAME_MAX_HEIGHT_PIX	4096
 
 struct camss_subdev_resources {
 	struct regulator_bulk_data regulators[CAMSS_RES_MAX];

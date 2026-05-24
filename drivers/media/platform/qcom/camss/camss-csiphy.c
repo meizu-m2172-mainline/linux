@@ -381,8 +381,9 @@ static void csiphy_try_format(struct csiphy_device *csiphy,
 		if (i >= csiphy->res->formats->nformats)
 			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
 
-		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
-		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
+		fmt->width = clamp_t(u32, fmt->width, 1, CAMSS_FRAME_MAX_WIDTH);
+		fmt->height = clamp_t(u32, fmt->height, 1,
+				      CAMSS_FRAME_MAX_HEIGHT_RDI);
 
 		fmt->field = V4L2_FIELD_NONE;
 		fmt->colorspace = V4L2_COLORSPACE_SRGB;
