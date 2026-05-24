@@ -63,10 +63,10 @@ static const s64 s5kgw3_link_freq_menu[] = {
 };
 
 static const u32 s5kgw3_mbus_formats[] = {
-	MEDIA_BUS_FMT_SGRBG10_1X10,
-	MEDIA_BUS_FMT_SRGGB10_1X10,
-	MEDIA_BUS_FMT_SBGGR10_1X10,
 	MEDIA_BUS_FMT_SGBRG10_1X10,
+	MEDIA_BUS_FMT_SBGGR10_1X10,
+	MEDIA_BUS_FMT_SRGGB10_1X10,
+	MEDIA_BUS_FMT_SGRBG10_1X10,
 };
 
 static const char * const s5kgw3_test_pattern_menu[] = {
