@@ -32,12 +32,14 @@
 #define S5KGW3_EXPOSURE_MIN		4
 #define S5KGW3_EXPOSURE_MARGIN		16
 #define S5KGW3_EXPOSURE_DEFAULT		0x0800
+#define S5KGW3_FRAME_LENGTH_MAX		0xffff
 
 #define S5KGW3_REG_CHIP_ID		CCI_REG16(0x0000)
 #define S5KGW3_CHIP_ID			0x7309
 #define S5KGW3_REG_GROUP_HOLD		CCI_REG8(0x0104)
 #define S5KGW3_REG_EXPOSURE		CCI_REG16(0x0202)
 #define S5KGW3_REG_ANALOG_GAIN		CCI_REG16(0x0204)
+#define S5KGW3_REG_FRAME_LENGTH		CCI_REG16(0x0340)
 #define S5KGW3_REG_DIGITAL_GAIN_GR	CCI_REG16(0x020e)
 #define S5KGW3_REG_DIGITAL_GAIN_R	CCI_REG16(0x0210)
 #define S5KGW3_REG_DIGITAL_GAIN_B	CCI_REG16(0x0212)
@@ -3304,6 +3306,19 @@ static int s5kgw3_set_ctrl(struct v4l2_ctrl *ctrl)
 					     struct s5kgw3, ctrl_handler);
 	int ret = 0;
 
+	if (ctrl->id == V4L2_CID_VBLANK) {
+		u32 exposure_max = s5kgw3->mode->height + ctrl->val -
+				   S5KGW3_EXPOSURE_MARGIN;
+
+		ret = __v4l2_ctrl_modify_range(s5kgw3->exposure,
+						s5kgw3->exposure->minimum,
+						exposure_max,
+						s5kgw3->exposure->step,
+						s5kgw3->exposure->default_value);
+		if (ret)
+			return ret;
+	}
+
 	if (!pm_runtime_get_if_in_use(s5kgw3->dev))
 		return 0;
 
@@ -3313,6 +3328,12 @@ static int s5kgw3_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_ANALOGUE_GAIN:
 		ret = s5kgw3_write_grouped_reg(s5kgw3, S5KGW3_REG_ANALOG_GAIN, ctrl->val);
+		break;
+	case V4L2_CID_VBLANK:
+		ret = s5kgw3_write_grouped_reg(s5kgw3,
+						  S5KGW3_REG_FRAME_LENGTH,
+						  ctrl->val +
+						  s5kgw3->mode->height);
 		break;
 	case V4L2_CID_DIGITAL_GAIN:
 		cci_write(s5kgw3->regmap, S5KGW3_REG_GROUP_HOLD, 1, &ret);
@@ -3384,8 +3405,9 @@ static int s5kgw3_update_controls(struct s5kgw3 *s5kgw3,
 	if (ret)
 		return ret;
 
-	ret = __v4l2_ctrl_modify_range(s5kgw3->vblank, vblank, vblank, 1,
-					      vblank);
+	ret = __v4l2_ctrl_modify_range(s5kgw3->vblank, vblank,
+					      S5KGW3_FRAME_LENGTH_MAX - mode->height,
+					      1, vblank);
 	if (ret)
 		return ret;
 
@@ -3432,10 +3454,10 @@ static int s5kgw3_init_controls(struct s5kgw3 *s5kgw3)
 		s5kgw3->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	vblank = mode->vts - mode->height;
-	s5kgw3->vblank = v4l2_ctrl_new_std(ctrl_hdlr, NULL, V4L2_CID_VBLANK,
-					   vblank, vblank, 1, vblank);
-	if (s5kgw3->vblank)
-		s5kgw3->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+	s5kgw3->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &s5kgw3_ctrl_ops,
+					   V4L2_CID_VBLANK, vblank,
+					   S5KGW3_FRAME_LENGTH_MAX - mode->height,
+					   1, vblank);
 
 	exposure_max = mode->vts - S5KGW3_EXPOSURE_MARGIN;
 	exposure_def = s5kgw3_exposure_default(mode);
