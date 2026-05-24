@@ -42,6 +42,7 @@
 #define S5KGW3_REG_DIGITAL_GAIN_R	CCI_REG16(0x0210)
 #define S5KGW3_REG_DIGITAL_GAIN_B	CCI_REG16(0x0212)
 #define S5KGW3_REG_DIGITAL_GAIN_GB	CCI_REG16(0x0214)
+#define S5KGW3_REG_TEST_PATTERN		CCI_REG16(0x0600)
 
 #define to_s5kgw3(_sd)			container_of(_sd, struct s5kgw3, sd)
 
@@ -53,6 +54,14 @@ enum s5kgw3_link_freq_index {
 static const s64 s5kgw3_link_freq_menu[] = {
 	S5KGW3_LINK_FREQ_600MHZ,
 	S5KGW3_LINK_FREQ_660MHZ,
+};
+
+static const char * const s5kgw3_test_pattern_menu[] = {
+	"Disabled",
+	"Solid color",
+	"Color bars",
+	"Fade to gray color bars",
+	"PN9",
 };
 
 struct s5kgw3_reg {
@@ -3317,6 +3326,10 @@ static int s5kgw3_set_ctrl(struct v4l2_ctrl *ctrl)
 			  ctrl->val, &ret);
 		cci_write(s5kgw3->regmap, S5KGW3_REG_GROUP_HOLD, 0, &ret);
 		break;
+	case V4L2_CID_TEST_PATTERN:
+		ret = cci_write(s5kgw3->regmap, S5KGW3_REG_TEST_PATTERN,
+				ctrl->val, NULL);
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -3397,7 +3410,7 @@ static int s5kgw3_init_controls(struct s5kgw3 *s5kgw3)
 	u32 exposure_max, exposure_def;
 	int ret;
 
-	v4l2_ctrl_handler_init(ctrl_hdlr, 8);
+	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
 
 	s5kgw3->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, NULL,
 						   V4L2_CID_LINK_FREQ,
@@ -3438,6 +3451,10 @@ static int s5kgw3_init_controls(struct s5kgw3 *s5kgw3)
 		v4l2_ctrl_new_std(ctrl_hdlr, &s5kgw3_ctrl_ops,
 				  V4L2_CID_DIGITAL_GAIN, 0x100, 0x800, 1,
 				  0x0100);
+	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &s5kgw3_ctrl_ops,
+				     V4L2_CID_TEST_PATTERN,
+				     ARRAY_SIZE(s5kgw3_test_pattern_menu) - 1,
+				     0, 0, s5kgw3_test_pattern_menu);
 
 	ret = v4l2_fwnode_device_parse(s5kgw3->dev, &props);
 	if (ret)
