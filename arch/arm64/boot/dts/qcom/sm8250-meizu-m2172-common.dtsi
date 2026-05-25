@@ -1349,6 +1349,15 @@
 				remote-endpoint = <&camera_uw_ep>;
 			};
 		};
+
+		port@2 {
+			csiphy2_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				remote-endpoint = <&camera_front_ep>;
+			};
+		};
 	};
 };
 
@@ -1398,6 +1407,42 @@
 
 		dongwoon,sac-mode = <2>;
 		dongwoon,vcm-prescale = <0x5f>;
+	};
+};
+
+&cci1 {
+	status = "okay";
+};
+
+&cci1_i2c0 {
+	camera_front: camera@20 {
+		compatible = "hynix,hi1336";
+		reg = <0x20>;
+
+		vddio-supply = <&vreg_l7f_1p8>;
+		vdda-supply = <&vreg_l5f_2p8>;
+		vddd-supply = <&vreg_l2f_1p3>;
+
+		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		reset-gpios = <&tlmm 78 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&cam2_default>;
+		pinctrl-1 = <&cam2_suspend>;
+
+		orientation = <0>; /* Front facing */
+		rotation = <270>;
+
+		port {
+			camera_front_ep: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <360000000 720000000>;
+				remote-endpoint = <&csiphy2_ep>;
+			};
+		};
 	};
 };
 
