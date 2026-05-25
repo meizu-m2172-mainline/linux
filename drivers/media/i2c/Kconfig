@@ -128,6 +128,16 @@ config VIDEO_HI846
 	  To compile this driver as a module, choose M here: the
 	  module will be called hi846.
 
+config VIDEO_HI1336
+	tristate "Hynix Hi-1336 sensor support"
+	select V4L2_CCI_I2C
+	help
+	  This is a Video4Linux2 sensor driver for the Hynix
+	  Hi-1336 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called hi1336.
+
 config VIDEO_HI847
         tristate "Hynix Hi-847 sensor support"
         help
