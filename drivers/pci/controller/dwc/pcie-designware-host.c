@@ -9,6 +9,7 @@
  */
 
 #include <linux/align.h>
+#include <linux/iommu.h>
 #include <linux/iopoll.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/irqchip/irq-msi-lib.h>
@@ -102,10 +103,16 @@ static void dw_pci_setup_msi_msg(struct irq_data *d, struct msi_msg *msg)
 {
 	struct dw_pcie_rp *pp = irq_data_get_irq_chip_data(d);
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+	struct msi_desc *desc = irq_data_get_msi_desc(d);
 	u64 msi_target = (u64)pp->msi_data;
 
-	msg->address_lo = lower_32_bits(msi_target);
-	msg->address_hi = upper_32_bits(msi_target);
+	/* M2172 PCIe2/SDX55M: endpoint MSI writes to cfg0 fault in SMMU. */
+	if (desc && pp->cfg0_base == 0x64100000)
+		msi_msg_set_addr(desc, msg, msi_target);
+	else {
+		msg->address_lo = lower_32_bits(msi_target);
+		msg->address_hi = upper_32_bits(msi_target);
+	}
 	msg->data = d->hwirq;
 
 	dev_dbg(pci->dev, "msi#%d address_hi %#x address_lo %#x\n",
@@ -173,6 +180,7 @@ static int dw_pcie_irq_domain_alloc(struct irq_domain *domain, unsigned int virq
 				    unsigned int nr_irqs, void *args)
 {
 	struct dw_pcie_rp *pp = domain->host_data;
+	msi_alloc_info_t *info = args;
 	int bit;
 
 	scoped_guard (raw_spinlock_irq, &pp->lock) {
@@ -182,6 +190,20 @@ static int dw_pcie_irq_domain_alloc(struct irq_domain *domain, unsigned int virq
 
 	if (bit < 0)
 		return -ENOSPC;
+
+	/* Keep other DWC hosts (notably QCA6390 on PCIe0) on raw iMSI-RX. */
+	if (info && info->desc && pp->cfg0_base == 0x64100000) {
+		int ret;
+
+		ret = iommu_dma_prepare_msi(info->desc, pp->msi_data);
+		if (ret) {
+			scoped_guard (raw_spinlock_irq, &pp->lock) {
+				bitmap_release_region(pp->msi_irq_in_use, bit,
+						      order_base_2(nr_irqs));
+			}
+			return ret;
+		}
+	}
 
 	for (unsigned int i = 0; i < nr_irqs; i++) {
 		irq_domain_set_info(domain, virq + i, bit + i, pp->msi_irq_chip,

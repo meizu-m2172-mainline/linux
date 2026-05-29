@@ -15,8 +15,60 @@
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/wait.h>
 #include "internal.h"
+
+#define MHI_SDX55M_SBL_FW "qcom/sdx55m/sbl1.mbn"
+#define MHI_SDX55M_SBL_POLL_DELAY_MS 500
+
+static bool mhi_is_sdx55m_sbl_download(const struct mhi_controller *mhi_cntrl)
+{
+	return mhi_cntrl->fw_image &&
+	       !strcmp(mhi_cntrl->fw_image, MHI_SDX55M_SBL_FW);
+}
+
+static void mhi_sdx55m_queue_sbl_transition(struct mhi_controller *mhi_cntrl)
+{
+	struct device *dev = &mhi_cntrl->mhi_dev->dev;
+	enum mhi_state state;
+	enum mhi_ee_type ee;
+	unsigned long flags;
+	bool enter_m0;
+
+	msleep(MHI_SDX55M_SBL_POLL_DELAY_MS);
+
+	spin_lock_irqsave(&mhi_cntrl->transition_lock, flags);
+	if (!list_empty(&mhi_cntrl->transition_list)) {
+		spin_unlock_irqrestore(&mhi_cntrl->transition_lock, flags);
+		return;
+	}
+	spin_unlock_irqrestore(&mhi_cntrl->transition_lock, flags);
+
+	ee = mhi_get_exec_env(mhi_cntrl);
+	state = mhi_get_mhi_state(mhi_cntrl);
+	dev_info(dev, "Polled SDX55M after SBL load: EE %s, state %s\n",
+		 TO_MHI_EXEC_STR(ee), mhi_state_str(state));
+
+	read_lock_bh(&mhi_cntrl->pm_lock);
+	enter_m0 = state == MHI_STATE_M0 && mhi_cntrl->pm_state != MHI_PM_M0;
+	read_unlock_bh(&mhi_cntrl->pm_lock);
+	if (enter_m0)
+		mhi_pm_m0_transition(mhi_cntrl);
+
+	switch (ee) {
+	case MHI_EE_SBL:
+		mhi_queue_state_transition(mhi_cntrl, DEV_ST_TRANSITION_SBL);
+		break;
+	case MHI_EE_AMSS:
+	case MHI_EE_WFW:
+		mhi_queue_state_transition(mhi_cntrl,
+					   DEV_ST_TRANSITION_MISSION_MODE);
+		break;
+	default:
+		break;
+	}
+}
 
 /* Setup RDDM vector table for RDDM transfer and program RXVEC */
 int mhi_rddm_prepare(struct mhi_controller *mhi_cntrl,
@@ -598,6 +650,9 @@ fw_load_ready_state:
 	}
 
 	dev_info(dev, "Wait for device to enter SBL or Mission mode\n");
+	if (mhi_is_sdx55m_sbl_download(mhi_cntrl) &&
+	    MHI_FW_LOAD_CAPABLE(mhi_cntrl->ee))
+		mhi_sdx55m_queue_sbl_transition(mhi_cntrl);
 	return;
 
 error_ready_state:

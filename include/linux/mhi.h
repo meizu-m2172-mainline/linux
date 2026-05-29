@@ -787,6 +787,82 @@ int mhi_queue_skb(struct mhi_device *mhi_dev, enum dma_data_direction dir,
 bool mhi_queue_is_full(struct mhi_device *mhi_dev, enum dma_data_direction dir);
 
 /**
+ * mhi_sdx55m_drain_events - Poll SDX55M SBL event rings
+ * @mhi_dev: Device associated with the channels
+ *
+ * Temporary SDX55M bring-up helper for SBL channels where the device does not
+ * raise normal MHI event MSIs.
+ */
+void mhi_sdx55m_drain_events(struct mhi_device *mhi_dev);
+
+/**
+ * mhi_sdx55m_resync_sahara_doorbells - Resync cached SAHARA channel doorbells
+ * @mhi_dev: Device associated with the channels
+ *
+ * Temporary SDX55M bring-up helper for SBL SAHARA channel restarts where the
+ * host cached doorbell value can lag behind the freshly initialized context.
+ */
+void mhi_sdx55m_resync_sahara_doorbells(struct mhi_device *mhi_dev);
+
+/**
+ * mhi_sdx55m_dump_sahara_state - Dump SAHARA channel/event ring state to dmesg
+ * @mhi_dev: Device associated with the SAHARA channels
+ *
+ * Temporary SDX55M bring-up diagnostic helper.  Emits dev_info blocks per
+ * SAHARA channel (UL/DL) and per related event ring containing local and
+ * device-side rp/wp, cached doorbell, completion status, etc.  Called from
+ * the mhi_wwan_ctrl sysfs trigger when investigating SBL/SAHARA stalls.
+ */
+void mhi_sdx55m_dump_sahara_state(struct mhi_device *mhi_dev);
+
+/**
+ * mhi_sdx55m_kick_sahara_doorbells - Re-ring SAHARA channel doorbells in place
+ * @mhi_dev: Device associated with the SAHARA channels
+ *
+ * Temporary SDX55M bring-up helper.  Re-writes both UL and DL SAHARA channel
+ * doorbells with the current local wp value and re-syncs ctxt_wp, without
+ * tearing down or re-preparing the channels.  Intended as a less destructive
+ * alternative to the full channel restart cadence in mhi_wwan_ctrl when the
+ * modem stops emitting DL packets but the channels are still RUNNING.
+ */
+void mhi_sdx55m_kick_sahara_doorbells(struct mhi_device *mhi_dev);
+
+/**
+ * mhi_sdx55m_reset_sahara - Send RESET+START CMDs for SAHARA channels in place
+ * @mhi_dev: Device associated with the SAHARA channels
+ *
+ * Temporary SDX55M bring-up helper.  Queues RESET_CHAN then START_CHAN MHI
+ * commands for both UL and DL SAHARA channels via the primary cmd ring,
+ * without freeing or reallocating channel TRE/buf rings or modifying local
+ * mhi_chan state.  The caller is responsible for tolerating the racy
+ * inconsistency between local ENABLED state and the device-side reset
+ * transitions; the SDX55M SAHARA workarounds in mhi_update_channel_state
+ * accept "RUNNING but missing completion" as success.
+ *
+ * Return: 0 on success, negative errno otherwise.
+ */
+int mhi_sdx55m_reset_sahara(struct mhi_device *mhi_dev);
+
+/**
+ * mhi_sdx55m_restart_sahara_preserve - Ring-preserving SAHARA restart
+ * @mhi_dev: Device associated with the SAHARA channels
+ *
+ * Temporary SDX55M bring-up helper.  Goes through the serialized RESET +
+ * START handshake of mhi_update_channel_state for both SAHARA channels
+ * (which carries the existing "missing completion but device RUNNING"
+ * workaround) without freeing/reallocating tre_ring or draining buf_ring.
+ * Between RESET and START, chan_ctxt is re-primed in place:
+ * chcfg=ENABLED, rp=current local tre_ring->rp DMA position, wp=current
+ * local tre_ring->wp DMA position.  This preserves the host's ring window
+ * across wrapped full rings instead of aliasing wp==rbase with an empty
+ * device-side view.  After START, the channel doorbell is re-rung with the
+ * current wp.
+ *
+ * Return: 0 on success, negative errno otherwise.
+ */
+int mhi_sdx55m_restart_sahara_preserve(struct mhi_device *mhi_dev);
+
+/**
  * mhi_get_channel_doorbell_offset - Get the channel doorbell offset
  * @mhi_cntrl: MHI controller
  * @chdb_offset: Read channel doorbell offset

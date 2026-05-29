@@ -772,6 +772,12 @@
 	status = "okay";
 };
 
+&intc {
+	mbi-alias = <0x0 0x17a10000>;
+	mbi-ranges = <864 32>;
+	msi-controller;
+};
+
 &pcie0_phy {
 	vdda-phy-supply = <&vreg_l5a_0p88>;
 	vdda-pll-supply = <&vreg_l9a_1p2>;
@@ -796,6 +802,10 @@
 };
 
 &pcie2 {
+	msi-parent = <&intc>;
+	pinctrl-0 = <&pcie2_default_state &mdm2ap_active
+		     &mdm_ap2mdm_status_active &mdm_ap2mdm_errfatal_active>;
+	pinctrl-names = "default";
 	status = "okay";
 };
 
@@ -1064,6 +1074,22 @@
 	// reg = <0 0x0f000000 0 0x1000000>;
 	gpio-reserved-ranges = <28 4>, <40 4>;
 	status = "okay";
+
+	mdm_ap2mdm_status_active: mdm-ap2mdm-status-active-state {
+		pins = "gpio56";
+		function = "gpio";
+		drive-strength = <16>;
+		output-high;
+		bias-disable;
+	};
+
+	mdm_ap2mdm_errfatal_active: mdm-ap2mdm-errfatal-active-state {
+		pins = "gpio57";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
 
 	bt_en_active: bt-default-state {
 		pins = "gpio21";

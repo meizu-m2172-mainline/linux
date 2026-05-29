@@ -672,6 +672,20 @@ int mhi_init_chan_ctxt(struct mhi_controller *mhi_cntrl,
 	tmp = le32_to_cpu(chan_ctxt->chcfg);
 	tmp &= ~CHAN_CTX_CHSTATE_MASK;
 	tmp |= FIELD_PREP(CHAN_CTX_CHSTATE_MASK, MHI_CH_STATE_ENABLED);
+	/*
+	 * Restore the burst-mode and poll-config fields on every (re)prepare,
+	 * not just the channel state.  The device can overwrite the chcfg word
+	 * (e.g. when it writes back the channel state during an earlier EE's
+	 * own use of the channel, as the SDX55M SBL does on SAHARA), leaving
+	 * brstmode/pollcfg cleared.  If the channel is then started with
+	 * brstmode 0 the device no longer honours per-element doorbells and
+	 * stalls after each transfer.  Reprogramming from db_cfg keeps the
+	 * context consistent with mhi_init_dev_ctxt() across prepare cycles.
+	 */
+	tmp &= ~CHAN_CTX_BRSTMODE_MASK;
+	tmp |= FIELD_PREP(CHAN_CTX_BRSTMODE_MASK, mhi_chan->db_cfg.brstmode);
+	tmp &= ~CHAN_CTX_POLLCFG_MASK;
+	tmp |= FIELD_PREP(CHAN_CTX_POLLCFG_MASK, mhi_chan->db_cfg.pollcfg);
 	chan_ctxt->chcfg = cpu_to_le32(tmp);
 
 	chan_ctxt->rbase = cpu_to_le64(tre_ring->iommu_base);

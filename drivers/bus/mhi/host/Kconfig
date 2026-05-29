@@ -29,3 +29,14 @@ config MHI_BUS_PCI_GENERIC
 	  This driver provides MHI PCI controller driver for devices such as
 	  Qualcomm SDX55 based PCIe modems.
 
+config MHI_SAHARA
+	tristate "MHI SAHARA/EFS pipe driver for Qualcomm SDX55M"
+	depends on MHI_BUS
+	help
+	  Expose the SAHARA SBL image-transfer channel as /dev/mhi_pipe_2 and
+	  the post-AMSS EFS sync channel as /dev/mhi_pipe_10 for SDX55M bring-up.
+	  This mirrors the Android downstream mhi_uci userspace contract more
+	  closely than binding those private pipes through the WWAN core.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called mhi_sahara.

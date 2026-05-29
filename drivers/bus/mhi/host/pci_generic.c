@@ -330,6 +330,40 @@ static const struct mhi_channel_config modem_qcom_v1_mhi_channels[] = {
 	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
 };
 
+static const struct mhi_channel_config modem_qcom_sdx55_mhi_channels[] = {
+	MHI_CHANNEL_CONFIG_UL_SBL(2, "SAHARA", 128, 1),
+	MHI_CHANNEL_CONFIG_DL_SBL(3, "SAHARA", 128, 1),
+	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 64, 1),
+	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 64, 3),
+	MHI_CHANNEL_CONFIG_UL(10, "EFS", 64, 1),
+	{
+		.num = 11,
+		.name = "EFS",
+		.num_elements = 64,
+		.event_ring = 1,
+		.dir = DMA_FROM_DEVICE,
+		.ee_mask = BIT(MHI_EE_AMSS),
+		.pollcfg = 0,
+		.doorbell = MHI_DB_BRST_DISABLE,
+		.lpm_notify = false,
+		.offload_channel = false,
+		.doorbell_mode_switch = false,
+		.wake_capable = true,
+	},
+	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
+	MHI_CHANNEL_CONFIG_DL(13, "MBIM", 4, 0),
+	MHI_CHANNEL_CONFIG_UL(14, "QMI", 64, 1),
+	MHI_CHANNEL_CONFIG_DL(15, "QMI", 64, 2),
+	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 64, 2),
+	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 64, 2),
+	MHI_CHANNEL_CONFIG_UL_FP(34, "FIREHOSE", 32, 0),
+	MHI_CHANNEL_CONFIG_DL_FP(35, "FIREHOSE", 32, 0),
+	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
+	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
+	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
+	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
+};
+
 static struct mhi_event_config modem_qcom_v1_mhi_events[] = {
 	/* first ring is control+data ring */
 	MHI_EVENT_CONFIG_CTRL(0, 64),
@@ -338,6 +372,24 @@ static struct mhi_event_config modem_qcom_v1_mhi_events[] = {
 	/* Software channels dedicated event ring */
 	MHI_EVENT_CONFIG_SW_DATA(2, 64),
 	MHI_EVENT_CONFIG_SW_DATA(3, 64),
+	/* Hardware channels request dedicated hardware event rings */
+	MHI_EVENT_CONFIG_HW_DATA(4, 1024, 100),
+	MHI_EVENT_CONFIG_HW_DATA(5, 2048, 101)
+};
+
+static struct mhi_event_config modem_qcom_sdx55_mhi_events[] = {
+	/* first ring is control+data ring */
+	MHI_EVENT_CONFIG_CTRL(0, 64),
+	/*
+	 * Match the downstream SDX55M channel/event routing from Android DTS:
+	 * SAHARA, EFS, and QMI UL on ring 1, QMI/IPCR DL on ring 2, and DIAG
+	 * DL on ring 3.  The modem accepts the channel contexts in AMSS but
+	 * does not complete QMI control transfers when QMI0 is left on ring 0.
+	 */
+	MHI_EVENT_CONFIG_SW_DATA(1, 256),
+	/* Software channels dedicated event ring */
+	MHI_EVENT_CONFIG_SW_DATA(2, 256),
+	MHI_EVENT_CONFIG_SW_DATA(3, 256),
 	/* Hardware channels request dedicated hardware event rings */
 	MHI_EVENT_CONFIG_HW_DATA(4, 1024, 100),
 	MHI_EVENT_CONFIG_HW_DATA(5, 2048, 101)
@@ -369,6 +421,15 @@ static const struct mhi_controller_config modem_qcom_v1_mhiv_config = {
 	.ch_cfg = modem_qcom_v1_mhi_channels,
 	.num_events = ARRAY_SIZE(modem_qcom_v1_mhi_events),
 	.event_cfg = modem_qcom_v1_mhi_events,
+};
+
+static const struct mhi_controller_config modem_qcom_sdx55_mhiv_config = {
+	.max_channels = 128,
+	.timeout_ms = 8000,
+	.num_channels = ARRAY_SIZE(modem_qcom_sdx55_mhi_channels),
+	.ch_cfg = modem_qcom_sdx55_mhi_channels,
+	.num_events = ARRAY_SIZE(modem_qcom_sdx55_mhi_events),
+	.event_cfg = modem_qcom_sdx55_mhi_events,
 };
 
 static const struct mhi_pci_dev_info mhi_qcom_sa8775p_info = {
@@ -408,11 +469,20 @@ static const struct mhi_pci_dev_info mhi_qcom_sdx55_info = {
 	.fw = "qcom/sdx55m/sbl1.mbn",
 	.edl = "qcom/sdx55m/edl.mbn",
 	.edl_trigger = true,
-	.config = &modem_qcom_v1_mhiv_config,
+	.config = &modem_qcom_sdx55_mhiv_config,
 	.bar_num = MHI_PCI_DEFAULT_BAR_NUM,
 	.dma_data_width = 32,
 	.mru_default = 32768,
 	.sideband_wake = false,
+	/*
+	 * The SDX55M sits behind the SM8250 PCIe RC2, which cannot bring the
+	 * endpoint back from D3cold (no power/PERST resequencing on resume):
+	 * once MHI runtime-suspends to M3, the parent drops the link to D3cold
+	 * and the device never returns ("Unable to change power state from
+	 * D3cold to D0, device inaccessible" -> SYS ERROR -> link retrain fail).
+	 * Disable M3 so runtime suspend is never armed, matching qdu100.
+	 */
+	.no_m3 = true,
 };
 
 static const struct mhi_pci_dev_info mhi_qcom_sdx35_info = {
@@ -949,7 +1019,7 @@ static const struct pci_device_id mhi_pci_id_table[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_QCOM, 0x0304),
 		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx24_info },
 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0306, PCI_VENDOR_ID_QCOM, 0x010c),
-		.driver_data = (kernel_ulong_t) &mhi_foxconn_sdx55_info },
+		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx55_info },
 	/* EM919x (sdx55), use the same vid:pid as qcom-sdx55m */
 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0306, 0x18d7, 0x0200),
 		.driver_data = (kernel_ulong_t) &mhi_sierra_em919x_info },

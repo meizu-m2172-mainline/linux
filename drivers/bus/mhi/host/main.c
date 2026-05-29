@@ -9,13 +9,607 @@
 #include <linux/dma-direction.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/iommu.h>
 #include <linux/list.h>
 #include <linux/mhi.h>
 #include <linux/module.h>
+#include <linux/msi.h>
+#include <linux/pci.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include "internal.h"
 #include "trace.h"
+
+static bool mhi_sdx55m_sahara_recover_unexpected_tre = true;
+module_param_named(sdx55m_sahara_recover_unexpected_tre,
+		   mhi_sdx55m_sahara_recover_unexpected_tre, bool, 0644);
+MODULE_PARM_DESC(sdx55m_sahara_recover_unexpected_tre,
+		 "Recover SDX55M SAHARA unexpected TRE events; default on to match downstream MHI");
+
+static bool mhi_is_sdx55m_sbl(const struct mhi_controller *mhi_cntrl)
+{
+	return mhi_cntrl->name &&
+	       !strcmp(mhi_cntrl->name, "qcom-sdx55m") &&
+	       mhi_cntrl->ee == MHI_EE_SBL;
+}
+
+static bool mhi_is_sdx55m_sahara(const struct mhi_controller *mhi_cntrl,
+				 const struct mhi_chan *mhi_chan)
+{
+	return mhi_is_sdx55m_sbl(mhi_cntrl) &&
+	       mhi_chan && mhi_chan->name &&
+	       !strcmp(mhi_chan->name, "SAHARA");
+}
+
+static void __mhi_sdx55m_drain_events(struct mhi_controller *mhi_cntrl)
+{
+	struct mhi_event *mhi_event;
+	u32 i;
+
+	if (!mhi_is_sdx55m_sbl(mhi_cntrl) || !mhi_cntrl->mhi_event)
+		return;
+
+	mhi_event = mhi_cntrl->mhi_event;
+	for (i = 0; i < mhi_cntrl->total_ev_rings; i++, mhi_event++) {
+		if (mhi_event->offload_ev)
+			continue;
+
+		spin_lock_bh(&mhi_event->lock);
+		mhi_event->process_event(mhi_cntrl, mhi_event, U32_MAX);
+		spin_unlock_bh(&mhi_event->lock);
+	}
+}
+
+static bool mhi_sdx55m_sahara_chan_running(struct mhi_controller *mhi_cntrl,
+					   struct mhi_chan *mhi_chan,
+					   u32 *chcfg)
+{
+	struct mhi_chan_ctxt *chan_ctxt;
+	enum mhi_state state;
+	enum mhi_ee_type ee;
+	u32 ch_state;
+
+	if (!mhi_cntrl->mhi_ctxt || mhi_chan->chan >= mhi_cntrl->max_chan)
+		return false;
+
+	chan_ctxt = &mhi_cntrl->mhi_ctxt->chan_ctxt[mhi_chan->chan];
+	*chcfg = le32_to_cpu(chan_ctxt->chcfg);
+	ch_state = (*chcfg & CHAN_CTX_CHSTATE_MASK) >> __ffs(CHAN_CTX_CHSTATE_MASK);
+
+	ee = mhi_get_exec_env(mhi_cntrl);
+	state = mhi_get_mhi_state(mhi_cntrl);
+
+	return ch_state == MHI_CH_STATE_RUNNING &&
+	       ee == MHI_EE_SBL && state == MHI_STATE_M0;
+}
+
+static dma_addr_t mhi_sdx55m_ring_dma(struct mhi_ring *ring, void *ptr)
+{
+	return ring->iommu_base + (ptr - ring->base);
+}
+
+static void *mhi_sdx55m_ring_next(struct mhi_ring *ring, void *ptr)
+{
+	ptr += ring->el_size;
+	if (ptr >= ring->base + ring->len)
+		ptr = ring->base;
+
+	return ptr;
+}
+
+static void *mhi_sdx55m_ring_prev(struct mhi_ring *ring, void *ptr)
+{
+	if (ptr == ring->base)
+		ptr = ring->base + ring->len;
+
+	return ptr - ring->el_size;
+}
+
+void mhi_sdx55m_drain_events(struct mhi_device *mhi_dev)
+{
+	if (mhi_dev)
+		__mhi_sdx55m_drain_events(mhi_dev->mhi_cntrl);
+}
+EXPORT_SYMBOL_GPL(mhi_sdx55m_drain_events);
+
+static void mhi_sdx55m_resync_sahara_chan_db(struct mhi_controller *mhi_cntrl,
+					     struct mhi_chan *mhi_chan)
+{
+	struct mhi_ring *ring;
+
+	if (!mhi_is_sdx55m_sahara(mhi_cntrl, mhi_chan))
+		return;
+
+	ring = &mhi_chan->tre_ring;
+	if (!ring->ctxt_wp)
+		return;
+
+	mhi_chan->db_cfg.db_val = le64_to_cpu(*ring->ctxt_wp);
+}
+
+void mhi_sdx55m_resync_sahara_doorbells(struct mhi_device *mhi_dev)
+{
+	if (!mhi_dev)
+		return;
+
+	mhi_sdx55m_resync_sahara_chan_db(mhi_dev->mhi_cntrl,
+					 mhi_dev->ul_chan);
+	mhi_sdx55m_resync_sahara_chan_db(mhi_dev->mhi_cntrl,
+					 mhi_dev->dl_chan);
+}
+EXPORT_SYMBOL_GPL(mhi_sdx55m_resync_sahara_doorbells);
+
+static void mhi_sdx55m_kick_sahara_chan(struct mhi_controller *mhi_cntrl,
+					struct mhi_chan *mhi_chan)
+{
+	struct mhi_ring *ring;
+
+	if (!mhi_is_sdx55m_sahara(mhi_cntrl, mhi_chan))
+		return;
+
+	ring = &mhi_chan->tre_ring;
+	if (!ring->wp || !ring->base || !ring->ctxt_wp)
+		return;
+
+	read_lock_bh(&mhi_chan->lock);
+	if (mhi_chan->ch_state == MHI_CH_STATE_ENABLED)
+		mhi_ring_chan_db(mhi_cntrl, mhi_chan);
+	read_unlock_bh(&mhi_chan->lock);
+}
+
+void mhi_sdx55m_kick_sahara_doorbells(struct mhi_device *mhi_dev)
+{
+	struct mhi_controller *mhi_cntrl;
+
+	if (!mhi_dev)
+		return;
+	mhi_cntrl = mhi_dev->mhi_cntrl;
+
+	read_lock_bh(&mhi_cntrl->pm_lock);
+	if (MHI_DB_ACCESS_VALID(mhi_cntrl)) {
+		mhi_sdx55m_kick_sahara_chan(mhi_cntrl, mhi_dev->ul_chan);
+		mhi_sdx55m_kick_sahara_chan(mhi_cntrl, mhi_dev->dl_chan);
+	}
+	read_unlock_bh(&mhi_cntrl->pm_lock);
+
+	__mhi_sdx55m_drain_events(mhi_cntrl);
+}
+EXPORT_SYMBOL_GPL(mhi_sdx55m_kick_sahara_doorbells);
+
+static int mhi_sdx55m_send_chan_cmd(struct mhi_controller *mhi_cntrl,
+				    struct mhi_chan *mhi_chan,
+				    enum mhi_cmd_type cmd)
+{
+	if (!mhi_is_sdx55m_sahara(mhi_cntrl, mhi_chan))
+		return -EINVAL;
+	return mhi_send_cmd(mhi_cntrl, mhi_chan, cmd);
+}
+
+int mhi_sdx55m_reset_sahara(struct mhi_device *mhi_dev)
+{
+	struct mhi_controller *mhi_cntrl;
+	int ret;
+
+	if (!mhi_dev || !mhi_dev->ul_chan || !mhi_dev->dl_chan)
+		return -EINVAL;
+	mhi_cntrl = mhi_dev->mhi_cntrl;
+
+	read_lock_bh(&mhi_cntrl->pm_lock);
+	if (!MHI_DB_ACCESS_VALID(mhi_cntrl)) {
+		read_unlock_bh(&mhi_cntrl->pm_lock);
+		return -EIO;
+	}
+	read_unlock_bh(&mhi_cntrl->pm_lock);
+
+	ret = mhi_sdx55m_send_chan_cmd(mhi_cntrl, mhi_dev->ul_chan,
+				       MHI_CMD_RESET_CHAN);
+	if (ret)
+		return ret;
+	ret = mhi_sdx55m_send_chan_cmd(mhi_cntrl, mhi_dev->dl_chan,
+				       MHI_CMD_RESET_CHAN);
+	if (ret)
+		return ret;
+	ret = mhi_sdx55m_send_chan_cmd(mhi_cntrl, mhi_dev->ul_chan,
+				       MHI_CMD_START_CHAN);
+	if (ret)
+		return ret;
+	ret = mhi_sdx55m_send_chan_cmd(mhi_cntrl, mhi_dev->dl_chan,
+				       MHI_CMD_START_CHAN);
+	if (ret)
+		return ret;
+
+	__mhi_sdx55m_drain_events(mhi_cntrl);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mhi_sdx55m_reset_sahara);
+
+static int mhi_update_channel_state(struct mhi_controller *mhi_cntrl,
+				    struct mhi_chan *mhi_chan,
+				    enum mhi_ch_state_type to_state);
+
+static int mhi_sdx55m_restart_chan_preserve(struct mhi_controller *mhi_cntrl,
+					    struct mhi_chan *mhi_chan)
+{
+	struct mhi_chan_ctxt *chan_ctxt;
+	struct mhi_ring *tre_ring;
+	struct device *dev;
+	dma_addr_t rp_dma;
+	dma_addr_t wp_dma;
+	bool full_ring;
+	u32 tmp;
+	int ret;
+
+	if (!mhi_is_sdx55m_sahara(mhi_cntrl, mhi_chan))
+		return -EINVAL;
+	if (mhi_chan->offload_ch)
+		return -EINVAL;
+	if (mhi_chan->chan >= mhi_cntrl->max_chan || !mhi_cntrl->mhi_ctxt)
+		return -EINVAL;
+
+	dev = &mhi_chan->mhi_dev->dev;
+	chan_ctxt = &mhi_cntrl->mhi_ctxt->chan_ctxt[mhi_chan->chan];
+	tre_ring = &mhi_chan->tre_ring;
+
+	mutex_lock(&mhi_chan->mutex);
+
+	if (!(BIT(mhi_cntrl->ee) & mhi_chan->ee_mask)) {
+		ret = -ENOTCONN;
+		goto out_unlock;
+	}
+	if (!tre_ring->base || !tre_ring->wp || !chan_ctxt->rbase) {
+		ret = -EINVAL;
+		goto out_unlock;
+	}
+
+	/*
+	 * RESET via the normal path so the SDX55M workaround in
+	 * mhi_update_channel_state can accept a missing completion when the
+	 * device-side channel is already RUNNING.  This sets local ch_state
+	 * to DISABLED on the workaround success path.
+	 */
+	ret = mhi_update_channel_state(mhi_cntrl, mhi_chan,
+				       MHI_CH_STATE_TYPE_RESET);
+	if (ret)
+		dev_warn(dev, "%d: SDX55M SAHARA preserve-restart RESET ret=%d\n",
+			 mhi_chan->chan, ret);
+
+	/*
+	 * Skip mhi_reset_chan() and mhi_deinit_chan_ctxt() so buf_ring stays
+	 * populated and tre_ring rbase/rlen remain valid.  Re-prime chan_ctxt
+	 * to reflect the current local rp/wp so the next START makes the device
+	 * pick up our pre-queued buffers immediately.  This is important after
+	 * the DL ring wrapped: forcing rp back to rbase can alias a full ring
+	 * with an empty ring when wp also happens to be rbase.
+	 */
+	tmp = le32_to_cpu(chan_ctxt->chcfg);
+	tmp &= ~CHAN_CTX_CHSTATE_MASK;
+	tmp |= FIELD_PREP(CHAN_CTX_CHSTATE_MASK, MHI_CH_STATE_ENABLED);
+	chan_ctxt->chcfg = cpu_to_le32(tmp);
+
+	full_ring = mhi_sdx55m_ring_next(tre_ring, tre_ring->wp) ==
+		    tre_ring->rp;
+	rp_dma = mhi_sdx55m_ring_dma(tre_ring, tre_ring->rp);
+	wp_dma = mhi_sdx55m_ring_dma(tre_ring, full_ring ?
+				     mhi_sdx55m_ring_prev(tre_ring, tre_ring->rp) :
+				     tre_ring->wp);
+
+	if (full_ring)
+		dev_info(dev,
+			 "%d: SDX55M SAHARA preserve full ring rp=0x%llx wp=0x%llx\n",
+			 mhi_chan->chan, (unsigned long long)rp_dma,
+			 (unsigned long long)wp_dma);
+
+	chan_ctxt->rp = cpu_to_le64(rp_dma);
+	chan_ctxt->wp = cpu_to_le64(wp_dma);
+	tre_ring->ctxt_wp = &chan_ctxt->wp;
+	mhi_chan->db_cfg.db_mode = 1;
+	smp_wmb();
+
+	ret = mhi_update_channel_state(mhi_cntrl, mhi_chan,
+				       MHI_CH_STATE_TYPE_START);
+	if (ret)
+		dev_warn(dev, "%d: SDX55M SAHARA preserve-restart START ret=%d\n",
+			 mhi_chan->chan, ret);
+
+	/* Re-ring channel doorbell so the device sees our current wp */
+	read_lock_bh(&mhi_cntrl->pm_lock);
+	if (MHI_DB_ACCESS_VALID(mhi_cntrl)) {
+		read_lock_bh(&mhi_chan->lock);
+		if (mhi_chan->ch_state == MHI_CH_STATE_ENABLED)
+			mhi_ring_chan_db(mhi_cntrl, mhi_chan);
+		read_unlock_bh(&mhi_chan->lock);
+	}
+	read_unlock_bh(&mhi_cntrl->pm_lock);
+
+	ret = 0;
+out_unlock:
+	mutex_unlock(&mhi_chan->mutex);
+	return ret;
+}
+
+int mhi_sdx55m_restart_sahara_preserve(struct mhi_device *mhi_dev)
+{
+	struct mhi_controller *mhi_cntrl;
+	int ul_ret, dl_ret;
+
+	if (!mhi_dev || !mhi_dev->ul_chan || !mhi_dev->dl_chan)
+		return -EINVAL;
+	mhi_cntrl = mhi_dev->mhi_cntrl;
+
+	ul_ret = mhi_sdx55m_restart_chan_preserve(mhi_cntrl, mhi_dev->ul_chan);
+	dl_ret = mhi_sdx55m_restart_chan_preserve(mhi_cntrl, mhi_dev->dl_chan);
+
+	__mhi_sdx55m_drain_events(mhi_cntrl);
+
+	return ul_ret ?: dl_ret;
+}
+EXPORT_SYMBOL_GPL(mhi_sdx55m_restart_sahara_preserve);
+
+static void mhi_sdx55m_dump_chan(struct device *dev,
+				 struct mhi_controller *mhi_cntrl,
+				 struct mhi_chan *mhi_chan)
+{
+	struct mhi_chan_ctxt *ctxt;
+	struct mhi_ring *tre, *buf;
+	u32 chcfg;
+
+	if (!mhi_chan || !mhi_chan->configured)
+		return;
+	if (mhi_chan->chan >= mhi_cntrl->max_chan || !mhi_cntrl->mhi_ctxt)
+		return;
+
+	ctxt = &mhi_cntrl->mhi_ctxt->chan_ctxt[mhi_chan->chan];
+	tre = &mhi_chan->tre_ring;
+	buf = &mhi_chan->buf_ring;
+	chcfg = le32_to_cpu(ctxt->chcfg);
+
+	dev_info(dev,
+		 "  ch%u %s dir=%d ee_mask=0x%x ch_state(local)=0x%x ccs=0x%x\n",
+		 mhi_chan->chan, mhi_chan->name ?: "?", mhi_chan->dir,
+		 mhi_chan->ee_mask, mhi_chan->ch_state, mhi_chan->ccs);
+	dev_info(dev,
+		 "    ctx chstate=0x%lx brstmode=0x%lx pollcfg=0x%lx chtype=0x%x erindex=%u\n",
+		 (chcfg & CHAN_CTX_CHSTATE_MASK) >> __ffs(CHAN_CTX_CHSTATE_MASK),
+		 (chcfg & CHAN_CTX_BRSTMODE_MASK) >> __ffs(CHAN_CTX_BRSTMODE_MASK),
+		 (chcfg & CHAN_CTX_POLLCFG_MASK) >> __ffs(CHAN_CTX_POLLCFG_MASK),
+		 le32_to_cpu(ctxt->chtype), le32_to_cpu(ctxt->erindex));
+	dev_info(dev,
+		 "    ctx rbase=0x%llx rlen=0x%llx rp=0x%llx wp=0x%llx\n",
+		 le64_to_cpu(ctxt->rbase), le64_to_cpu(ctxt->rlen),
+		 le64_to_cpu(ctxt->rp), le64_to_cpu(ctxt->wp));
+	dev_info(dev,
+		 "    tre local rp=%px wp=%px ctxt_wp_le=0x%llx elements=%zu db_cached=0x%llx\n",
+		 tre->rp, tre->wp,
+		 tre->ctxt_wp ? le64_to_cpu(*tre->ctxt_wp) : 0ULL,
+		 tre->elements, mhi_chan->db_cfg.db_val);
+	dev_info(dev,
+		 "    buf local rp=%px wp=%px elements=%zu\n",
+		 buf->rp, buf->wp, buf->elements);
+}
+
+static void mhi_sdx55m_dump_event(struct device *dev,
+				  struct mhi_controller *mhi_cntrl,
+				  struct mhi_event *mhi_event, u32 index)
+{
+	struct mhi_event_ctxt *ctxt;
+	struct mhi_ring *ring;
+	u32 intmod;
+
+	if (!mhi_cntrl->mhi_ctxt)
+		return;
+	if (mhi_event->offload_ev) {
+		dev_info(dev, "  er%u offload\n", index);
+		return;
+	}
+
+	ctxt = &mhi_cntrl->mhi_ctxt->er_ctxt[index];
+	ring = &mhi_event->ring;
+	intmod = le32_to_cpu(ctxt->intmod);
+
+	dev_info(dev,
+		 "  er%u chan=%d hw_ring=%d data_type=%d irq=%u priority=%u\n",
+		 index, mhi_event->chan, mhi_event->hw_ring,
+		 mhi_event->data_type, mhi_event->irq, mhi_event->priority);
+	dev_info(dev,
+		 "    ctx intmodc=%lu intmodt=%lu rbase=0x%llx rlen=0x%llx rp=0x%llx wp=0x%llx\n",
+		 (intmod & EV_CTX_INTMODC_MASK) >> __ffs(EV_CTX_INTMODC_MASK),
+		 (intmod & EV_CTX_INTMODT_MASK) >> __ffs(EV_CTX_INTMODT_MASK),
+		 le64_to_cpu(ctxt->rbase), le64_to_cpu(ctxt->rlen),
+		 le64_to_cpu(ctxt->rp), le64_to_cpu(ctxt->wp));
+	dev_info(dev,
+		 "    ring local rp=%px wp=%px elements=%zu db_cached=0x%llx\n",
+		 ring->rp, ring->wp, ring->elements,
+		 mhi_event->db_cfg.db_val);
+}
+
+static void mhi_sdx55m_dump_pci_iommu(struct device *dev,
+				      struct pci_dev *pdev)
+{
+	struct iommu_group *group;
+
+	group = iommu_group_get(&pdev->dev);
+	dev_info(dev, " pci iommu_group=%d dma_mask=0x%llx coherent_dma_mask=0x%llx\n",
+		 group ? iommu_group_id(group) : -1,
+		 pdev->dev.dma_mask ? *pdev->dev.dma_mask : 0ULL,
+		 pdev->dev.coherent_dma_mask);
+	if (group)
+		iommu_group_put(group);
+
+#if IS_ENABLED(CONFIG_IOMMU_API)
+	{
+		struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(&pdev->dev);
+		u32 i;
+
+		if (!fwspec)
+			return;
+
+		dev_info(dev, " pci iommu_fwspec flags=0x%x num_ids=%u\n",
+			 fwspec->flags, fwspec->num_ids);
+		for (i = 0; i < fwspec->num_ids; i++)
+			dev_info(dev, "   iommu id[%u]=0x%x\n",
+				 i, fwspec->ids[i]);
+	}
+#endif
+}
+
+static void mhi_sdx55m_dump_pci_msi_caps(struct device *dev,
+					 struct pci_dev *pdev)
+{
+	u8 cap;
+	u16 flags;
+
+	cap = pci_find_capability(pdev, PCI_CAP_ID_MSI);
+	if (cap) {
+		u32 addr_lo = 0, addr_hi = 0;
+		u16 data = 0;
+		unsigned int qmask, qsize;
+		int data_offset;
+
+		pci_read_config_word(pdev, cap + PCI_MSI_FLAGS, &flags);
+		pci_read_config_dword(pdev, cap + PCI_MSI_ADDRESS_LO, &addr_lo);
+		if (flags & PCI_MSI_FLAGS_64BIT) {
+			pci_read_config_dword(pdev, cap + PCI_MSI_ADDRESS_HI,
+					      &addr_hi);
+			data_offset = PCI_MSI_DATA_64;
+		} else {
+			data_offset = PCI_MSI_DATA_32;
+		}
+		pci_read_config_word(pdev, cap + data_offset, &data);
+
+		qmask = 1U << ((flags & PCI_MSI_FLAGS_QMASK) >> 1);
+		qsize = 1U << ((flags & PCI_MSI_FLAGS_QSIZE) >> 4);
+
+		dev_info(dev,
+			 " pci MSI cap=0x%x flags=0x%x enable=%u 64bit=%u qmask=%u qsize=%u msg_addr=0x%08x%08x msg_data=0x%04x\n",
+			 cap, flags, !!(flags & PCI_MSI_FLAGS_ENABLE),
+			 !!(flags & PCI_MSI_FLAGS_64BIT), qmask, qsize,
+			 addr_hi, addr_lo, data);
+	} else {
+		dev_info(dev, " pci MSI cap=none\n");
+	}
+
+	cap = pci_find_capability(pdev, PCI_CAP_ID_MSIX);
+	if (cap) {
+		u32 table = 0, pba = 0;
+
+		pci_read_config_word(pdev, cap + PCI_MSIX_FLAGS, &flags);
+		pci_read_config_dword(pdev, cap + PCI_MSIX_TABLE, &table);
+		pci_read_config_dword(pdev, cap + PCI_MSIX_PBA, &pba);
+
+		dev_info(dev,
+			 " pci MSI-X cap=0x%x flags=0x%x enable=%u maskall=%u table_size=%u table_bir=%u table_off=0x%x pba_bir=%u pba_off=0x%x\n",
+			 cap, flags, !!(flags & PCI_MSIX_FLAGS_ENABLE),
+			 !!(flags & PCI_MSIX_FLAGS_MASKALL),
+			 (flags & PCI_MSIX_FLAGS_QSIZE) + 1,
+			 table & PCI_MSIX_TABLE_BIR,
+			 table & PCI_MSIX_TABLE_OFFSET,
+			 pba & PCI_MSIX_PBA_BIR,
+			 pba & PCI_MSIX_PBA_OFFSET);
+	} else {
+		dev_info(dev, " pci MSI-X cap=none\n");
+	}
+}
+
+static void mhi_sdx55m_dump_pci_irqs(struct device *dev,
+				     struct mhi_controller *mhi_cntrl,
+				     struct pci_dev *pdev)
+{
+	u32 i;
+
+	if (!mhi_cntrl->irq)
+		return;
+
+	for (i = 0; i < mhi_cntrl->nr_irqs; i++) {
+		struct msi_msg msg = {};
+		int pci_irq;
+
+		pci_irq = pci_irq_vector(pdev, i);
+		get_cached_msi_msg(mhi_cntrl->irq[i], &msg);
+		dev_info(dev,
+			 "   irq[%u]=%d pci_irq=%d cached_msi_addr=0x%08x%08x cached_msi_data=0x%04x\n",
+			 i, mhi_cntrl->irq[i], pci_irq,
+			 msg.address_hi, msg.address_lo, msg.data);
+	}
+}
+
+static void mhi_sdx55m_dump_pci_state(struct device *dev,
+				      struct mhi_controller *mhi_cntrl)
+{
+	struct pci_dev *pdev;
+
+	if (!mhi_cntrl->cntrl_dev || !dev_is_pci(mhi_cntrl->cntrl_dev))
+		return;
+
+	pdev = to_pci_dev(mhi_cntrl->cntrl_dev);
+	dev_info(dev,
+		 " pci %s vendor=0x%04x device=0x%04x subsystem=0x%04x:0x%04x msi_enabled=%u msix_enabled=%u nr_irqs=%u\n",
+		 pci_name(pdev), pdev->vendor, pdev->device,
+		 pdev->subsystem_vendor, pdev->subsystem_device,
+		 pdev->msi_enabled, pdev->msix_enabled, mhi_cntrl->nr_irqs);
+
+	mhi_sdx55m_dump_pci_iommu(dev, pdev);
+	mhi_sdx55m_dump_pci_msi_caps(dev, pdev);
+	mhi_sdx55m_dump_pci_irqs(dev, mhi_cntrl, pdev);
+}
+
+void mhi_sdx55m_dump_sahara_state(struct mhi_device *mhi_dev)
+{
+	struct mhi_controller *mhi_cntrl;
+	struct mhi_chan *mhi_chan;
+	struct mhi_event *mhi_event;
+	struct device *dev;
+	u32 i;
+
+	if (!mhi_dev)
+		return;
+	mhi_cntrl = mhi_dev->mhi_cntrl;
+	dev = &mhi_dev->dev;
+
+	dev_info(dev,
+		 "SDX55M SAHARA state: ee=%s mhi_state=%s pm_state=0x%x dev_wake=%d pending=%d M0=%u M2=%u M3=%u\n",
+		 TO_MHI_EXEC_STR(mhi_get_exec_env(mhi_cntrl)),
+		 mhi_state_str(mhi_get_mhi_state(mhi_cntrl)),
+		 mhi_cntrl->pm_state,
+		 atomic_read(&mhi_cntrl->dev_wake),
+		 atomic_read(&mhi_cntrl->pending_pkts),
+		 mhi_cntrl->M0, mhi_cntrl->M2, mhi_cntrl->M3);
+
+	mhi_sdx55m_dump_pci_state(dev, mhi_cntrl);
+
+	dev_info(dev, " channels:\n");
+	mhi_sdx55m_dump_chan(dev, mhi_cntrl, mhi_dev->ul_chan);
+	mhi_sdx55m_dump_chan(dev, mhi_cntrl, mhi_dev->dl_chan);
+
+	if (!mhi_cntrl->mhi_event)
+		return;
+
+	dev_info(dev, " event rings (SAHARA uses ch2/3 er_index=1):\n");
+	mhi_event = mhi_cntrl->mhi_event;
+	for (i = 0; i < mhi_cntrl->total_ev_rings; i++, mhi_event++) {
+		struct mhi_chan *erchan = mhi_event->mhi_chan;
+		bool is_sahara_er = false;
+
+		if (mhi_dev->ul_chan && i == mhi_dev->ul_chan->er_index)
+			is_sahara_er = true;
+		if (mhi_dev->dl_chan && i == mhi_dev->dl_chan->er_index)
+			is_sahara_er = true;
+		if (erchan && erchan->name && !strcmp(erchan->name, "SAHARA"))
+			is_sahara_er = true;
+		/* Always include CTRL+DATA ring 0 for context */
+		if (i != 0 && !is_sahara_er)
+			continue;
+		mhi_sdx55m_dump_event(dev, mhi_cntrl, mhi_event, i);
+	}
+
+	mhi_chan = mhi_cntrl->mhi_chan;
+	dev_info(dev,
+		 " misc: total_ev_rings=%u hw_ev_rings=%u max_chan=%u\n",
+		 mhi_cntrl->total_ev_rings, mhi_cntrl->hw_ev_rings,
+		 mhi_cntrl->max_chan);
+	(void)mhi_chan;
+}
+EXPORT_SYMBOL_GPL(mhi_sdx55m_dump_sahara_state);
 
 int __must_check mhi_read_reg(struct mhi_controller *mhi_cntrl,
 			      void __iomem *base, u32 offset, u32 *out)
@@ -602,9 +1196,11 @@ static int parse_xfer_event(struct mhi_controller *mhi_cntrl,
 	case MHI_EV_CC_EOT:
 	{
 		dma_addr_t ptr = MHI_TRE_GET_EV_PTR(event);
+		dma_addr_t local_rp_dma, ev_tre_dma, dev_rp_dma;
 		struct mhi_ring_element *local_rp, *ev_tre;
 		void *dev_rp, *next_rp;
 		struct mhi_buf_info *buf_info;
+		bool recover_unexpected = false;
 		u16 xfer_len;
 
 		if (!is_valid_ring_ptr(tre_ring, ptr)) {
@@ -627,18 +1223,50 @@ static int parse_xfer_event(struct mhi_controller *mhi_cntrl,
 		if (next_rp >= tre_ring->base + tre_ring->len)
 			next_rp = tre_ring->base;
 		if (dev_rp != next_rp && !MHI_TRE_DATA_GET_CHAIN(local_rp)) {
-			dev_err(&mhi_cntrl->mhi_dev->dev,
-				"Event element points to an unexpected TRE\n");
-			break;
+			if (mhi_sdx55m_sahara_recover_unexpected_tre &&
+			    mhi_is_sdx55m_sahara(mhi_cntrl, mhi_chan) &&
+			    mhi_chan->dir == DMA_FROM_DEVICE) {
+				recover_unexpected = true;
+				local_rp_dma = mhi_sdx55m_ring_dma(tre_ring,
+								   local_rp);
+				ev_tre_dma = mhi_sdx55m_ring_dma(tre_ring,
+								 ev_tre);
+				dev_rp_dma = mhi_sdx55m_ring_dma(tre_ring,
+								 dev_rp);
+				dev_warn(&mhi_cntrl->mhi_dev->dev,
+					 "%d: SDX55M SAHARA recover DL TRE local=0x%llx event=0x%llx dev=0x%llx\n",
+					 mhi_chan->chan,
+					 (unsigned long long)local_rp_dma,
+					 (unsigned long long)ev_tre_dma,
+					 (unsigned long long)dev_rp_dma);
+			} else {
+				dev_err(&mhi_cntrl->mhi_dev->dev,
+					"Event element points to an unexpected TRE\n");
+				break;
+			}
 		}
 
 		while (local_rp != dev_rp) {
+			bool last_tre = local_rp == ev_tre;
+
 			buf_info = buf_ring->rp;
-			/* If it's the last TRE, get length from the event */
-			if (local_rp == ev_tre)
+			/*
+			 * In the SDX55M SBL recovery path, intermediate entries
+			 * are only consumed to resync the host ring view.  Do not
+			 * expose stale data as a valid Sahara packet.
+			 */
+			if (recover_unexpected && !last_tre) {
+				xfer_len = 0;
+				result.transaction_status = -EOVERFLOW;
+			} else if (last_tre) {
 				xfer_len = MHI_TRE_GET_EV_LEN(event);
-			else
+				result.transaction_status =
+					(ev_code == MHI_EV_CC_OVERFLOW) ? -EOVERFLOW : 0;
+			} else {
 				xfer_len = buf_info->len;
+				result.transaction_status =
+					(ev_code == MHI_EV_CC_OVERFLOW) ? -EOVERFLOW : 0;
+			}
 
 			/* Unmap if it's not pre-mapped by client */
 			if (likely(!buf_info->pre_mapped))
@@ -1312,6 +1940,8 @@ static int mhi_update_channel_state(struct mhi_controller *mhi_cntrl,
 {
 	struct device *dev = &mhi_chan->mhi_dev->dev;
 	enum mhi_cmd_type cmd = MHI_CMD_NOP;
+	bool sdx55m_sahara = mhi_is_sdx55m_sahara(mhi_cntrl, mhi_chan);
+	unsigned int poll_count, i;
 	int ret;
 
 	trace_mhi_channel_command_start(mhi_cntrl, mhi_chan, to_state, TPS("Updating"));
@@ -1355,6 +1985,9 @@ static int mhi_update_channel_state(struct mhi_controller *mhi_cntrl,
 	mhi_cntrl->runtime_get(mhi_cntrl);
 
 	reinit_completion(&mhi_chan->completion);
+	write_lock_irq(&mhi_chan->lock);
+	mhi_chan->ccs = MHI_EV_CC_INVALID;
+	write_unlock_irq(&mhi_chan->lock);
 	ret = mhi_send_cmd(mhi_cntrl, mhi_chan, cmd);
 	if (ret) {
 		dev_err(dev, "%d: Failed to send %s channel command\n",
@@ -1362,9 +1995,37 @@ static int mhi_update_channel_state(struct mhi_controller *mhi_cntrl,
 		goto exit_channel_update;
 	}
 
-	ret = wait_for_completion_timeout(&mhi_chan->completion,
-				       msecs_to_jiffies(mhi_cntrl->timeout_ms));
+	if (sdx55m_sahara) {
+		poll_count = max_t(unsigned int, 1, mhi_cntrl->timeout_ms / 20);
+		ret = 0;
+		for (i = 0; i < poll_count; i++) {
+			ret = wait_for_completion_timeout(&mhi_chan->completion,
+							  msecs_to_jiffies(20));
+			__mhi_sdx55m_drain_events(mhi_cntrl);
+			if (ret || mhi_chan->ccs == MHI_EV_CC_SUCCESS)
+				break;
+		}
+	} else {
+		ret = wait_for_completion_timeout(&mhi_chan->completion,
+						  msecs_to_jiffies(mhi_cntrl->timeout_ms));
+	}
 	if (!ret || mhi_chan->ccs != MHI_EV_CC_SUCCESS) {
+		if (sdx55m_sahara && to_state == MHI_CH_STATE_TYPE_START) {
+			u32 chcfg = 0;
+
+			__mhi_sdx55m_drain_events(mhi_cntrl);
+			if (mhi_sdx55m_sahara_chan_running(mhi_cntrl, mhi_chan,
+							   &chcfg)) {
+				dev_warn(dev,
+					 "%d: Missing SAHARA START completion, but device channel is RUNNING (ccs 0x%x chcfg 0x%x)\n",
+					 mhi_chan->chan, mhi_chan->ccs, chcfg);
+				write_lock_irq(&mhi_chan->lock);
+				mhi_chan->ccs = MHI_EV_CC_SUCCESS;
+				write_unlock_irq(&mhi_chan->lock);
+				goto channel_update_success;
+			}
+		}
+
 		dev_err(dev,
 			"%d: Failed to receive %s channel command completion\n",
 			mhi_chan->chan, TO_CH_STATE_TYPE_STR(to_state));
@@ -1372,6 +2033,7 @@ static int mhi_update_channel_state(struct mhi_controller *mhi_cntrl,
 		goto exit_channel_update;
 	}
 
+channel_update_success:
 	ret = 0;
 
 	if (to_state != MHI_CH_STATE_TYPE_RESET) {
