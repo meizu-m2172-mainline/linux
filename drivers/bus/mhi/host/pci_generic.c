@@ -361,7 +361,13 @@ static const struct mhi_channel_config modem_qcom_sdx55_mhi_channels[] = {
 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
 	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
-	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
+	/* Deepen the IP_HW0 DL ring 128->1024: at full DL rate the modem-IPA
+	 * drained the 128-deep ring faster than mhi_net's delayed_work refill
+	 * could replenish, starving it in a burst window -> modem asserted DL
+	 * flow-control that never released -> permanent freeze (~210MB in). A
+	 * deeper ring gives burst headroom so refill keeps pace. Event ring 5
+	 * (2048 elems) already covers it. (See docs/device/modem.md M147.) */
+	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 1024, 5),
 };
 
 static struct mhi_event_config modem_qcom_v1_mhi_events[] = {
