@@ -70,6 +70,7 @@ struct qrtr_node {
 	unsigned int id;
 	struct xarray servers;
 	u32 server_count;
+	bool announced;
 };
 
 /* Max nodes, server, lookup limits are chosen based on the current platform
@@ -520,6 +521,29 @@ static int ctrl_cmd_new_server(struct sockaddr_qrtr *from,
 		if (ret < 0) {
 			pr_err("failed to announce new service\n");
 			return ret;
+		}
+	} else {
+		/* A remote node registering a server proves its name service
+		 * is up and able to receive announcements. Local servers that
+		 * were registered before this node joined (e.g. tqftpserv,
+		 * registered at boot) only reach it via the racy on-hello
+		 * announce, which an external (PCIe/MHI) modem may miss because
+		 * it sends its HELLO before its own name service is ready.
+		 * Re-announce all local servers to this node the first time it
+		 * registers one, so it can resolve host services such as the
+		 * TFTP server used to fetch MCFG. Guarded to fire once per node.
+		 */
+		struct qrtr_node *rnode = node_get(srv->node);
+
+		if (rnode && !rnode->announced) {
+			struct sockaddr_qrtr sq = {
+				.sq_family = AF_QIPCRTR,
+				.sq_node = srv->node,
+				.sq_port = QRTR_PORT_CTRL,
+			};
+
+			rnode->announced = true;
+			announce_servers(&sq);
 		}
 	}
 
