@@ -1410,7 +1410,6 @@
 		pinctrl-0 = <&cam_mclk0_active>;
 
 		orientation = <1>; /* Rear facing */
-		rotation = <180>;
 
 		port {
 			camera_main_ep: endpoint {
