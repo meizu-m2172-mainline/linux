@@ -6,6 +6,7 @@
 //
 // Author: Herve Codina <herve.codina@bootlin.com>
 
+#include <linux/cleanup.h>
 #include <linux/unaligned.h>
 #include <linux/clk.h>
 #include <linux/firmware.h>
@@ -817,18 +818,17 @@ static int peb2466_dai_startup(struct snd_pcm_substream *substream,
 					  &peb2466_sample_bits_constr);
 }
 
-static const u64 peb2466_dai_formats[] = {
+static const u64 peb2466_dai_formats =
 	SND_SOC_POSSIBLE_DAIFMT_DSP_A	|
-	SND_SOC_POSSIBLE_DAIFMT_DSP_B,
-};
+	SND_SOC_POSSIBLE_DAIFMT_DSP_B;
 
 static const struct snd_soc_dai_ops peb2466_dai_ops = {
 	.startup = peb2466_dai_startup,
 	.hw_params = peb2466_dai_hw_params,
 	.set_tdm_slot = peb2466_dai_set_tdm_slot,
 	.set_fmt = peb2466_dai_set_fmt,
-	.auto_selectable_formats     = peb2466_dai_formats,
-	.num_auto_selectable_formats = ARRAY_SIZE(peb2466_dai_formats),
+	.auto_selectable_formats     = &peb2466_dai_formats,
+	.num_auto_selectable_formats = 1,
 };
 
 static struct snd_soc_dai_driver peb2466_dai_driver = {
@@ -1538,17 +1538,14 @@ static int peb2466_fw_parse(struct snd_soc_component *component,
 
 static int peb2466_load_coeffs(struct snd_soc_component *component, const char *fw_name)
 {
-	const struct firmware *fw;
+	const struct firmware *fw __free(firmware) = NULL;
 	int ret;
 
 	ret = request_firmware(&fw, fw_name, component->dev);
 	if (ret)
 		return ret;
 
-	ret = peb2466_fw_parse(component, fw->data, fw->size);
-	release_firmware(fw);
-
-	return ret;
+	return peb2466_fw_parse(component, fw->data, fw->size);
 }
 
 static int peb2466_component_probe(struct snd_soc_component *component)
@@ -1705,13 +1702,11 @@ static int peb2466_chip_gpio_update_bits(struct peb2466 *peb2466, unsigned int x
 	 * So, a specific cache value is used.
 	 */
 
-	mutex_lock(&peb2466->gpio.lock);
+	guard(mutex)(&peb2466->gpio.lock);
 
 	cache = peb2466_chip_gpio_get_cache(peb2466, xr_reg);
-	if (!cache) {
-		ret = -EINVAL;
-		goto end;
-	}
+	if (!cache)
+		return -EINVAL;
 
 	tmp = *cache;
 	tmp &= ~mask;
@@ -1719,14 +1714,11 @@ static int peb2466_chip_gpio_update_bits(struct peb2466 *peb2466, unsigned int x
 
 	ret = regmap_write(peb2466->regmap, xr_reg, tmp);
 	if (ret)
-		goto end;
+		return ret;
 
 	*cache = tmp;
-	ret = 0;
 
-end:
-	mutex_unlock(&peb2466->gpio.lock);
-	return ret;
+	return 0;
 }
 
 static int peb2466_chip_gpio_set(struct gpio_chip *c, unsigned int offset,

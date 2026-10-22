@@ -286,7 +286,6 @@ struct amdgpu_gmc {
 	struct amdgpu_irq_src	vm_fault;
 	uint32_t		vram_type;
 	uint8_t			vram_vendor;
-	uint32_t                srbm_soft_reset;
 	bool			prt_warning;
 	uint32_t		sdpif_register;
 	/* apertures */
@@ -366,6 +365,8 @@ struct amdgpu_gmc {
 	bool flush_tlb_needs_extra_type_0;
 	bool flush_tlb_needs_extra_type_2;
 	bool flush_pasid_uses_kiq;
+
+	bool override_pte;
 };
 
 #define amdgpu_gmc_emit_flush_gpu_tlb(r, vmid, addr) (r)->adev->gmc.gmc_funcs->emit_flush_gpu_tlb((r), (vmid), (addr))
@@ -437,8 +438,6 @@ int amdgpu_gmc_handle_retry_fault(struct amdgpu_device *adev,
 				  u32 node_id,
 				  bool write_fault);
 int amdgpu_gmc_ras_sw_init(struct amdgpu_device *adev);
-int amdgpu_gmc_ras_late_init(struct amdgpu_device *adev);
-void amdgpu_gmc_ras_fini(struct amdgpu_device *adev);
 int amdgpu_gmc_allocate_vm_inv_eng(struct amdgpu_device *adev);
 void amdgpu_gmc_flush_gpu_tlb(struct amdgpu_device *adev, uint32_t vmid,
 			      uint32_t vmhub, uint32_t flush_type);
@@ -485,4 +484,6 @@ void amdgpu_gmc_init_sw_mem_ranges(struct amdgpu_device *adev,
 				   struct amdgpu_mem_partition_info *mem_ranges);
 int amdgpu_gmc_get_vram_info(struct amdgpu_device *adev,
 		int *vram_width, int *vram_type, int *vram_vendor);
+
+void amdgpu_gmc_set_gart_size(struct amdgpu_device *adev, u64 default_size);
 #endif

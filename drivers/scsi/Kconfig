@@ -474,7 +474,6 @@ config SCSI_ADVANSYS
 	tristate "AdvanSys SCSI support"
 	depends on SCSI
 	depends on (ISA || EISA || PCI) && HAS_IOPORT
-	depends on ISA_DMA_API || !ISA
 	help
 	  This is a driver for all SCSI host adapters manufactured by
 	  AdvanSys. It is documented in the kernel source in
@@ -500,6 +499,7 @@ source "drivers/scsi/esas2r/Kconfig"
 source "drivers/scsi/megaraid/Kconfig.megaraid"
 source "drivers/scsi/mpt3sas/Kconfig"
 source "drivers/scsi/mpi3mr/Kconfig"
+source "drivers/scsi/leapraid/Kconfig"
 source "drivers/scsi/smartpqi/Kconfig"
 
 config SCSI_HPTIOP
@@ -753,6 +753,7 @@ config SCSI_IBMVFC
 	tristate "IBM Virtual FC support"
 	depends on PPC_PSERIES && SCSI
 	depends on SCSI_FC_ATTRS
+	depends on NVME_FC || NVME_FC=n
 	help
 	  This is the IBM POWER Virtual FC Client
 

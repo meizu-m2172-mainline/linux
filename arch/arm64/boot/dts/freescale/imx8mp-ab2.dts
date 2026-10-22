@@ -281,7 +281,7 @@
 		compatible = "nxp,pca9450c";
 		reg = <0x25>;
 		interrupt-parent = <&gpio1>;
-		interrupts = <3 GPIO_ACTIVE_LOW>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
 		pinctrl-0 = <&pinctrl_pmic>;
 
 		regulators {
@@ -772,6 +772,10 @@
 	#sound-dai-cells = <0>;
 	pinctrl-0 = <&pinctrl_pdm>;
 	pinctrl-names = "default";
+	status = "okay";
+};
+
+&mu2 {
 	status = "okay";
 };
 

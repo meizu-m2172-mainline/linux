@@ -133,7 +133,7 @@ static struct kvm_vm *spawn_vm(struct kvm_vcpu **vcpu, pthread_t *vcpu_thread,
 	hva = addr_gpa2hva(vm, MEM_REGION_GPA);
 	memset(hva, 0, 2 * 4096);
 
-	pthread_create(vcpu_thread, NULL, vcpu_worker, *vcpu);
+	kvm_pthread_create(vcpu_thread, NULL, vcpu_worker, *vcpu);
 
 	/* Ensure the guest thread is spun up. */
 	wait_for_vcpu();
@@ -216,7 +216,7 @@ static void test_move_memory_region(bool disable_slot_zap_quirk)
 	/* Defered sync from when the memslot was misaligned (above). */
 	wait_for_vcpu();
 
-	pthread_join(vcpu_thread, NULL);
+	kvm_pthread_join(vcpu_thread, NULL);
 
 	kvm_vm_free(vm);
 }
@@ -302,7 +302,7 @@ static void test_delete_memory_region(bool disable_slot_zap_quirk)
 	 */
 	vm_mem_region_delete(vm, 0);
 
-	pthread_join(vcpu_thread, NULL);
+	kvm_pthread_join(vcpu_thread, NULL);
 
 	run = vcpu->run;
 
@@ -510,7 +510,7 @@ static void test_add_overlapping_private_memory_regions(void)
 
 	vm = vm_create_barebones_type(KVM_X86_SW_PROTECTED_VM);
 
-	memfd = vm_create_guest_memfd(vm, MEM_REGION_SIZE * 4, 0);
+	memfd = vm_create_guest_memfd(vm, MEM_REGION_SIZE * 5, 0);
 
 	vm_set_user_memory_region2(vm, MEM_REGION_SLOT, KVM_MEM_GUEST_MEMFD,
 				   MEM_REGION_GPA, MEM_REGION_SIZE * 2, 0, memfd, 0);
@@ -526,12 +526,35 @@ static void test_add_overlapping_private_memory_regions(void)
 	vm_set_user_memory_region2(vm, MEM_REGION_SLOT, KVM_MEM_GUEST_MEMFD,
 				   MEM_REGION_GPA, 0, NULL, -1, 0);
 
-	/* Overlap the front half of the other slot. */
+	/*
+	 * Verify that overlap in the guest_memfd bindings (i.e. in guest_memfd
+	 * file offsets), but _not_ in the GPA space, fails with -EEXIST.
+	 */
+	r = __vm_set_user_memory_region2(vm, MEM_REGION_SLOT, KVM_MEM_GUEST_MEMFD,
+					 MEM_REGION_GPA,
+					 MEM_REGION_SIZE * 2,
+					 0, memfd, MEM_REGION_SIZE);
+	TEST_ASSERT(r == -1 && errno == EEXIST,
+		    "Overlapping guest_memfd() bindings should fail with EEXIST");
+
+	/* And now the back half of the other slot's guest_memfd binding. */
+	r = __vm_set_user_memory_region2(vm, MEM_REGION_SLOT, KVM_MEM_GUEST_MEMFD,
+					 MEM_REGION_GPA,
+					 MEM_REGION_SIZE * 2,
+					 0, memfd, MEM_REGION_SIZE * 3);
+	TEST_ASSERT(r == -1 && errno == EEXIST,
+		    "Overlapping guest_memfd() bindings should fail with EEXIST");
+
+	/*
+	 * Repeat the overlap tests, but this time with overlap in the memslots
+	 * GPA space.  Regardless of where there is overlap, KVM should return
+	 * -EEXIST.
+	 */
 	r = __vm_set_user_memory_region2(vm, MEM_REGION_SLOT, KVM_MEM_GUEST_MEMFD,
 					 MEM_REGION_GPA * 2 - MEM_REGION_SIZE,
 					 MEM_REGION_SIZE * 2,
 					 0, memfd, 0);
-	TEST_ASSERT(r == -1 && errno == EEXIST, "%s",
+	TEST_ASSERT(r == -1 && errno == EEXIST,
 		    "Overlapping guest_memfd() bindings should fail with EEXIST");
 
 	/* And now the back half of the other slot. */
@@ -539,7 +562,7 @@ static void test_add_overlapping_private_memory_regions(void)
 					 MEM_REGION_GPA * 2 + MEM_REGION_SIZE,
 					 MEM_REGION_SIZE * 2,
 					 0, memfd, 0);
-	TEST_ASSERT(r == -1 && errno == EEXIST, "%s",
+	TEST_ASSERT(r == -1 && errno == EEXIST,
 		    "Overlapping guest_memfd() bindings should fail with EEXIST");
 
 	close(memfd);

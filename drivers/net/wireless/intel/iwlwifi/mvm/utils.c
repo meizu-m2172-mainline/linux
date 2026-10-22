@@ -14,6 +14,30 @@
 #include "fw/api/rs.h"
 #include "fw/img.h"
 
+#define IWL_DECLARE_RATE_INFO(r) \
+	[IWL_RATE_##r##M_INDEX] = IWL_RATE_##r##M_PLCP
+
+/* Translate from fw_rate_index (IWL_RATE_XXM_INDEX) to PLCP */
+static const u8 fw_rate_idx_to_plcp[IWL_RATE_COUNT] = {
+	IWL_DECLARE_RATE_INFO(1),
+	IWL_DECLARE_RATE_INFO(2),
+	IWL_DECLARE_RATE_INFO(5),
+	IWL_DECLARE_RATE_INFO(11),
+	IWL_DECLARE_RATE_INFO(6),
+	IWL_DECLARE_RATE_INFO(9),
+	IWL_DECLARE_RATE_INFO(12),
+	IWL_DECLARE_RATE_INFO(18),
+	IWL_DECLARE_RATE_INFO(24),
+	IWL_DECLARE_RATE_INFO(36),
+	IWL_DECLARE_RATE_INFO(48),
+	IWL_DECLARE_RATE_INFO(54),
+};
+
+u8 iwl_mvm_rate_idx_to_plcp(int idx)
+{
+	return fw_rate_idx_to_plcp[idx];
+}
+
 /*
  * Will return 0 even if the cmd failed when RFKILL is asserted unless
  * CMD_WANT_SKB is set in cmd->flags.
@@ -49,8 +73,8 @@ int iwl_mvm_send_cmd(struct iwl_mvm *mvm, struct iwl_host_cmd *cmd)
 	return ret;
 }
 
-int iwl_mvm_send_cmd_pdu(struct iwl_mvm *mvm, u32 id,
-			 u32 flags, u16 len, const void *data)
+int _iwl_mvm_send_cmd_pdu(struct iwl_mvm *mvm, u32 id,
+			  u32 flags, u16 len, const void *data)
 {
 	struct iwl_host_cmd cmd = {
 		.id = id,
@@ -113,8 +137,8 @@ int iwl_mvm_send_cmd_status(struct iwl_mvm *mvm, struct iwl_host_cmd *cmd,
 /*
  * We assume that the caller set the status to the sucess value
  */
-int iwl_mvm_send_cmd_pdu_status(struct iwl_mvm *mvm, u32 id, u16 len,
-				const void *data, u32 *status)
+int _iwl_mvm_send_cmd_pdu_status(struct iwl_mvm *mvm, u32 id, u16 len,
+				 const void *data, u32 *status)
 {
 	struct iwl_host_cmd cmd = {
 		.id = id,
@@ -151,13 +175,13 @@ int iwl_mvm_legacy_rate_to_mac80211_idx(u32 rate_n_flags,
 	if (band != NL80211_BAND_2GHZ)
 		band_offset = IWL_FIRST_OFDM_RATE;
 	for (idx = band_offset; idx < IWL_RATE_COUNT_LEGACY; idx++)
-		if (iwl_fw_rate_idx_to_plcp(idx) == rate)
+		if (iwl_mvm_rate_idx_to_plcp(idx) == rate)
 			return idx - band_offset;
 
 	return -1;
 }
 
-u8 iwl_mvm_mac80211_idx_to_hwrate(const struct iwl_fw *fw, int rate_idx)
+u8 iwl_mvm_rate_idx_to_fw_idx(const struct iwl_fw *fw, int rate_idx)
 {
 	return rate_idx >= IWL_FIRST_OFDM_RATE ?
 		rate_idx - IWL_FIRST_OFDM_RATE :
@@ -665,36 +689,6 @@ struct ieee80211_vif *iwl_mvm_get_bss_vif(struct iwl_mvm *mvm)
 	return bss_iter_data.vif;
 }
 
-struct iwl_bss_find_iter_data {
-	struct ieee80211_vif *vif;
-	u32 macid;
-};
-
-static void iwl_mvm_bss_find_iface_iterator(void *_data, u8 *mac,
-					    struct ieee80211_vif *vif)
-{
-	struct iwl_bss_find_iter_data *data = _data;
-	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
-
-	if (mvmvif->id == data->macid)
-		data->vif = vif;
-}
-
-struct ieee80211_vif *iwl_mvm_get_vif_by_macid(struct iwl_mvm *mvm, u32 macid)
-{
-	struct iwl_bss_find_iter_data data = {
-		.macid = macid,
-	};
-
-	lockdep_assert_held(&mvm->mutex);
-
-	ieee80211_iterate_active_interfaces_atomic(
-		mvm->hw, IEEE80211_IFACE_ITER_NORMAL,
-		iwl_mvm_bss_find_iface_iterator, &data);
-
-	return data.vif;
-}
-
 struct iwl_sta_iter_data {
 	bool assoc;
 };
@@ -1031,7 +1025,7 @@ static unsigned long iwl_mvm_calc_tcm_stats(struct iwl_mvm *mvm,
 	/*
 	 * If the current load isn't low we need to force re-evaluation
 	 * in the TCM period, so that we can return to low load if there
-	 * was no traffic at all (and thus iwl_mvm_recalc_tcm didn't get
+	 * was no traffic at all (and thus iwl_mvm_tcm_work() didn't get
 	 * triggered by traffic).
 	 */
 	if (load != IWL_MVM_TRAFFIC_LOW)
@@ -1057,8 +1051,11 @@ static unsigned long iwl_mvm_calc_tcm_stats(struct iwl_mvm *mvm,
 	return 0;
 }
 
-void iwl_mvm_recalc_tcm(struct iwl_mvm *mvm)
+void iwl_mvm_tcm_work(struct work_struct *work)
 {
+	struct delayed_work *delayed_work = to_delayed_work(work);
+	struct iwl_mvm *mvm = container_of(delayed_work, struct iwl_mvm,
+					   tcm.work);
 	unsigned long ts = jiffies;
 	bool handle_uapsd =
 		time_after(ts, mvm->tcm.uapsd_nonagg_ts +
@@ -1093,15 +1090,6 @@ void iwl_mvm_recalc_tcm(struct iwl_mvm *mvm)
 	spin_unlock(&mvm->tcm.lock);
 
 	iwl_mvm_tcm_results(mvm);
-}
-
-void iwl_mvm_tcm_work(struct work_struct *work)
-{
-	struct delayed_work *delayed_work = to_delayed_work(work);
-	struct iwl_mvm *mvm = container_of(delayed_work, struct iwl_mvm,
-					   tcm.work);
-
-	iwl_mvm_recalc_tcm(mvm);
 }
 
 void iwl_mvm_pause_tcm(struct iwl_mvm *mvm, bool with_cancel)
@@ -1243,7 +1231,7 @@ static u32 iwl_legacy_rate_to_fw_idx(u32 rate_n_flags)
 	int last = ofdm ? IWL_RATE_COUNT_LEGACY : IWL_FIRST_OFDM_RATE;
 
 	for (idx = offset; idx < last; idx++)
-		if (iwl_fw_rate_idx_to_plcp(idx) == rate)
+		if (iwl_mvm_rate_idx_to_plcp(idx) == rate)
 			return idx - offset;
 	return IWL_RATE_INVALID;
 }
@@ -1353,7 +1341,7 @@ __le32 iwl_mvm_v3_rate_to_fw(u32 rate, u8 rate_ver)
 		rate_idx = u32_get_bits(rate, RATE_LEGACY_RATE_MSK);
 		if (!(result & RATE_MCS_CCK_MSK_V1))
 			rate_idx += IWL_FIRST_OFDM_RATE;
-		result |= u32_encode_bits(iwl_fw_rate_idx_to_plcp(rate_idx),
+		result |= u32_encode_bits(iwl_mvm_rate_idx_to_plcp(rate_idx),
 					  RATE_LEGACY_RATE_MSK_V1);
 		break;
 	case RATE_MCS_MOD_TYPE_HT:

@@ -77,6 +77,11 @@ static int param_set_sample_interval(const char *val, const struct kernel_param 
 		WRITE_ONCE(kfence_enabled, false);
 	}
 
+	if (num && kasan_hw_tags_enabled()) {
+		pr_info("disabled as KASAN HW tags are enabled\n");
+		return -EINVAL;
+	}
+
 	*((unsigned long *)kp->arg) = num;
 
 	if (num && !READ_ONCE(kfence_enabled) && system_state != SYSTEM_BOOTING)
@@ -500,7 +505,7 @@ static void *kfence_guarded_alloc(struct kmem_cache *cache, size_t size, gfp_t g
 
 	/*
 	 * We check slab_want_init_on_alloc() ourselves, rather than letting
-	 * SL*B do the initialization, as otherwise we might overwrite KFENCE's
+	 * slab do the initialization, as otherwise it might overwrite KFENCE's
 	 * redzone.
 	 */
 	if (unlikely(slab_want_init_on_alloc(gfp, cache)))
@@ -631,11 +636,6 @@ static unsigned long kfence_init_pool(void)
 
 		page = pfn_to_page(start_pfn + i);
 		__SetPageSlab(page);
-#ifdef CONFIG_MEMCG
-		struct slab *slab = page_slab(page);
-		slab->obj_exts = (unsigned long)&kfence_metadata_init[i / 2 - 1].obj_exts |
-				 MEMCG_DATA_OBJEXTS;
-#endif
 	}
 
 	/*
@@ -699,10 +699,6 @@ reset_slab:
 			continue;
 
 		page = pfn_to_page(start_pfn + i);
-#ifdef CONFIG_MEMCG
-		struct slab *slab = page_slab(page);
-		slab->obj_exts = 0;
-#endif
 		__ClearPageSlab(page);
 	}
 
@@ -1243,9 +1239,6 @@ void __kfence_free(void *addr)
 {
 	struct kfence_metadata *meta = addr_to_metadata((unsigned long)addr);
 
-#ifdef CONFIG_MEMCG
-	KFENCE_WARN_ON(meta->obj_exts.objcg);
-#endif
 	/*
 	 * If the objects of the cache are SLAB_TYPESAFE_BY_RCU, defer freeing
 	 * the object, as the object page may be recycled for other-typed

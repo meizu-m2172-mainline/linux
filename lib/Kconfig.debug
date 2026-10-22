@@ -613,24 +613,9 @@ config BUILTIN_MODULE_RANGES
 	 It also records an anchor symbol to determine the load address of the
 	 section.
 
-config DEBUG_FORCE_WEAK_PER_CPU
-	bool "Force weak per-cpu definitions"
-	depends on DEBUG_KERNEL
-	help
-	  s390 and alpha require percpu variables in modules to be
-	  defined weak to work around addressing range issue which
-	  puts the following two restrictions on percpu variable
-	  definitions.
-
-	  1. percpu symbols must be unique whether static or not
-	  2. percpu variables can't be defined inside a function
-
-	  To ensure that generic code follows the above rules, this
-	  option forces all percpu variables to be defined as weak.
-
 config WARN_CONTEXT_ANALYSIS
 	bool "Compiler context-analysis warnings"
-	depends on CC_IS_CLANG && CLANG_VERSION >= 220100
+	depends on CC_IS_CLANG && CLANG_VERSION >= 230000
 	# Branch profiling re-defines "if", which messes with the compiler's
 	# ability to analyze __cond_acquires(..), resulting in false positives.
 	depends on !TRACE_BRANCH_PROFILING
@@ -641,7 +626,7 @@ config WARN_CONTEXT_ANALYSIS
 	  and releasing user-definable "context locks".
 
 	  Clang's name of the feature is "Thread Safety Analysis". Requires
-	  Clang 22.1.0 or later.
+	  Clang 23 or later.
 
 	  Produces warnings by default. Select CONFIG_WERROR if you wish to
 	  turn these warnings into errors.
@@ -1048,34 +1033,6 @@ config CODE_TAGGING
 	bool
 	select KALLSYMS
 
-config MEM_ALLOC_PROFILING
-	bool "Enable memory allocation profiling"
-	default n
-	depends on MMU
-	depends on PROC_FS
-	depends on !DEBUG_FORCE_WEAK_PER_CPU
-	select CODE_TAGGING
-	select PAGE_EXTENSION
-	select SLAB_OBJ_EXT
-	help
-	  Track allocation source code and record total allocation size
-	  initiated at that code location. The mechanism can be used to track
-	  memory leaks with a low performance and memory impact.
-
-config MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT
-	bool "Enable memory allocation profiling by default"
-	default y
-	depends on MEM_ALLOC_PROFILING
-
-config MEM_ALLOC_PROFILING_DEBUG
-	bool "Memory allocation profiler debugging"
-	default n
-	depends on MEM_ALLOC_PROFILING
-	select MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT
-	help
-	  Adds warnings with helpful error messages for memory allocation
-	  profiling.
-
 source "lib/Kconfig.kasan"
 source "lib/Kconfig.kfence"
 source "lib/Kconfig.kmsan"
@@ -1320,10 +1277,10 @@ config DETECT_HUNG_TASK_BLOCKER
 	depends on !PREEMPT_RT
 	default y
 	help
-	  Say Y here to show the blocker task's stacktrace who acquires
-	  the mutex lock which "hung tasks" are waiting.
-	  This will add overhead a bit but shows suspicious tasks and
-	  call trace if it comes from waiting a mutex.
+	  Say Y here to show a possible blocker task's stacktrace when
+	  a hung task is waiting on a mutex, semaphore, or rwsem.
+	  This will add a bit of overhead but shows suspicious tasks and
+	  call traces for waits on one of these locks.
 
 config WQ_WATCHDOG
 	bool "Detect Workqueue Stalls"
@@ -2247,10 +2204,11 @@ config KCOV_INSTRUMENT_ALL
 config KCOV_IRQ_AREA_SIZE
 	hex "Size of interrupt coverage collection area in words"
 	depends on KCOV
+	range 0x80 0x1000000
 	default 0x40000
 	help
-	  KCOV uses preallocated per-cpu areas to collect coverage from
-	  soft interrupts. This specifies the size of those areas in the
+	  KCOV uses preallocated areas to collect coverage from soft
+	  interrupts. This specifies the size of those areas in the
 	  number of unsigned long words.
 
 config KCOV_SELFTEST
@@ -2649,11 +2607,16 @@ config TEST_VMALLOC
 
 config TEST_WORKQUEUE
 	tristate "Test module for stress/performance analysis of workqueue"
+	depends on m
 	default n
 	help
 	  This builds the "test_workqueue" module for benchmarking
 	  workqueue throughput under contention. Useful for evaluating
 	  affinity scope changes (e.g., cache_shard vs cache).
+
+	  The test drives sysfs to switch affinity scopes, so it must be
+	  loaded after userspace has mounted sysfs; building it in (=y)
+	  would run module_init before /sys is available.
 
 	  If unsure, say N.
 
@@ -2675,6 +2638,19 @@ config FIND_BIT_BENCHMARK
 	help
 	  This builds the "test_find_bit" module that measure find_*_bit()
 	  functions performance.
+
+	  If unsure, say N.
+
+config REGION_ALLOC_BENCHMARK
+	tristate "Benchmark bitmap, IDA and Maple Tree region allocation"
+	help
+	  This builds a microbenchmark comparing variable-sized region
+	  allocation using bitmaps, IDA and Maple Tree. The benchmark
+	  runs at initialization time.
+
+	  Usage:
+	    insmod region_alloc_benchmark.ko
+	    insmod region_alloc_benchmark.ko capacities=1024,2048,4096,65536
 
 	  If unsure, say N.
 
@@ -2705,7 +2681,7 @@ config TEST_FIRMWARE
 
 config TEST_SYSCTL
 	tristate "sysctl test driver"
-	depends on PROC_SYSCTL
+	depends on SYSCTL
 	help
 	  This builds the "test_sysctl" module. This driver enables to test the
 	  proc sysctl interfaces available to drivers safely without affecting
@@ -2930,6 +2906,21 @@ config LIVEUPDATE_TEST
 
 	  If unsure, say N
 
+config DIMLIB_KUNIT_TEST
+	tristate "KUnit test for the DIM library" if !KUNIT_ALL_TESTS
+	depends on KUNIT && NET
+	select DIMLIB
+	default KUNIT_ALL_TESTS
+	help
+	  This builds the KUnit test for the Dynamic Interrupt Moderation
+	  library (lib/dim/), which checks the rate statistics computed by
+	  dim_calc_stats().
+
+	  For more information on KUnit and unit tests in general please refer
+	  to the KUnit documentation in Documentation/dev-tools/kunit/.
+
+	  If unsure, say N.
+
 config CMDLINE_KUNIT_TEST
 	tristate "KUnit test for cmdline API" if !KUNIT_ALL_TESTS
 	depends on KUNIT
@@ -2970,6 +2961,16 @@ config BITS_TEST
 	  to the KUnit documentation in Documentation/dev-tools/kunit/.
 
 	  If unsure, say N.
+
+config SHDI3_KUNIT_TEST
+	tristate "KUnit test for __ashldi3(), __ashrdi3(), and __lshrdi3()"
+	depends on KUNIT
+	depends on ARM || XTENSA || MICROBLAZE || ((RISCV || SPARC) && !64BIT)
+	help
+	  This builds the unit test for __ashldi3(), __ashrdi3(), and
+	  __lshrdi3() helper functions used to implement 64-bit arithmetic
+	  shift left, arithmetic shift right and logical shift right,
+	  respectively, on a 32-bit CPUs.
 
 config SLUB_KUNIT_TEST
 	tristate "KUnit test for SLUB cache error detection" if !KUNIT_ALL_TESTS
@@ -3070,7 +3071,7 @@ config FORTIFY_KUNIT_TEST
 config LONGEST_SYM_KUNIT_TEST
 	tristate "Test the longest symbol possible" if !KUNIT_ALL_TESTS
 	depends on KUNIT && KPROBES
-	depends on !PREFIX_SYMBOLS && !CFI && !GCOV_KERNEL
+	depends on !CALL_PADDING && !CFI && !GCOV_KERNEL
 	default KUNIT_ALL_TESTS
 	help
 	  Tests the longest symbol possible
@@ -3489,6 +3490,23 @@ config GCD_KUNIT_TEST
 
 	  If unsure, say N
 
+config POLYNOMIAL_KUNIT_TEST
+	tristate "Polynomial calculation (polynomial_calc) test" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	select POLYNOMIAL
+	default KUNIT_ALL_TESTS
+	help
+	  This option enables the KUnit test suite for the polynomial_calc()
+	  function, which evaluates integer polynomials using factor
+	  redistribution to avoid overflow.
+
+	  The test suite verifies correctness for constant, linear, and
+	  quadratic polynomials, negative coefficients, per-step dividers,
+	  divider_leftover, total_divider scaling, and a real sensor
+	  N-to-temperature conversion polynomial.
+
+	  If unsure, say N
+
 config PRIME_NUMBERS_KUNIT_TEST
 	tristate "Prime number generator test" if !KUNIT_ALL_TESTS
 	depends on KUNIT
@@ -3513,6 +3531,15 @@ config GLOB_KUNIT_TEST
 
 	  This test suite verifies the correctness of glob_match() across various
 	  scenarios, including edge cases.
+
+	  If unsure, say N
+
+config PRANDOM_KUNIT_TEST
+	tristate "KUnit test for prandom" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Enable this option to test the prandom functions at runtime.
 
 	  If unsure, say N
 

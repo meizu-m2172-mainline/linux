@@ -13,6 +13,9 @@
  * and then read/write in chunks of 8 bytes.  A larger size means multiple
  * reads or writes of the same register.
  *
+ * Writing the same register multiple times can be useful for MSRs with
+ * I/O-like semantics, e.g. a virtual MSR that accepts logging information.
+ *
  * This driver uses /dev/cpu/%d/msr where %d is the minor number, and on
  * an SMP box will direct the access to CPU %d.
  */
@@ -53,7 +56,7 @@ static ssize_t msr_read(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
 {
 	u32 __user *tmp = (u32 __user *) buf;
-	u32 data[2];
+	u64 data;
 	u32 reg = *ppos;
 	int cpu = iminor(file_inode(file));
 	int err = 0;
@@ -63,7 +66,7 @@ static ssize_t msr_read(struct file *file, char __user *buf,
 		return -EINVAL;	/* Invalid chunk size */
 
 	for (; count; count -= 8) {
-		err = rdmsr_safe_on_cpu(cpu, reg, &data[0], &data[1]);
+		err = rdmsrq_safe_on_cpu(cpu, reg, &data);
 		if (err)
 			break;
 		if (copy_to_user(tmp, &data, 8)) {
@@ -109,7 +112,7 @@ static ssize_t msr_write(struct file *file, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
 	const u32 __user *tmp = (const u32 __user *)buf;
-	u32 data[2];
+	u64 data;
 	u32 reg = *ppos;
 	int cpu = iminor(file_inode(file));
 	int err = 0;
@@ -134,7 +137,7 @@ static ssize_t msr_write(struct file *file, const char __user *buf,
 
 		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
 
-		err = wrmsr_safe_on_cpu(cpu, reg, data[0], data[1]);
+		err = wrmsrq_safe_on_cpu(cpu, reg, data);
 		if (err)
 			break;
 

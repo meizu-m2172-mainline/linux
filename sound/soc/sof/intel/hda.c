@@ -421,6 +421,20 @@ static inline void hda_dsp_sdw_process_mic_privacy(struct snd_sof_dev *sdev) { }
 /* pre fw run operations */
 int hda_dsp_pre_fw_run(struct snd_sof_dev *sdev)
 {
+	struct sof_intel_hda_dev *hda = sdev->pdata->hw_pdata;
+	const struct sof_intel_dsp_desc *chip = hda->desc;
+	int ret;
+
+	/* Power down DSP if left enabled to ensure a clean boot state. */
+	if (hda_dsp_core_is_enabled(sdev, chip->host_managed_cores_mask)) {
+		dev_dbg(sdev->dev, "DSP core enabled, power down DSP first\n");
+
+		ret = chip->power_down_dsp(sdev);
+		if (ret < 0)
+			dev_warn(sdev->dev,
+				 "%s: failed to power down already-enabled DSP\n", __func__);
+	}
+
 	/* disable clock gating and power gating */
 	return hda_dsp_ctrl_clock_power_gating(sdev, false);
 }
@@ -625,8 +639,6 @@ static int hda_init_caps(struct snd_sof_dev *sdev)
 		return ret;
 	}
 
-	hda_bus_ml_init(bus);
-
 	/* Skip SoundWire if it is not supported */
 	if (!(interface_mask & BIT(SOF_DAI_INTEL_ALH)))
 		goto skip_soundwire;
@@ -669,8 +681,6 @@ skip_soundwire:
 
 	if (!HDA_IDISP_CODEC(bus->codec_mask))
 		hda_codec_i915_display_power(sdev, false);
-
-	hda_bus_ml_put_all(bus);
 
 	return 0;
 }
@@ -1159,7 +1169,6 @@ static struct snd_soc_acpi_adr_device *find_acpi_adr_device(struct device *dev,
 	struct snd_soc_acpi_adr_device *adr_dev;
 	const char *name_prefix = "";
 	int index = link->num_adr;
-	bool is_amp = true; /* Set it to false if the codec wiah any NON-AMP DAI type */
 	int ep_index = 0;
 	int i, j;
 
@@ -1216,7 +1225,6 @@ static struct snd_soc_acpi_adr_device *find_acpi_adr_device(struct device *dev,
 				endpoints[ep_index].aggregated = 0;
 				endpoints[ep_index].group_id = 0;
 				endpoints[ep_index].group_position = 0;
-				is_amp = false;
 			}
 			ep_index++;
 		}
@@ -1230,16 +1238,6 @@ static struct snd_soc_acpi_adr_device *find_acpi_adr_device(struct device *dev,
 		return NULL;
 	}
 
-	/*
-	 * codec_info_list[].is_amp is a codec-level override: for multi-function
-	 * codecs we must treat the whole codec as an AMP when it is described as
-	 * such in the codec info table, even if some endpoints were detected as
-	 * non-AMP above. Callers/UCM rely on this to keep name_prefix and AMP
-	 * indexing stable and backwards compatible.
-	 */
-	if (codec_info_list[i].is_amp)
-		is_amp = true;
-
 	adr_dev[index].adr = ((u64)sdw_device->id.class_id & 0xFF) |
 			((u64)sdw_device->id.part_id & 0xFFFF) << 8 |
 			((u64)sdw_device->id.mfg_id & 0xFFFF) << 24 |
@@ -1247,7 +1245,7 @@ static struct snd_soc_acpi_adr_device *find_acpi_adr_device(struct device *dev,
 			((u64)(sdw_device->id.sdw_version & 0xF) << 44) |
 			((u64)(sdw_device->bus->link_id & 0xF) << 48);
 
-	if (!is_amp) {
+	if (!codec_info_list[i].is_amp) {
 		/* For non-amp codecs, get name_prefix from codec_info_list[] */
 		adr_dev[index].name_prefix = devm_kasprintf(dev, GFP_KERNEL, "%s", name_prefix);
 		goto done_name_prefix;

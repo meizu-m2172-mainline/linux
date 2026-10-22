@@ -949,6 +949,12 @@ void mpc42_set_fl_config(
 	struct mpc_fl_3dlut_config *cfg,
 	int mpcc_id);
 
+void mpc42_get_rmcm_3dlut_mode(
+	struct mpc *mpc,
+	int mpcc_id,
+	bool *enable,
+	bool *lut_bank_a);
+
 void mpc42_read_mpcc_state(
 		struct mpc *mpc,
 		int mpcc_inst,

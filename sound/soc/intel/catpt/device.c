@@ -25,50 +25,20 @@
 #include "core.h"
 #include "registers.h"
 
-#define CREATE_TRACE_POINTS
-#include "trace.h"
-
 static int catpt_do_suspend(struct device *dev)
 {
 	struct catpt_dev *cdev = dev_get_drvdata(dev);
-	struct dma_chan *chan;
 	int ret;
-
-	chan = catpt_dma_request_config_chan(cdev);
-	if (IS_ERR(chan))
-		return PTR_ERR(chan);
 
 	memset(&cdev->dx_ctx, 0, sizeof(cdev->dx_ctx));
 	ret = catpt_ipc_enter_dxstate(cdev, CATPT_DX_STATE_D3, &cdev->dx_ctx);
-	if (ret) {
-		ret = CATPT_IPC_RET(ret);
-		goto release_dma_chan;
-	}
-
-	ret = catpt_dsp_stall(cdev, true);
 	if (ret)
-		goto release_dma_chan;
+		return CATPT_IPC_RET(ret);
 
-	ret = catpt_store_memdumps(cdev, chan);
-	if (ret) {
-		dev_err(cdev->dev, "store memdumps failed: %d\n", ret);
-		goto release_dma_chan;
-	}
-
-	ret = catpt_store_module_states(cdev, chan);
-	if (ret) {
-		dev_err(cdev->dev, "store module states failed: %d\n", ret);
-		goto release_dma_chan;
-	}
-
-	ret = catpt_store_streams_context(cdev, chan);
-	if (ret)
-		dev_err(cdev->dev, "store streams ctx failed: %d\n", ret);
-
-release_dma_chan:
-	dma_release_channel(chan);
+	ret = catpt_store_firmware_context(cdev);
 	if (ret)
 		return ret;
+
 	return catpt_dsp_power_down(cdev);
 }
 
@@ -157,7 +127,7 @@ static int catpt_register_board(struct catpt_dev *cdev)
 					PLATFORM_DEVID_NONE,
 					(const void *)mach, sizeof(*mach));
 	if (IS_ERR(board)) {
-		dev_err(cdev->dev, "board register failed\n");
+		dev_err(cdev->dev, "register board failed: %ld\n", PTR_ERR(board));
 		return PTR_ERR(board);
 	}
 
@@ -236,12 +206,9 @@ static void catpt_dev_init(struct catpt_dev *cdev, struct device *dev,
 	cdev->devfmt[CATPT_SSP_IFACE_0].iface = UINT_MAX;
 	cdev->devfmt[CATPT_SSP_IFACE_1].iface = UINT_MAX;
 
+	resource_set_range(&cdev->dram, spec->host_dram_offset, catpt_dram_size(cdev));
+	resource_set_range(&cdev->iram, spec->host_iram_offset, catpt_iram_size(cdev));
 	catpt_ipc_init(&cdev->ipc, dev);
-
-	catpt_sram_init(&cdev->dram, spec->host_dram_offset,
-			catpt_dram_size(cdev));
-	catpt_sram_init(&cdev->iram, spec->host_iram_offset,
-			catpt_iram_size(cdev));
 }
 
 static int catpt_acpi_probe(struct platform_device *pdev)
@@ -290,7 +257,7 @@ static int catpt_acpi_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	cdev->dxbuf_vaddr = dmam_alloc_coherent(dev, catpt_dram_size(cdev),
+	cdev->dxbuf_vaddr = dmam_alloc_coherent(dev, resource_size(&cdev->dram),
 						&cdev->dxbuf_paddr, GFP_KERNEL);
 	if (!cdev->dxbuf_vaddr)
 		return -ENOMEM;

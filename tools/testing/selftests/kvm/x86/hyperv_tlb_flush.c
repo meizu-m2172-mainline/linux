@@ -142,17 +142,6 @@ static void swap_two_test_pages(gpa_t pte_gva1, gpa_t pte_gva2)
 }
 
 /*
- * TODO: replace the silly NOP loop with a proper udelay() implementation.
- */
-static inline void do_delay(void)
-{
-	int i;
-
-	for (i = 0; i < 1000000; i++)
-		asm volatile("nop");
-}
-
-/*
  * Prepare to test: 'disable' workers by setting the expectation to '0',
  * clear hypercall input page and then swap two test pages.
  */
@@ -169,7 +158,7 @@ static inline void prepare_to_test(struct test_data *data)
 	wmb();
 
 	/* Make sure workers have enough time to notice */
-	do_delay();
+	udelay(100);
 
 	/* Swap test page mappings */
 	swap_two_test_pages(data->test_pages_pte[0], data->test_pages_pte[1]);
@@ -189,7 +178,7 @@ static inline void post_test(struct test_data *data, u64 exp1, u64 exp2)
 	set_expected_val((void *)data->test_pages, exp2, WORKER_VCPU_ID_2);
 
 	/* Make sure workers have enough time to test */
-	do_delay();
+	udelay(100);
 }
 
 #define TESTVAL1 0x0101010101010101
@@ -559,23 +548,6 @@ static void *vcpu_thread(void *arg)
 	return NULL;
 }
 
-static void cancel_join_vcpu_thread(pthread_t thread, struct kvm_vcpu *vcpu)
-{
-	void *retval;
-	int r;
-
-	r = pthread_cancel(thread);
-	TEST_ASSERT(!r, "pthread_cancel on vcpu_id=%d failed with errno=%d",
-		    vcpu->id, r);
-
-	r = pthread_join(thread, &retval);
-	TEST_ASSERT(!r, "pthread_join on vcpu_id=%d failed with errno=%d",
-		    vcpu->id, r);
-	TEST_ASSERT(retval == PTHREAD_CANCELED,
-		    "expected retval=%p, got %p", PTHREAD_CANCELED,
-		    retval);
-}
-
 int main(int argc, char *argv[])
 {
 	struct kvm_vm *vm;
@@ -586,7 +558,7 @@ int main(int argc, char *argv[])
 	u64 *pte;
 	struct test_data *data;
 	struct ucall uc;
-	int stage = 1, r, i;
+	int stage = 1, i;
 
 	TEST_REQUIRE(kvm_has_cap(KVM_CAP_HYPERV_TLBFLUSH));
 
@@ -643,11 +615,8 @@ int main(int argc, char *argv[])
 	vcpu_set_msr(vcpu[2], HV_X64_MSR_VP_INDEX, WORKER_VCPU_ID_2);
 	vcpu_set_hv_cpuid(vcpu[2]);
 
-	r = pthread_create(&threads[0], NULL, vcpu_thread, vcpu[1]);
-	TEST_ASSERT(!r, "pthread_create() failed");
-
-	r = pthread_create(&threads[1], NULL, vcpu_thread, vcpu[2]);
-	TEST_ASSERT(!r, "pthread_create() failed");
+	kvm_pthread_create(&threads[0], NULL, vcpu_thread, vcpu[1]);
+	kvm_pthread_create(&threads[1], NULL, vcpu_thread, vcpu[2]);
 
 	while (true) {
 		vcpu_run(vcpu[0]);
@@ -672,8 +641,8 @@ int main(int argc, char *argv[])
 	}
 
 done:
-	cancel_join_vcpu_thread(threads[0], vcpu[1]);
-	cancel_join_vcpu_thread(threads[1], vcpu[2]);
+	kvm_pthread_cancel_join_async(threads[0]);
+	kvm_pthread_cancel_join_async(threads[1]);
 	kvm_vm_free(vm);
 
 	return 0;

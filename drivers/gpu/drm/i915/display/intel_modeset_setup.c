@@ -44,7 +44,7 @@ static void intel_crtc_disable_noatomic_begin(struct intel_crtc *crtc,
 	struct intel_crtc_state *crtc_state =
 		to_intel_crtc_state(crtc->base.state);
 	struct intel_plane *plane;
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct intel_crtc *temp_crtc;
 	enum pipe pipe = crtc->pipe;
 
@@ -59,7 +59,7 @@ static void intel_crtc_disable_noatomic_begin(struct intel_crtc *crtc,
 			intel_plane_disable_noatomic(crtc, plane);
 	}
 
-	state = drm_atomic_state_alloc(display->drm);
+	state = drm_atomic_commit_alloc(display->drm);
 	if (!state) {
 		drm_dbg_kms(display->drm,
 			    "failed to disable [CRTC:%d:%s], out of memory",
@@ -71,7 +71,7 @@ static void intel_crtc_disable_noatomic_begin(struct intel_crtc *crtc,
 	to_intel_atomic_state(state)->internal = true;
 
 	/* Everything's already locked, -EDEADLK can't happen. */
-	for_each_intel_crtc_in_pipe_mask(display->drm, temp_crtc,
+	for_each_intel_crtc_in_pipe_mask(display, temp_crtc,
 					 BIT(pipe) |
 					 intel_crtc_joiner_secondary_pipes(crtc_state)) {
 		struct intel_crtc_state *temp_crtc_state =
@@ -83,9 +83,9 @@ static void intel_crtc_disable_noatomic_begin(struct intel_crtc *crtc,
 		drm_WARN_ON(display->drm, IS_ERR(temp_crtc_state) || ret);
 	}
 
-	display->funcs.display->crtc_disable(to_intel_atomic_state(state), crtc);
+	display->modeset.funcs->crtc_disable(to_intel_atomic_state(state), crtc);
 
-	drm_atomic_state_put(state);
+	drm_atomic_commit_put(state);
 
 	drm_dbg_kms(display->drm,
 		    "[CRTC:%d:%s] hw state adjusted, was enabled, now disabled\n",
@@ -186,13 +186,13 @@ static void intel_crtc_disable_noatomic_complete(struct intel_crtc *crtc)
  * Return all the pipes using a transcoder in @transcoder_mask.
  * For joiner configs return only the joiner primary.
  */
-static u8 get_transcoder_pipes(struct intel_display *display,
-			       u8 transcoder_mask)
+static u16 get_transcoder_pipes(struct intel_display *display,
+				u16 transcoder_mask)
 {
 	struct intel_crtc *temp_crtc;
-	u8 pipes = 0;
+	u16 pipes = 0;
 
-	for_each_intel_crtc(display->drm, temp_crtc) {
+	for_each_intel_crtc(display, temp_crtc) {
 		struct intel_crtc_state *temp_crtc_state =
 			to_intel_crtc_state(temp_crtc->base.state);
 
@@ -214,7 +214,7 @@ static u8 get_transcoder_pipes(struct intel_display *display,
  * For joiner configs return only the joiner primary pipes.
  */
 static void get_portsync_pipes(struct intel_crtc *crtc,
-			       u8 *master_pipe_mask, u8 *slave_pipes_mask)
+			       u16 *master_pipe_mask, u16 *slave_pipes_mask)
 {
 	struct intel_display *display = to_intel_display(crtc);
 	struct intel_crtc_state *crtc_state =
@@ -243,12 +243,12 @@ static void get_portsync_pipes(struct intel_crtc *crtc,
 	*slave_pipes_mask = get_transcoder_pipes(display, master_crtc_state->sync_mode_slaves_mask);
 }
 
-static u8 get_joiner_secondary_pipes(struct intel_display *display, u8 primary_pipes_mask)
+static u16 get_joiner_secondary_pipes(struct intel_display *display, u16 primary_pipes_mask)
 {
 	struct intel_crtc *primary_crtc;
-	u8 pipes = 0;
+	u16 pipes = 0;
 
-	for_each_intel_crtc_in_pipe_mask(display->drm, primary_crtc, primary_pipes_mask) {
+	for_each_intel_crtc_in_pipe_mask(display, primary_crtc, primary_pipes_mask) {
 		struct intel_crtc_state *primary_crtc_state =
 			to_intel_crtc_state(primary_crtc->base.state);
 
@@ -263,9 +263,9 @@ static void intel_crtc_disable_noatomic(struct intel_crtc *crtc,
 {
 	struct intel_display *display = to_intel_display(crtc);
 	struct intel_crtc *temp_crtc;
-	u8 portsync_master_mask;
-	u8 portsync_slaves_mask;
-	u8 joiner_secondaries_mask;
+	u16 portsync_master_mask;
+	u16 portsync_slaves_mask;
+	u16 joiner_secondaries_mask;
 
 	/* TODO: Add support for MST */
 	get_portsync_pipes(crtc, &portsync_master_mask, &portsync_slaves_mask);
@@ -278,16 +278,16 @@ static void intel_crtc_disable_noatomic(struct intel_crtc *crtc,
 		    portsync_master_mask & joiner_secondaries_mask ||
 		    portsync_slaves_mask & joiner_secondaries_mask);
 
-	for_each_intel_crtc_in_pipe_mask(display->drm, temp_crtc, joiner_secondaries_mask)
+	for_each_intel_crtc_in_pipe_mask(display, temp_crtc, joiner_secondaries_mask)
 		intel_crtc_disable_noatomic_begin(temp_crtc, ctx);
 
-	for_each_intel_crtc_in_pipe_mask(display->drm, temp_crtc, portsync_slaves_mask)
+	for_each_intel_crtc_in_pipe_mask(display, temp_crtc, portsync_slaves_mask)
 		intel_crtc_disable_noatomic_begin(temp_crtc, ctx);
 
-	for_each_intel_crtc_in_pipe_mask(display->drm, temp_crtc, portsync_master_mask)
+	for_each_intel_crtc_in_pipe_mask(display, temp_crtc, portsync_master_mask)
 		intel_crtc_disable_noatomic_begin(temp_crtc, ctx);
 
-	for_each_intel_crtc_in_pipe_mask(display->drm, temp_crtc,
+	for_each_intel_crtc_in_pipe_mask(display, temp_crtc,
 					 joiner_secondaries_mask |
 					 portsync_slaves_mask |
 					 portsync_master_mask)
@@ -333,6 +333,9 @@ static void intel_crtc_copy_hw_to_uapi_state(struct intel_crtc_state *crtc_state
 
 	crtc_state->uapi.adjusted_mode = crtc_state->hw.adjusted_mode;
 	crtc_state->uapi.scaling_filter = crtc_state->hw.scaling_filter;
+	crtc_state->uapi.sharpness_strength = crtc_state->hw.sharpness_strength;
+	crtc_state->uapi.background_color =
+		intel_color_background_color_hw_to_drm(crtc_state->hw.background_color);
 
 	if (DISPLAY_INFO(display)->color.degamma_lut_size) {
 		/* assume 1:1 mapping */
@@ -375,7 +378,7 @@ intel_sanitize_plane_mapping(struct intel_display *display)
 	if (DISPLAY_VER(display) >= 4)
 		return;
 
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_plane *plane =
 			to_intel_plane(crtc->base.primary);
 		struct intel_crtc *plane_crtc;
@@ -531,7 +534,7 @@ static void intel_sanitize_all_crtcs(struct intel_display *display,
 	for (;;) {
 		u32 old_mask = crtcs_forced_off;
 
-		for_each_intel_crtc(display->drm, crtc) {
+		for_each_intel_crtc(display, crtc) {
 			u32 crtc_mask = drm_crtc_mask(&crtc->base);
 
 			if (crtcs_forced_off & crtc_mask)
@@ -544,7 +547,7 @@ static void intel_sanitize_all_crtcs(struct intel_display *display,
 			break;
 	}
 
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_crtc_state *crtc_state =
 			to_intel_crtc_state(crtc->base.state);
 
@@ -680,7 +683,7 @@ static void readout_plane_state(struct intel_display *display)
 			    str_enabled_disabled(visible), pipe_name(pipe));
 	}
 
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_crtc_state *crtc_state =
 			to_intel_crtc_state(crtc->base.state);
 
@@ -698,7 +701,7 @@ static void intel_modeset_readout_hw_state(struct intel_display *display)
 	struct intel_connector *connector;
 	struct drm_connector_list_iter conn_iter;
 
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_crtc_state *crtc_state =
 			to_intel_crtc_state(crtc->base.state);
 
@@ -740,7 +743,7 @@ static void intel_modeset_readout_hw_state(struct intel_display *display)
 				/* encoder should read be linked to joiner primary */
 				WARN_ON(intel_crtc_is_joiner_secondary(crtc_state));
 
-				for_each_intel_crtc_in_pipe_mask(display->drm, secondary_crtc,
+				for_each_intel_crtc_in_pipe_mask(display, secondary_crtc,
 								 intel_crtc_joiner_secondary_pipes(crtc_state)) {
 					struct intel_crtc_state *secondary_crtc_state;
 
@@ -813,7 +816,7 @@ static void intel_modeset_readout_hw_state(struct intel_display *display)
 	}
 	drm_connector_list_iter_end(&conn_iter);
 
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_crtc_state *crtc_state =
 			to_intel_crtc_state(crtc->base.state);
 		struct intel_plane *plane;
@@ -851,14 +854,10 @@ static void intel_modeset_readout_hw_state(struct intel_display *display)
 			 * FIXME don't have the fb yet, so can't
 			 * use plane->min_cdclk() :(
 			 */
-			if (plane_state->uapi.visible && plane->min_cdclk) {
-				if (crtc_state->double_wide || DISPLAY_VER(display) >= 10)
-					crtc_state->plane_min_cdclk[plane->id] =
-						DIV_ROUND_UP(crtc_state->pixel_rate, 2);
-				else
-					crtc_state->plane_min_cdclk[plane->id] =
-						crtc_state->pixel_rate;
-			}
+			if (plane_state->uapi.visible && plane->min_cdclk)
+				crtc_state->plane_min_cdclk[plane->id] =
+					DIV_ROUND_UP(crtc_state->pixel_rate_cdclk,
+						     intel_cdclk_ppc(display, crtc_state->double_wide));
 			drm_dbg_kms(display->drm,
 				    "[PLANE:%d:%s] min_cdclk %d kHz\n",
 				    plane->base.base.id, plane->base.name,
@@ -960,7 +959,7 @@ void intel_modeset_setup_hw_state(struct intel_display *display,
 	 * intel_sanitize_plane_mapping() may need to do vblank
 	 * waits, so we need vblank interrupts restored beforehand.
 	 */
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_crtc_state *crtc_state =
 			to_intel_crtc_state(crtc->base.state);
 
@@ -996,7 +995,7 @@ void intel_modeset_setup_hw_state(struct intel_display *display,
 		intel_wm_get_hw_state(display);
 	intel_wm_sanitize(display);
 
-	for_each_intel_crtc(display->drm, crtc) {
+	for_each_intel_crtc(display, crtc) {
 		struct intel_crtc_state *crtc_state =
 			to_intel_crtc_state(crtc->base.state);
 		struct intel_power_domain_mask put_domains;
@@ -1008,5 +1007,5 @@ void intel_modeset_setup_hw_state(struct intel_display *display,
 
 	intel_display_power_put(display, POWER_DOMAIN_INIT, wakeref);
 
-	intel_power_domains_sanitize_state(display);
+	intel_display_power_sanitize_state(display);
 }

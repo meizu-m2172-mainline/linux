@@ -136,6 +136,7 @@ struct panfrost_device {
 	void __iomem *iomem;
 	struct clk *clock;
 	struct clk *bus_clock;
+	struct clk *bus_ace_clock;
 	struct regulator_bulk_data *regulators;
 	struct reset_control *rstc;
 	/* pm_domains for devices with more than one. */
@@ -155,7 +156,6 @@ struct panfrost_device {
 	struct panfrost_job_slot *js;
 
 	struct panfrost_job *jobs[NUM_JOB_SLOTS][2];
-	struct list_head scheduled_jobs;
 
 	struct panfrost_perfcnt *perfcnt;
 	bool profile_mode;

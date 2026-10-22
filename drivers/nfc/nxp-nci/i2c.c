@@ -231,6 +231,14 @@ static irqreturn_t nxp_nci_i2c_irq_thread_fn(int irq, void *phy_id)
 		if (info->mode == NXP_NCI_MODE_FW)
 			nxp_nci_fw_recv_frame(phy->ndev, NULL);
 	}
+	if (r == -ENXIO) {
+		/*
+		 * -ENXIO may occur if the controller has not yet
+		 * provided data after asserting IRQ.
+		 */
+		dev_dbg(&client->dev, "No data available yet\n");
+		goto exit_irq_handled;
+	}
 	if (r < 0) {
 		nfc_err(&client->dev, "Read failed with error %d\n", r);
 		goto exit_irq_handled;
@@ -326,8 +334,10 @@ static int nxp_nci_i2c_probe(struct i2c_client *client)
 				 nxp_nci_i2c_irq_thread_fn,
 				 irqflags | IRQF_ONESHOT,
 				 NXP_NCI_I2C_DRIVER_NAME, phy);
-	if (r < 0)
+	if (r < 0) {
 		nfc_err(&client->dev, "Unable to register IRQ handler\n");
+		nxp_nci_remove(phy->ndev);
+	}
 
 	return r;
 }
@@ -341,22 +351,22 @@ static void nxp_nci_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id nxp_nci_i2c_id_table[] = {
-	{ "nxp-nci_i2c" },
-	{}
+	{ .name = "nxp-nci_i2c" },
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, nxp_nci_i2c_id_table);
 
 static const struct of_device_id of_nxp_nci_i2c_match[] = {
-	{ .compatible = "nxp,nxp-nci-i2c", },
-	{}
+	{ .compatible = "nxp,nxp-nci-i2c" },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, of_nxp_nci_i2c_match);
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id acpi_id[] = {
-	{ "NXP1001" },
-	{ "NXP1002" },
-	{ "NXP7471" },
+	{ .id = "NXP1001" },
+	{ .id = "NXP1002" },
+	{ .id = "NXP7471" },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, acpi_id);

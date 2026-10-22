@@ -640,10 +640,6 @@ static int gmc_v10_0_late_init(struct amdgpu_ip_block *ip_block)
 	if (r)
 		return r;
 
-	r = amdgpu_gmc_ras_late_init(adev);
-	if (r)
-		return r;
-
 	return amdgpu_irq_get(adev, &adev->gmc.vm_fault, 0);
 }
 
@@ -707,20 +703,16 @@ static int gmc_v10_0_mc_init(struct amdgpu_device *adev)
 	adev->gmc.visible_vram_size = adev->gmc.aper_size;
 
 	/* set the gart size */
-	if (amdgpu_gart_size == -1) {
-		switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
-		default:
-			adev->gmc.gart_size = 512ULL << 20;
-			break;
-		case IP_VERSION(10, 3, 1):   /* DCE SG support */
-		case IP_VERSION(10, 3, 3):   /* DCE SG support */
-		case IP_VERSION(10, 3, 6):   /* DCE SG support */
-		case IP_VERSION(10, 3, 7):   /* DCE SG support */
-			adev->gmc.gart_size = 1024ULL << 20;
-			break;
-		}
-	} else {
-		adev->gmc.gart_size = (u64)amdgpu_gart_size << 20;
+	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	case IP_VERSION(10, 3, 1):   /* DCE SG support */
+	case IP_VERSION(10, 3, 3):   /* DCE SG support */
+	case IP_VERSION(10, 3, 6):   /* DCE SG support */
+	case IP_VERSION(10, 3, 7):   /* DCE SG support */
+		amdgpu_gmc_set_gart_size(adev, SZ_1G);
+		break;
+	default:
+		amdgpu_gmc_set_gart_size(adev, SZ_512M);
+		break;
 	}
 
 	gmc_v10_0_vram_gtt_location(adev, &adev->gmc);

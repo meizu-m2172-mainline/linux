@@ -1167,6 +1167,8 @@ struct mpc_funcs {
 		void (*power_on_shaper_3dlut)(struct mpc *mpc, uint32_t mpcc_id, bool power_on);
 		void (*populate_lut)(struct mpc *mpc, const union mcm_lut_params params,
 			bool lut_bank_a, int mpcc_id);
+		void (*get_3dlut_mode)(struct mpc *mpc, int mpcc_id,
+			bool *enable, bool *lut_bank_a);
 	} rmcm;
 };
 

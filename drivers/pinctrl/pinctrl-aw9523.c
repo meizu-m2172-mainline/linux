@@ -817,7 +817,7 @@ static int aw9523_init_irq(struct aw9523 *awi, int irq)
 	ret = devm_request_threaded_irq(dev, irq, NULL, aw9523_irq_thread_func,
 					IRQF_ONESHOT, dev_name(dev), awi);
 	if (ret)
-		return dev_err_probe(dev, ret, "Failed to request irq %d\n", irq);
+		return ret;
 
 	girq = &awi->gpio.irq;
 	gpio_irq_chip_set_chip(girq, &aw9523_irq_chip);
@@ -1033,7 +1033,7 @@ static void aw9523_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id aw9523_i2c_id_table[] = {
-	{ "aw9523_i2c" },
+	{ .name = "aw9523_i2c" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, aw9523_i2c_id_table);

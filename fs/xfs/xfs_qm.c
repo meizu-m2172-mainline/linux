@@ -128,7 +128,7 @@ xfs_qm_dqpurge(
 	struct xfs_quotainfo	*qi = dqp->q_mount->m_quotainfo;
 
 	spin_lock(&dqp->q_lockref.lock);
-	if (dqp->q_lockref.count > 0 || __lockref_is_dead(&dqp->q_lockref)) {
+	if (dqp->q_lockref.count > 0 || lockref_is_dead(&dqp->q_lockref)) {
 		spin_unlock(&dqp->q_lockref.lock);
 		return -EAGAIN;
 	}
@@ -166,10 +166,9 @@ xfs_qm_dqpurge(
 		 * does it on success.
 		 */
 		error = xfs_qm_dqflush(dqp, bp);
-		if (!error) {
+		if (!error)
 			error = xfs_bwrite(bp);
-			xfs_buf_relse(bp);
-		}
+		xfs_buf_relse(bp);
 		xfs_dqflock(dqp);
 	}
 	xfs_dquot_detach_buf(dqp);
@@ -297,7 +296,7 @@ xfs_qm_need_dqattach(
 		return false;
 	if (!XFS_NOT_DQATTACHED(mp, ip))
 		return false;
-	if (xfs_is_quota_inode(&mp->m_sb, ip->i_ino))
+	if (xfs_is_quota_inode(&mp->m_sb, I_INO(ip)))
 		return false;
 	if (xfs_is_metadir_inode(ip))
 		return false;
@@ -390,7 +389,7 @@ xfs_qm_dqdetach(
 
 	trace_xfs_dquot_dqdetach(ip);
 
-	ASSERT(!xfs_is_quota_inode(&ip->i_mount->m_sb, ip->i_ino));
+	ASSERT(!xfs_is_quota_inode(&ip->i_mount->m_sb, I_INO(ip)));
 	if (ip->i_udquot) {
 		xfs_qm_dqrele(ip->i_udquot);
 		ip->i_udquot = NULL;
@@ -430,7 +429,7 @@ xfs_qm_dquot_isolate(
 	 * from the LRU, leave it for the freeing task to complete the freeing
 	 * process rather than risk it being free from under us here.
 	 */
-	if (__lockref_is_dead(&dqp->q_lockref))
+	if (lockref_is_dead(&dqp->q_lockref))
 		goto out_miss_unlock;
 
 	/*
@@ -986,11 +985,11 @@ xfs_qm_qino_alloc(
 		mp->m_sb.sb_qflags = mp->m_qflags & XFS_ALL_QUOTA_ACCT;
 	}
 	if (flags & XFS_QMOPT_UQUOTA)
-		mp->m_sb.sb_uquotino = (*ipp)->i_ino;
+		mp->m_sb.sb_uquotino = I_INO(*ipp);
 	else if (flags & XFS_QMOPT_GQUOTA)
-		mp->m_sb.sb_gquotino = (*ipp)->i_ino;
+		mp->m_sb.sb_gquotino = I_INO(*ipp);
 	else
-		mp->m_sb.sb_pquotino = (*ipp)->i_ino;
+		mp->m_sb.sb_pquotino = I_INO(*ipp);
 	spin_unlock(&mp->m_sb_lock);
 	xfs_log_sb(tp);
 
@@ -1433,16 +1432,22 @@ xfs_qm_flush_one(
 
 	error = xfs_dquot_use_attached_buf(dqp, &bp);
 	if (error)
-		goto out_unlock;
+		goto out_dqflock;
 	if (!bp) {
 		error = -EFSCORRUPTED;
-		goto out_unlock;
+		goto out_dqflock;
 	}
 
 	error = xfs_qm_dqflush(dqp, bp);
 	if (!error)
 		xfs_buf_delwri_queue(bp, buffer_list);
 	xfs_buf_relse(bp);
+	mutex_unlock(&dqp->q_qlock);
+	xfs_qm_dqrele(dqp);
+	return error;
+
+out_dqflock:
+	xfs_dqfunlock(dqp);
 out_unlock:
 	mutex_unlock(&dqp->q_qlock);
 	xfs_qm_dqrele(dqp);

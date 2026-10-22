@@ -397,11 +397,13 @@ struct property_entry {
 	union {
 		const void *pointer;
 		union {
+			/* private: internal representation of @value */
 			u8 u8_data[sizeof(u64) / sizeof(u8)];
 			u16 u16_data[sizeof(u64) / sizeof(u16)];
 			u32 u32_data[sizeof(u64) / sizeof(u32)];
 			u64 u64_data[sizeof(u64) / sizeof(u64)];
 			const char *str[sizeof(u64) / sizeof(char *)];
+			/* public: */
 		} value;
 	};
 };
@@ -471,12 +473,18 @@ struct property_entry {
 #define PROPERTY_ENTRY_STRING(_name_, _val_)				\
 	__PROPERTY_ENTRY_ELEMENT(_name_, str, STRING, _val_)
 
+#define __PROPERTY_ENTRY_REF_ARGS(_ref_, ...)				\
+	_Generic(_ref_,							\
+		 const struct software_node_ref_args *: _ref_,		\
+		 struct software_node_ref_args *: _ref_,		\
+		 default: &SOFTWARE_NODE_REFERENCE(_ref_, ##__VA_ARGS__))
+
 #define PROPERTY_ENTRY_REF(_name_, _ref_, ...)				\
 (struct property_entry) {						\
 	.name = _name_,							\
 	.length = sizeof(struct software_node_ref_args),		\
 	.type = DEV_PROP_REF,						\
-	{ .pointer = &SOFTWARE_NODE_REFERENCE(_ref_, ##__VA_ARGS__), },	\
+	{ .pointer = __PROPERTY_ENTRY_REF_ARGS(_ref_, ##__VA_ARGS__) },	\
 }
 
 #define PROPERTY_ENTRY_BOOL(_name_)		\

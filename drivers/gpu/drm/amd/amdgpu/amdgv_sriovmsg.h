@@ -162,7 +162,9 @@ union amd_sriov_msg_feature_flags {
 		uint32_t ras_cper		: 1;
 		uint32_t xgmi_ta_ext_peer_link	: 1;
 		uint32_t xgmi_connected_to_cpu  : 1;
-		uint32_t reserved		: 18;
+		uint32_t ptl_support		: 1;
+		uint32_t unitid_support		: 1;
+		uint32_t reserved		: 16;
 	} flags;
 	uint32_t all;
 };
@@ -256,7 +258,7 @@ struct amd_sriov_msg_pf2vf_info_header {
 	uint32_t reserved[2];
 };
 
-#define AMD_SRIOV_MSG_PF2VF_INFO_FILLED_SIZE (55)
+#define AMD_SRIOV_MSG_PF2VF_INFO_FILLED_SIZE (59)
 struct amd_sriov_msg_pf2vf_info {
 	/* header contains size and version */
 	struct amd_sriov_msg_pf2vf_info_header header;
@@ -293,7 +295,7 @@ struct amd_sriov_msg_pf2vf_info {
 	uint32_t vf2pf_update_interval_ms;
 	/* identification in ROCm SMI */
 	uint64_t uuid;
-	uint32_t fcn_idx;
+	uint32_t pad;
 	/* flags to indicate which register access method VF should use */
 	union amd_sriov_reg_access_flags reg_access_flags;
 	/* MM BW management */
@@ -314,6 +316,13 @@ struct amd_sriov_msg_pf2vf_info {
 	uint32_t more_bp;	//Reserved for future use.
 	union amd_sriov_ras_caps ras_en_caps;
 	union amd_sriov_ras_caps ras_telemetry_en_caps;
+	/* PTL status response for guest */
+	uint32_t ptl_enabled;        // PTL enable status: 0=disabled, 1=enabled
+	uint32_t ptl_pref_format1;   // Current preferred format 1
+	uint32_t ptl_pref_format2;   // Current preferred format 2
+	/* unit ID assigned by host; vf_idx [0..254] maps to unitid [1..255] (0 = pf) */
+	uint8_t unitid;
+	uint8_t padding[3];  //use the 3 bytes to align
 
 	/* reserved */
 	uint32_t reserved[256 - AMD_SRIOV_MSG_PF2VF_INFO_FILLED_SIZE];
@@ -370,7 +379,7 @@ struct amd_sriov_msg_vf2pf_info {
 	struct {
 		uint8_t id;
 		uint32_t version;
-	} ucode_info[AMD_SRIOV_MSG_RESERVE_UCODE];
+	} __packed ucode_info[AMD_SRIOV_MSG_RESERVE_UCODE];
 	uint64_t dummy_page_addr;
 	/* FB allocated for guest MES to record UQ info */
 	uint64_t mes_info_addr;
@@ -395,6 +404,9 @@ enum amd_sriov_mailbox_request_message {
 	MB_REQ_RAS_ERROR_COUNT = 203,
 	MB_REQ_RAS_CPER_DUMP = 204,
 	MB_REQ_RAS_BAD_PAGES = 205,
+	MB_REQ_RAS_CHK_CRITI = 206,
+	MB_REQ_RAS_REMOTE_CMD = 207,
+	MB_REQ_MSG_PTL_UPDATE = 208,
 };
 
 /* mailbox message send from host to guest  */
@@ -415,8 +427,32 @@ enum amd_sriov_mailbox_response_message {
 	MB_RES_MSG_RAS_BAD_PAGES_READY		= 15,
 	MB_RES_MSG_RAS_BAD_PAGES_NOTIFICATION	= 16,
 	MB_RES_MSG_UNRECOV_ERR_NOTIFICATION	= 17,
+	MB_RES_RAS_CHK_CRITI_READY		= 18,
+	MB_RES_RAS_REMOTE_CMD_READY		= 19,
+	MB_RES_MSG_PTL_UPDATE_READY		= 20,
 	MB_RES_MSG_TEXT_MESSAGE			= 255
 };
+
+/*
+ * Generic response status codes for mailbox data fields.
+ * Used in msg_data[1..N] to indicate operation result.
+ */
+enum amd_sriov_response_status {
+	AMD_SRIOV_RESP_SUCCESS		= 0,
+	AMD_SRIOV_RESP_FAIL		= 1,
+	AMD_SRIOV_RESP_UNSUPPORTED	= 2,
+};
+
+/*
+ * PTL mailbox data format:
+ * Request:  msg_data[1]=req_code, msg_data[2]=ptl_state, msg_data[3]=(fmt1<<16)|fmt2
+ * Response: msg_data[1]=(status<<16)|ptl_state, msg_data[2]=(fmt1<<16)|fmt2
+ */
+#define AMD_SRIOV_PTL_PACK_FORMATS(fmt1, fmt2)          ((((fmt1) & 0xFFFF) << 16) | ((fmt2) & 0xFFFF))
+#define AMD_SRIOV_PTL_UNPACK_STATUS(dw)                 (((dw) >> 16) & 0xFFFF)
+#define AMD_SRIOV_PTL_UNPACK_STATE(dw)                  ((dw) & 0xFFFF)
+#define AMD_SRIOV_PTL_UNPACK_FMT1(dw)                   (((dw) >> 16) & 0xFFFF)
+#define AMD_SRIOV_PTL_UNPACK_FMT2(dw)                   ((dw) & 0xFFFF)
 
 enum amd_sriov_ras_telemetry_gpu_block {
 	RAS_TELEMETRY_GPU_BLOCK_UMC		= 0,

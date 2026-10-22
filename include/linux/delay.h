@@ -17,6 +17,8 @@ extern unsigned long loops_per_jiffy;
 
 #include <asm/delay.h>
 
+bool delay_read_timer(unsigned long *t);
+
 /*
  * Using udelay() for intervals greater than a few milliseconds can
  * risk overflow for high loops_per_jiffy (high bogomips) machines. The
@@ -110,7 +112,7 @@ static const unsigned int max_slack_shift = 2;
  * fsleep - flexible sleep which autoselects the best mechanism
  * @usecs:	requested sleep duration in microseconds
  *
- * flseep() selects the best mechanism that will provide maximum 25% slack
+ * fsleep() selects the best mechanism that will provide maximum 25% slack
  * to the requested sleep duration. Therefore it uses:
  *
  * * udelay() loop for sleep durations <= 10 microseconds to avoid hrtimer

@@ -66,6 +66,22 @@ static bool dpll_pin_available(struct dpll_pin *pin)
 	return false;
 }
 
+static bool dpll_device_registered(struct dpll_device *dpll)
+{
+	return dpll_device_ops(dpll);
+}
+
+static struct dpll_pin_ref *dpll_pin_first_registered_ref(struct dpll_pin *pin)
+{
+	struct dpll_pin_ref *ref;
+	unsigned long i;
+
+	xa_for_each(&pin->dpll_refs, i, ref)
+		if (dpll_device_registered(ref->dpll))
+			return ref;
+	return NULL;
+}
+
 /**
  * dpll_msg_add_pin_handle - attach pin handle attribute to a given message
  * @msg: pointer to sk_buff message to attach a pin handle
@@ -87,17 +103,6 @@ static int dpll_msg_add_pin_handle(struct sk_buff *msg, struct dpll_pin *pin)
 static struct dpll_pin *dpll_netdev_pin(const struct net_device *dev)
 {
 	return rcu_dereference_rtnl(dev->dpll_pin);
-}
-
-/**
- * dpll_netdev_pin_handle_size - get size of pin handle attribute of a netdev
- * @dev: netdev from which to get the pin
- *
- * Return: byte size of pin handle attribute, or 0 if @dev has no pin.
- */
-size_t dpll_netdev_pin_handle_size(const struct net_device *dev)
-{
-	return dpll_netdev_pin(dev) ? nla_total_size(4) : 0; /* DPLL_A_PIN_ID */
 }
 
 int dpll_netdev_add_pin_handle(struct sk_buff *msg,
@@ -325,6 +330,30 @@ dpll_msg_add_pin_on_dpll_state(struct sk_buff *msg, struct dpll_pin *pin,
 }
 
 static int
+dpll_msg_add_pin_operstate(struct sk_buff *msg, struct dpll_pin *pin,
+			   struct dpll_pin_ref *ref,
+			   struct netlink_ext_ack *extack)
+{
+	const struct dpll_pin_ops *ops = dpll_pin_ops(ref);
+	struct dpll_device *dpll = ref->dpll;
+	enum dpll_pin_operstate operstate;
+	int ret;
+
+	if (!ops->operstate_on_dpll_get)
+		return 0;
+	ret = ops->operstate_on_dpll_get(pin,
+					  dpll_pin_on_dpll_priv(dpll, pin),
+					  dpll, dpll_priv(dpll),
+					  &operstate, extack);
+	if (ret)
+		return ret;
+	if (nla_put_u32(msg, DPLL_A_PIN_OPERSTATE, operstate))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+static int
 dpll_msg_add_pin_direction(struct sk_buff *msg, struct dpll_pin *pin,
 			   struct dpll_pin_ref *ref,
 			   struct netlink_ext_ack *extack)
@@ -393,31 +422,28 @@ dpll_msg_add_phase_offset(struct sk_buff *msg, struct dpll_pin *pin,
 
 static int dpll_msg_add_ffo(struct sk_buff *msg, struct dpll_pin *pin,
 			    struct dpll_pin_ref *ref,
+			    enum dpll_ffo_type type,
 			    struct netlink_ext_ack *extack)
 {
 	const struct dpll_pin_ops *ops = dpll_pin_ops(ref);
-	struct dpll_device *dpll = ref->dpll;
-	s64 ffo;
+	struct dpll_ffo_param ffo = { .type = type };
 	int ret;
 
-	if (!ops->ffo_get)
+	if (!ops->ffo_get || !(ops->supported_ffo & BIT(type)))
 		return 0;
-	ret = ops->ffo_get(pin, dpll_pin_on_dpll_priv(dpll, pin),
-			   dpll, dpll_priv(dpll), &ffo, extack);
+	ret = ops->ffo_get(pin, dpll_pin_on_dpll_priv(ref->dpll, pin),
+			   ref->dpll, dpll_priv(ref->dpll), &ffo, extack);
 	if (ret) {
 		if (ret == -ENODATA)
 			return 0;
 		return ret;
 	}
-	/* Put the FFO value in PPM to preserve compatibility with older
-	 * programs.
-	 */
-	ret = nla_put_sint(msg, DPLL_A_PIN_FRACTIONAL_FREQUENCY_OFFSET,
-			   div_s64(ffo, 1000000));
-	if (ret)
+	if (nla_put_sint(msg, DPLL_A_PIN_FRACTIONAL_FREQUENCY_OFFSET,
+			 div_s64(ffo.ffo, 1000000)))
 		return -EMSGSIZE;
-	return nla_put_sint(msg, DPLL_A_PIN_FRACTIONAL_FREQUENCY_OFFSET_PPT,
-			    ffo);
+	return nla_put_sint(msg,
+			    DPLL_A_PIN_FRACTIONAL_FREQUENCY_OFFSET_PPT,
+			    ffo.ffo);
 }
 
 static int dpll_msg_add_measured_freq(struct sk_buff *msg, struct dpll_pin *pin,
@@ -557,6 +583,9 @@ dpll_msg_add_pin_ref_sync(struct sk_buff *msg, struct dpll_pin *pin,
 		if (!dpll_pin_available(ref_sync_pin))
 			continue;
 		ref_sync_pin_priv = dpll_pin_on_dpll_priv(dpll, ref_sync_pin);
+		/* Pin may have been unregistered from this dpll already */
+		if (!ref_sync_pin_priv)
+			continue;
 		if (WARN_ON(!ops->ref_sync_get))
 			return -EOPNOTSUPP;
 		ret = ops->ref_sync_get(pin, pin_priv, ref_sync_pin,
@@ -643,6 +672,8 @@ dpll_msg_add_pin_dplls(struct sk_buff *msg, struct dpll_pin *pin,
 	int ret;
 
 	xa_for_each(&pin->dpll_refs, index, ref) {
+		if (!dpll_device_registered(ref->dpll))
+			continue;
 		attr = nla_nest_start(msg, DPLL_A_PIN_PARENT_DEVICE);
 		if (!attr)
 			return -EMSGSIZE;
@@ -652,6 +683,9 @@ dpll_msg_add_pin_dplls(struct sk_buff *msg, struct dpll_pin *pin,
 		ret = dpll_msg_add_pin_on_dpll_state(msg, pin, ref, extack);
 		if (ret)
 			goto nest_cancel;
+		ret = dpll_msg_add_pin_operstate(msg, pin, ref, extack);
+		if (ret)
+			goto nest_cancel;
 		ret = dpll_msg_add_pin_prio(msg, pin, ref, extack);
 		if (ret)
 			goto nest_cancel;
@@ -659,6 +693,10 @@ dpll_msg_add_pin_dplls(struct sk_buff *msg, struct dpll_pin *pin,
 		if (ret)
 			goto nest_cancel;
 		ret = dpll_msg_add_phase_offset(msg, pin, ref, extack);
+		if (ret)
+			goto nest_cancel;
+		ret = dpll_msg_add_ffo(msg, pin, ref,
+				       DPLL_FFO_PIN_DEVICE, extack);
 		if (ret)
 			goto nest_cancel;
 		nla_nest_end(msg, attr);
@@ -679,14 +717,17 @@ dpll_cmd_pin_get_one(struct sk_buff *msg, struct dpll_pin *pin,
 	struct dpll_pin_ref *ref;
 	int ret;
 
-	ref = dpll_xa_ref_dpll_first(&pin->dpll_refs);
-	ASSERT_NOT_NULL(ref);
+	ref = dpll_pin_own_dpll_ref_first(pin);
+	if (!ref || !dpll_device_registered(ref->dpll))
+		ref = dpll_pin_first_registered_ref(pin);
+	if (!ref)
+		return -ENODEV;
 
 	ret = dpll_msg_add_pin_handle(msg, pin);
 	if (ret)
 		return ret;
 	if (nla_put_string(msg, DPLL_A_PIN_MODULE_NAME,
-			   module_name(pin->module)))
+			   pin->module_name))
 		return -EMSGSIZE;
 	if (nla_put_64bit(msg, DPLL_A_PIN_CLOCK_ID, sizeof(pin->clock_id),
 			  &pin->clock_id, DPLL_A_PIN_PAD))
@@ -721,7 +762,8 @@ dpll_cmd_pin_get_one(struct sk_buff *msg, struct dpll_pin *pin,
 	ret = dpll_msg_add_pin_phase_adjust(msg, pin, ref, extack);
 	if (ret)
 		return ret;
-	ret = dpll_msg_add_ffo(msg, pin, ref, extack);
+	ret = dpll_msg_add_ffo(msg, pin, ref,
+			       DPLL_FFO_PORT_RXTX_RATE, extack);
 	if (ret)
 		return ret;
 	ret = dpll_msg_add_measured_freq(msg, pin, ref, extack);
@@ -897,15 +939,15 @@ err_free_msg:
 	return ret;
 }
 
-int dpll_pin_create_ntf(struct dpll_pin *pin)
+int dpll_pin_create_ntf(struct dpll_pin *pin, u64 src_clock_id)
 {
-	dpll_pin_notify(pin, DPLL_PIN_CREATED);
+	dpll_pin_notify(pin, src_clock_id, DPLL_PIN_CREATED);
 	return dpll_pin_event_send(DPLL_CMD_PIN_CREATE_NTF, pin);
 }
 
-int dpll_pin_delete_ntf(struct dpll_pin *pin)
+int dpll_pin_delete_ntf(struct dpll_pin *pin, u64 src_clock_id)
 {
-	dpll_pin_notify(pin, DPLL_PIN_DELETED);
+	dpll_pin_notify(pin, src_clock_id, DPLL_PIN_DELETED);
 	return dpll_pin_event_send(DPLL_CMD_PIN_DELETE_NTF, pin);
 }
 
@@ -920,7 +962,7 @@ int dpll_pin_delete_ntf(struct dpll_pin *pin)
 int __dpll_pin_change_ntf(struct dpll_pin *pin)
 {
 	lockdep_assert_held(&dpll_lock);
-	dpll_pin_notify(pin, DPLL_PIN_CHANGED);
+	dpll_pin_notify(pin, pin->clock_id, DPLL_PIN_CHANGED);
 	return dpll_pin_event_send(DPLL_CMD_PIN_CHANGE_NTF, pin);
 }
 EXPORT_SYMBOL_GPL(__dpll_pin_change_ntf);
@@ -1056,10 +1098,9 @@ dpll_pin_freq_set(struct dpll_pin *pin, struct nlattr *a,
 		  struct netlink_ext_ack *extack)
 {
 	u64 freq = nla_get_u64(a), old_freq;
-	struct dpll_pin_ref *ref, *failed;
 	const struct dpll_pin_ops *ops;
+	struct dpll_pin_ref *ref;
 	struct dpll_device *dpll;
-	unsigned long i;
 	int ret;
 
 	if (!dpll_pin_is_freq_supported(pin, freq)) {
@@ -1067,15 +1108,17 @@ dpll_pin_freq_set(struct dpll_pin *pin, struct nlattr *a,
 		return -EINVAL;
 	}
 
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		ops = dpll_pin_ops(ref);
-		if (!ops->frequency_set || !ops->frequency_get) {
-			NL_SET_ERR_MSG(extack, "frequency set not supported by the device");
-			return -EOPNOTSUPP;
-		}
+	ref = dpll_pin_own_dpll_ref_first(pin);
+	if (!ref || !dpll_device_registered(ref->dpll)) {
+		NL_SET_ERR_MSG(extack, "pin owner dpll not found");
+		return -ENODEV;
 	}
-	ref = dpll_xa_ref_dpll_first(&pin->dpll_refs);
 	ops = dpll_pin_ops(ref);
+	if (!ops->frequency_set || !ops->frequency_get) {
+		NL_SET_ERR_MSG(extack,
+			       "frequency set not supported by the device");
+		return -EOPNOTSUPP;
+	}
 	dpll = ref->dpll;
 	ret = ops->frequency_get(pin, dpll_pin_on_dpll_priv(dpll, pin), dpll,
 				 dpll_priv(dpll), &old_freq, extack);
@@ -1086,58 +1129,42 @@ dpll_pin_freq_set(struct dpll_pin *pin, struct nlattr *a,
 	if (freq == old_freq)
 		return 0;
 
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		ret = ops->frequency_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
-					 dpll, dpll_priv(dpll), freq, extack);
-		if (ret) {
-			failed = ref;
-			NL_SET_ERR_MSG_FMT(extack, "frequency set failed for dpll_id:%u",
-					   dpll->id);
-			goto rollback;
-		}
+	ret = ops->frequency_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
+				 dpll, dpll_priv(dpll), freq, extack);
+	if (ret) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "frequency set failed for dpll_id:%u",
+				   dpll->id);
+		return ret;
 	}
 	__dpll_pin_change_ntf(pin);
 
 	return 0;
-
-rollback:
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		if (ref == failed)
-			break;
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		if (ops->frequency_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
-				       dpll, dpll_priv(dpll), old_freq, extack))
-			NL_SET_ERR_MSG(extack, "set frequency rollback failed");
-	}
-	return ret;
 }
 
 static int
 dpll_pin_esync_set(struct dpll_pin *pin, struct nlattr *a,
 		   struct netlink_ext_ack *extack)
 {
-	struct dpll_pin_ref *ref, *failed;
 	const struct dpll_pin_ops *ops;
 	struct dpll_pin_esync esync;
 	u64 freq = nla_get_u64(a);
+	struct dpll_pin_ref *ref;
 	struct dpll_device *dpll;
 	bool supported = false;
-	unsigned long i;
-	int ret;
+	int ret, i;
 
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		ops = dpll_pin_ops(ref);
-		if (!ops->esync_set || !ops->esync_get) {
-			NL_SET_ERR_MSG(extack,
-				       "embedded sync feature is not supported by this device");
-			return -EOPNOTSUPP;
-		}
+	ref = dpll_pin_own_dpll_ref_first(pin);
+	if (!ref || !dpll_device_registered(ref->dpll)) {
+		NL_SET_ERR_MSG(extack, "pin owner dpll not found");
+		return -ENODEV;
 	}
-	ref = dpll_xa_ref_dpll_first(&pin->dpll_refs);
 	ops = dpll_pin_ops(ref);
+	if (!ops->esync_set || !ops->esync_get) {
+		NL_SET_ERR_MSG(extack,
+			       "embedded sync feature is not supported by this device");
+		return -EOPNOTSUPP;
+	}
 	dpll = ref->dpll;
 	ret = ops->esync_get(pin, dpll_pin_on_dpll_priv(dpll, pin), dpll,
 			     dpll_priv(dpll), &esync, extack);
@@ -1156,40 +1183,17 @@ dpll_pin_esync_set(struct dpll_pin *pin, struct nlattr *a,
 		return -EINVAL;
 	}
 
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		void *pin_dpll_priv;
-
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		pin_dpll_priv = dpll_pin_on_dpll_priv(dpll, pin);
-		ret = ops->esync_set(pin, pin_dpll_priv, dpll, dpll_priv(dpll),
-				      freq, extack);
-		if (ret) {
-			failed = ref;
-			NL_SET_ERR_MSG_FMT(extack,
-					   "embedded sync frequency set failed for dpll_id: %u",
-					   dpll->id);
-			goto rollback;
-		}
+	ret = ops->esync_set(pin, dpll_pin_on_dpll_priv(dpll, pin), dpll,
+			     dpll_priv(dpll), freq, extack);
+	if (ret) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "embedded sync frequency set failed for dpll_id: %u",
+				   dpll->id);
+		return ret;
 	}
 	__dpll_pin_change_ntf(pin);
 
 	return 0;
-
-rollback:
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		void *pin_dpll_priv;
-
-		if (ref == failed)
-			break;
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		pin_dpll_priv = dpll_pin_on_dpll_priv(dpll, pin);
-		if (ops->esync_set(pin, pin_dpll_priv, dpll, dpll_priv(dpll),
-				   esync.freq, extack))
-			NL_SET_ERR_MSG(extack, "set embedded sync frequency rollback failed");
-	}
-	return ret;
 }
 
 static int
@@ -1197,18 +1201,16 @@ dpll_pin_ref_sync_state_set(struct dpll_pin *pin,
 			    unsigned long ref_sync_pin_idx,
 			    const enum dpll_pin_state state,
 			    struct netlink_ext_ack *extack)
-
 {
-	struct dpll_pin_ref *ref, *failed;
+	void *pin_priv, *ref_sync_pin_priv;
 	const struct dpll_pin_ops *ops;
 	enum dpll_pin_state old_state;
 	struct dpll_pin *ref_sync_pin;
+	struct dpll_pin_ref *ref;
 	struct dpll_device *dpll;
-	unsigned long i;
 	int ret;
 
-	ref_sync_pin = xa_find(&pin->ref_sync_pins, &ref_sync_pin_idx,
-			       ULONG_MAX, XA_PRESENT);
+	ref_sync_pin = xa_load(&pin->ref_sync_pins, ref_sync_pin_idx);
 	if (!ref_sync_pin) {
 		NL_SET_ERR_MSG(extack, "reference sync pin not found");
 		return -EINVAL;
@@ -1217,17 +1219,26 @@ dpll_pin_ref_sync_state_set(struct dpll_pin *pin,
 		NL_SET_ERR_MSG(extack, "reference sync pin not available");
 		return -EINVAL;
 	}
-	ref = dpll_xa_ref_dpll_first(&pin->dpll_refs);
-	ASSERT_NOT_NULL(ref);
+	ref = dpll_pin_own_dpll_ref_first(pin);
+	if (!ref || !dpll_device_registered(ref->dpll)) {
+		NL_SET_ERR_MSG(extack, "pin owner dpll not found");
+		return -ENODEV;
+	}
 	ops = dpll_pin_ops(ref);
 	if (!ops->ref_sync_set || !ops->ref_sync_get) {
 		NL_SET_ERR_MSG(extack, "reference sync not supported by this pin");
 		return -EOPNOTSUPP;
 	}
 	dpll = ref->dpll;
-	ret = ops->ref_sync_get(pin, dpll_pin_on_dpll_priv(dpll, pin),
-				ref_sync_pin,
-				dpll_pin_on_dpll_priv(dpll, ref_sync_pin),
+	pin_priv = dpll_pin_on_dpll_priv(dpll, pin);
+	ref_sync_pin_priv = dpll_pin_on_dpll_priv(dpll, ref_sync_pin);
+	/* Pin may have been unregistered from this dpll already */
+	if (!ref_sync_pin_priv) {
+		NL_SET_ERR_MSG(extack,
+			       "reference sync pin not registered with the dpll");
+		return -ENODEV;
+	}
+	ret = ops->ref_sync_get(pin, pin_priv, ref_sync_pin, ref_sync_pin_priv,
 				&old_state, extack);
 	if (ret) {
 		NL_SET_ERR_MSG(extack, "unable to get old reference sync state");
@@ -1235,38 +1246,18 @@ dpll_pin_ref_sync_state_set(struct dpll_pin *pin,
 	}
 	if (state == old_state)
 		return 0;
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		ret = ops->ref_sync_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
-					ref_sync_pin,
-					dpll_pin_on_dpll_priv(dpll,
-							      ref_sync_pin),
-					state, extack);
-		if (ret) {
-			failed = ref;
-			NL_SET_ERR_MSG_FMT(extack, "reference sync set failed for dpll_id:%u",
-					   dpll->id);
-			goto rollback;
-		}
+
+	ret = ops->ref_sync_set(pin, pin_priv, ref_sync_pin, ref_sync_pin_priv,
+				state, extack);
+	if (ret) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "reference sync set failed for dpll_id:%u",
+				   dpll->id);
+		return ret;
 	}
 	__dpll_pin_change_ntf(pin);
 
 	return 0;
-
-rollback:
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		if (ref == failed)
-			break;
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		if (ops->ref_sync_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
-				      ref_sync_pin,
-				      dpll_pin_on_dpll_priv(dpll, ref_sync_pin),
-				      old_state, extack))
-			NL_SET_ERR_MSG(extack, "set reference sync rollback failed");
-	}
-	return ret;
 }
 
 static int
@@ -1307,8 +1298,11 @@ dpll_pin_on_pin_state_set(struct dpll_pin *pin, u32 parent_idx,
 	unsigned long i;
 	int ret;
 
+	/* fwnode pins may not set the capability bit upfront; let the ops
+	 * layer return -EOPNOTSUPP if the operation is unsupported.
+	 */
 	if (!(DPLL_PIN_CAPABILITIES_STATE_CAN_CHANGE &
-	      pin->prop.capabilities)) {
+	      pin->prop.capabilities) && !pin->fwnode) {
 		NL_SET_ERR_MSG(extack, "state changing is not allowed");
 		return -EOPNOTSUPP;
 	}
@@ -1343,8 +1337,11 @@ dpll_pin_state_set(struct dpll_device *dpll, struct dpll_pin *pin,
 	struct dpll_pin_ref *ref;
 	int ret;
 
+	/* fwnode pins may not set the capability bit upfront; let the ops
+	 * layer return -EOPNOTSUPP if the operation is unsupported.
+	 */
 	if (!(DPLL_PIN_CAPABILITIES_STATE_CAN_CHANGE &
-	      pin->prop.capabilities)) {
+	      pin->prop.capabilities) && !pin->fwnode) {
 		NL_SET_ERR_MSG(extack, "state changing is not allowed");
 		return -EOPNOTSUPP;
 	}
@@ -1421,11 +1418,10 @@ static int
 dpll_pin_phase_adj_set(struct dpll_pin *pin, struct nlattr *phase_adj_attr,
 		       struct netlink_ext_ack *extack)
 {
-	struct dpll_pin_ref *ref, *failed;
 	const struct dpll_pin_ops *ops;
 	s32 phase_adj, old_phase_adj;
+	struct dpll_pin_ref *ref;
 	struct dpll_device *dpll;
-	unsigned long i;
 	int ret;
 
 	phase_adj = nla_get_s32(phase_adj_attr);
@@ -1442,15 +1438,16 @@ dpll_pin_phase_adj_set(struct dpll_pin *pin, struct nlattr *phase_adj_attr,
 		return -EINVAL;
 	}
 
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		ops = dpll_pin_ops(ref);
-		if (!ops->phase_adjust_set || !ops->phase_adjust_get) {
-			NL_SET_ERR_MSG(extack, "phase adjust not supported");
-			return -EOPNOTSUPP;
-		}
+	ref = dpll_pin_own_dpll_ref_first(pin);
+	if (!ref || !dpll_device_registered(ref->dpll)) {
+		NL_SET_ERR_MSG(extack, "pin owner dpll not found");
+		return -ENODEV;
 	}
-	ref = dpll_xa_ref_dpll_first(&pin->dpll_refs);
 	ops = dpll_pin_ops(ref);
+	if (!ops->phase_adjust_set || !ops->phase_adjust_get) {
+		NL_SET_ERR_MSG(extack, "phase adjust not supported");
+		return -EOPNOTSUPP;
+	}
 	dpll = ref->dpll;
 	ret = ops->phase_adjust_get(pin, dpll_pin_on_dpll_priv(dpll, pin),
 				    dpll, dpll_priv(dpll), &old_phase_adj,
@@ -1462,37 +1459,17 @@ dpll_pin_phase_adj_set(struct dpll_pin *pin, struct nlattr *phase_adj_attr,
 	if (phase_adj == old_phase_adj)
 		return 0;
 
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		ret = ops->phase_adjust_set(pin,
-					    dpll_pin_on_dpll_priv(dpll, pin),
-					    dpll, dpll_priv(dpll), phase_adj,
-					    extack);
-		if (ret) {
-			failed = ref;
-			NL_SET_ERR_MSG_FMT(extack,
-					   "phase adjust set failed for dpll_id:%u",
-					   dpll->id);
-			goto rollback;
-		}
+	ret = ops->phase_adjust_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
+				    dpll, dpll_priv(dpll), phase_adj, extack);
+	if (ret) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "phase adjust set failed for dpll_id:%u",
+				   dpll->id);
+		return ret;
 	}
 	__dpll_pin_change_ntf(pin);
 
 	return 0;
-
-rollback:
-	xa_for_each(&pin->dpll_refs, i, ref) {
-		if (ref == failed)
-			break;
-		ops = dpll_pin_ops(ref);
-		dpll = ref->dpll;
-		if (ops->phase_adjust_set(pin, dpll_pin_on_dpll_priv(dpll, pin),
-					  dpll, dpll_priv(dpll), old_phase_adj,
-					  extack))
-			NL_SET_ERR_MSG(extack, "set phase adjust rollback failed");
-	}
-	return ret;
 }
 
 static int
@@ -1514,7 +1491,7 @@ dpll_pin_parent_device_set(struct dpll_pin *pin, struct nlattr *parent_nest,
 		return -EINVAL;
 	}
 	pdpll_idx = nla_get_u32(tb[DPLL_A_PIN_PARENT_ID]);
-	dpll = xa_load(&dpll_device_xa, pdpll_idx);
+	dpll = dpll_device_get_by_id(pdpll_idx);
 	if (!dpll) {
 		NL_SET_ERR_MSG(extack, "parent device not found");
 		return -EINVAL;
@@ -1632,9 +1609,9 @@ dpll_pin_find(u64 clock_id, struct nlattr *mod_name_attr,
 	xa_for_each_marked(&dpll_pin_xa, i, pin, DPLL_REGISTERED) {
 		prop = &pin->prop;
 		cid_match = clock_id ? pin->clock_id == clock_id : true;
-		mod_match = mod_name_attr && module_name(pin->module) ?
+		mod_match = mod_name_attr && pin->module_name[0] ?
 			!nla_strcmp(mod_name_attr,
-				    module_name(pin->module)) : true;
+				    pin->module_name) : true;
 		type_match = type ? prop->type == type : true;
 		board_match = board_label ? (prop->board_label ?
 			!nla_strcmp(board_label, prop->board_label) : false) :
@@ -1806,6 +1783,10 @@ int dpll_nl_pin_get_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 		ret = dpll_cmd_pin_get_one(skb, pin, cb->extack);
 		if (ret) {
 			genlmsg_cancel(skb, hdr);
+			if (ret == -ENODEV) {
+				ret = 0;
+				continue;
+			}
 			break;
 		}
 		genlmsg_end(skb, hdr);

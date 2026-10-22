@@ -114,10 +114,10 @@ enum x86_topology_domains {
 	TOPO_MAX_DOMAIN,
 };
 
-enum x86_topology_cpu_type {
-	TOPO_CPU_TYPE_PERFORMANCE,
-	TOPO_CPU_TYPE_EFFICIENCY,
-	TOPO_CPU_TYPE_UNKNOWN,
+enum amd_cpu_type {
+	AMD_CPU_TYPE_PERFORMANCE	= 0,
+	AMD_CPU_TYPE_EFFICIENCY		= 1,
+	AMD_CPU_TYPE_LOW_POWER		= 2,
 };
 
 struct x86_topology_system {
@@ -157,8 +157,9 @@ extern unsigned int __num_threads_per_package;
 extern unsigned int __num_cores_per_package;
 extern unsigned int __num_nodes_per_package;
 
+struct cpuinfo_x86;
+
 const char *get_topology_cpu_type_name(struct cpuinfo_x86 *c);
-enum x86_topology_cpu_type get_topology_cpu_type(struct cpuinfo_x86 *c);
 
 static inline unsigned int topology_max_packages(void)
 {
@@ -265,6 +266,7 @@ extern bool x86_topology_update;
 
 #ifdef CONFIG_SCHED_MC_PRIO
 #include <asm/percpu.h>
+#include <linux/cache.h>
 
 DECLARE_PER_CPU_READ_MOSTLY(int, sched_core_priority);
 extern bool __read_mostly sysctl_sched_itmt_enabled;

@@ -143,6 +143,8 @@ static int qca_read_fw_build_info(struct hci_dev *hdev)
 
 	hci_set_fw_info(hdev, "%s", build_label);
 
+	bt_dev_info(hdev, "QCA FW build version: %s", build_label);
+
 	kfree(build_label);
 out:
 	kfree_skb(skb);
@@ -186,25 +188,6 @@ static int qca_send_patch_config_cmd(struct hci_dev *hdev)
 out:
 	kfree_skb(skb);
 	return err;
-}
-
-static int qca_send_reset(struct hci_dev *hdev)
-{
-	struct sk_buff *skb;
-	int err;
-
-	bt_dev_dbg(hdev, "QCA HCI_RESET");
-
-	skb = __hci_cmd_sync(hdev, HCI_OP_RESET, 0, NULL, HCI_INIT_TIMEOUT);
-	if (IS_ERR(skb)) {
-		err = PTR_ERR(skb);
-		bt_dev_err(hdev, "QCA Reset failed (%d)", err);
-		return err;
-	}
-
-	kfree_skb(skb);
-
-	return 0;
 }
 
 static int qca_read_fw_board_id(struct hci_dev *hdev, u16 *bid)
@@ -413,7 +396,7 @@ static int qca_tlv_check_data(struct hci_dev *hdev,
 
 		idx = 0;
 		data = tlv->data;
-		while (idx < length - sizeof(struct tlv_type_nvm)) {
+		while (idx + sizeof(struct tlv_type_nvm) <= length) {
 			tlv_nvm = (struct tlv_type_nvm *)(data + idx);
 
 			tag_id = le16_to_cpu(tlv_nvm->tag_id);
@@ -988,11 +971,12 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
 	}
 
 	/* Perform HCI reset */
-	err = qca_send_reset(hdev);
+	err = __hci_reset_sync(hdev);
 	if (err < 0) {
 		bt_dev_err(hdev, "QCA Failed to run HCI_RESET (%d)", err);
 		return err;
 	}
+	bt_dev_dbg(hdev, "QCA HCI_RESET succeed");
 
 	switch (soc_type) {
 	case QCA_WCN3991:
@@ -1027,8 +1011,7 @@ int qca_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 	baswap(&bdaddr_swapped, bdaddr);
 
 	skb = __hci_cmd_sync_ev(hdev, EDL_WRITE_BD_ADDR_OPCODE, 6,
-				&bdaddr_swapped, HCI_EV_VENDOR,
-				HCI_INIT_TIMEOUT);
+				&bdaddr_swapped, 0, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
 		err = PTR_ERR(skb);
 		bt_dev_err(hdev, "QCA Change address cmd failed (%d)", err);

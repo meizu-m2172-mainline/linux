@@ -151,13 +151,16 @@ pub trait InPlaceInit<T>: Sized {
     /// type.
     ///
     /// If `T: !Unpin` it will not be able to move afterwards.
+    #[inline]
     fn pin_init<E>(init: impl PinInit<T, E>, flags: Flags) -> error::Result<Self::PinnedSelf>
     where
         Error: From<E>,
     {
         // SAFETY: We delegate to `init` and only change the error type.
         let init = unsafe {
-            pin_init_from_closure(|slot| init.__pinned_init(slot).map_err(|e| Error::from(e)))
+            pin_init_from_closure(|slot| {
+                pin_init::raw_try_init(slot, init).map_err(|e| Error::from(e))
+            })
         };
         Self::try_pin_init(init, flags)
     }
@@ -168,13 +171,14 @@ pub trait InPlaceInit<T>: Sized {
         E: From<AllocError>;
 
     /// Use the given initializer to in-place initialize a `T`.
+    #[inline]
     fn init<E>(init: impl Init<T, E>, flags: Flags) -> error::Result<Self>
     where
         Error: From<E>,
     {
         // SAFETY: We delegate to `init` and only change the error type.
         let init = unsafe {
-            init_from_closure(|slot| init.__pinned_init(slot).map_err(|e| Error::from(e)))
+            init_from_closure(|slot| pin_init::raw_try_init(slot, init).map_err(|e| Error::from(e)))
         };
         Self::try_init(init, flags)
     }

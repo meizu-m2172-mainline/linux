@@ -356,9 +356,13 @@ static int bnxt_re_update_qp1_tos_dscp(struct bnxt_re_dev *rdev)
 	return bnxt_qplib_modify_qp(&rdev->qplib_res, &qp->qplib_qp);
 }
 
-static void bnxt_re_init_dcb_wq(struct bnxt_re_dev *rdev)
+static int bnxt_re_init_dcb_wq(struct bnxt_re_dev *rdev)
 {
 	rdev->dcb_wq = create_singlethread_workqueue("bnxt_re_dcb_wq");
+	if (!rdev->dcb_wq)
+		return -ENOMEM;
+
+	return 0;
 }
 
 static void bnxt_re_uninit_dcb_wq(struct bnxt_re_dev *rdev)
@@ -1092,8 +1096,6 @@ static int bnxt_re_fill_res_mr_entry(struct sk_buff *msg, struct ib_mr *ib_mr)
 	if (rdma_nl_put_driver_u32(msg, "max_elements", mr_hwq->max_elements))
 		goto err;
 	if (rdma_nl_put_driver_u32(msg, "element_size", mr_hwq->element_size))
-		goto err;
-	if (rdma_nl_put_driver_u64_hex(msg, "hwq", (unsigned long)mr_hwq))
 		goto err;
 	if (rdma_nl_put_driver_u64_hex(msg, "va", mr->qplib_mr.va))
 		goto err;
@@ -2339,13 +2341,11 @@ static int bnxt_re_dev_init(struct bnxt_re_dev *rdev, u8 op_type)
 		if (!(rdev->qplib_res.en_dev->flags & BNXT_EN_FLAG_ROCE_VF_RES_MGMT))
 			bnxt_re_vf_res_config(rdev);
 	}
-	hash_init(rdev->cq_hash);
-	if (rdev->chip_ctx->modes.toggle_bits & BNXT_QPLIB_SRQ_TOGGLE_BIT)
-		hash_init(rdev->srq_hash);
-
 	bnxt_re_debugfs_add_pdev(rdev);
 
-	bnxt_re_init_dcb_wq(rdev);
+	rc = bnxt_re_init_dcb_wq(rdev);
+	if (rc)
+		goto fail;
 	bnxt_re_net_register_async_event(rdev);
 
 	if (!rdev->is_virtfn)

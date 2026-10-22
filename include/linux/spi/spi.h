@@ -12,7 +12,9 @@
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/kthread.h>
-#include <linux/mod_devicetable.h>
+#include <linux/device-id/acpi.h>
+#include <linux/device-id/of.h>
+#include <linux/device-id/spi.h>
 #include <linux/overflow.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
@@ -177,6 +179,8 @@ extern void spi_transfer_cs_change_delay_exec(struct spi_message *msg,
  * @num_tx_lanes: Number of transmit lanes wired up.
  * @rx_lane_map: Map of peripheral lanes (index) to controller lanes (value).
  * @num_rx_lanes: Number of receive lanes wired up.
+ * @userspace_node: entry on the parent controller's userspace_clients list
+ *	when this device was instantiated via the sysfs new_device interface
  *
  * A @spi_device is used to interchange data between an SPI target device
  * (usually a discrete chip) and CPU memory.
@@ -249,6 +253,10 @@ struct spi_device {
 	u8			num_tx_lanes;
 	u8			rx_lane_map[SPI_DEVICE_DATA_LANE_CNT_MAX];
 	u8			num_rx_lanes;
+
+#if IS_ENABLED(CONFIG_SPI_DYNAMIC)
+	struct list_head	userspace_node;
+#endif
 
 	/*
 	 * Likely need more hooks for more protocol options affecting how
@@ -424,7 +432,6 @@ extern struct spi_device *devm_spi_new_ancillary_device(struct spi_device *spi, 
  * @flags: other constraints relevant to this driver
  * @slave: indicates that this is an SPI slave controller
  * @target: indicates that this is an SPI target controller
- * @devm_allocated: whether the allocation of this struct is devres-managed
  * @max_transfer_size: function that returns the max transfer size for
  *	a &spi_device; may be %NULL, so the default %SIZE_MAX will be used.
  * @max_message_size: function that returns the max message size for
@@ -554,6 +561,11 @@ extern struct spi_device *devm_spi_new_ancillary_device(struct spi_device *spi, 
  * @defer_optimize_message: set to true if controller cannot pre-optimize messages
  *	and needs to defer the optimization step until the message is actually
  *	being transferred
+ * @userspace_clients: list of SPI devices instantiated from userspace via
+ *	the sysfs new_device interface; protected by @add_lock
+ * @userspace_registered: true once the new_device/delete_device sysfs
+ *	group has been added by spi_register_controller(); used by
+ *	spi_unregister_controller() to know whether to remove it
  *
  * Each SPI controller can communicate with one or more @spi_device
  * children.  These make a small bus, sharing MOSI, MISO and SCK signals
@@ -628,9 +640,6 @@ struct spi_controller {
 	 * assert/de-assert more than one chip select at once.
 	 */
 #define SPI_CONTROLLER_MULTI_CS		BIT(7)
-
-	/* Flag indicating if the allocation of this struct is devres-managed */
-	bool			devm_allocated;
 
 	union {
 		/* Flag indicating this is an SPI slave controller */
@@ -809,6 +818,13 @@ struct spi_controller {
 	bool			queue_empty;
 	bool			must_async;
 	bool			defer_optimize_message;
+
+#if IS_ENABLED(CONFIG_SPI_DYNAMIC)
+	/* List of userspace-instantiated devices; protected by @add_lock */
+	struct list_head	userspace_clients;
+	/* True after new_device/delete_device sysfs group is created */
+	bool			userspace_registered;
+#endif
 };
 
 static inline void *spi_controller_get_devdata(struct spi_controller *ctlr)

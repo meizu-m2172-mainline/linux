@@ -194,7 +194,7 @@ static bool ex_handler_msr(const struct exception_table_entry *fixup,
 static bool ex_handler_clear_fs(const struct exception_table_entry *fixup,
 				struct pt_regs *regs)
 {
-	if (static_cpu_has(X86_BUG_NULL_SEG))
+	if (cpu_feature_enabled(X86_BUG_NULL_SEG))
 		asm volatile ("mov %0, %%fs" : : "rm" (__USER_DS));
 	asm volatile ("mov %0, %%fs" : : "rm" (0));
 	return ex_handler_default(fixup, regs);
@@ -322,7 +322,7 @@ int fixup_exception(struct pt_regs *regs, int trapnr, unsigned long error_code,
 
 	type = FIELD_GET(EX_DATA_TYPE_MASK, e->data);
 	reg  = FIELD_GET(EX_DATA_REG_MASK,  e->data);
-	imm  = FIELD_GET(EX_DATA_IMM_MASK,  e->data);
+	imm  = FIELD_GET_SIGNED(EX_DATA_IMM_MASK, e->data);
 
 	switch (type) {
 	case EX_TYPE_DEFAULT:

@@ -293,8 +293,7 @@ xfs_vn_create(
 	struct mnt_idmap	*idmap,
 	struct inode		*dir,
 	struct dentry		*dentry,
-	umode_t			mode,
-	bool			flags)
+	umode_t			mode)
 {
 	return xfs_generic_create(idmap, dir, dentry, mode, 0, NULL);
 }
@@ -306,7 +305,7 @@ xfs_vn_mkdir(
 	struct dentry		*dentry,
 	umode_t			mode)
 {
-	return ERR_PTR(xfs_generic_create(idmap, dir, dentry, mode | S_IFDIR, 0, NULL));
+	return ERR_PTR(xfs_generic_create(idmap, dir, dentry, mode, 0, NULL));
 }
 
 STATIC struct dentry *
@@ -338,7 +337,7 @@ STATIC struct dentry *
 xfs_vn_ci_lookup(
 	struct inode	*dir,
 	struct dentry	*dentry,
-	unsigned int flags)
+	unsigned int	flags)
 {
 	struct xfs_inode *ip;
 	struct xfs_name	xname;
@@ -703,7 +702,7 @@ xfs_vn_getattr(
 	stat->nlink = inode->i_nlink;
 	stat->uid = vfsuid_into_kuid(vfsuid);
 	stat->gid = vfsgid_into_kgid(vfsgid);
-	stat->ino = ip->i_ino;
+	stat->ino = inode->i_ino;
 	stat->atime = inode_get_atime(inode);
 
 	fill_mg_cmtime(stat, request_mask, inode);
@@ -835,7 +834,7 @@ xfs_setattr_nonsize(
 	}
 
 	error = xfs_trans_alloc_ichange(ip, udqp, gdqp, NULL,
-			has_capability_noaudit(current, CAP_FOWNER), &tp);
+			capable_noaudit(CAP_FOWNER), &tp);
 	if (error)
 		goto out_dqrele;
 
@@ -1423,7 +1422,6 @@ xfs_setup_inode(
 	gfp_t			gfp_mask;
 	bool			is_meta = xfs_is_internal_inode(ip);
 
-	inode->i_ino = ip->i_ino;
 	inode_state_set_raw(inode, I_NEW);
 
 	inode_sb_list_add(inode);

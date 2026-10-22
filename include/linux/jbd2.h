@@ -63,9 +63,6 @@ void __jbd2_debug(int level, const char *file, const char *func,
 #define jbd2_debug(n, fmt, a...)  no_printk(fmt, ##a)
 #endif
 
-extern void *jbd2_alloc(size_t size, gfp_t flags);
-extern void jbd2_free(void *ptr, size_t size);
-
 #define JBD2_MIN_JOURNAL_BLOCKS 1024
 #define JBD2_DEFAULT_FAST_COMMIT_BLOCKS 256
 
@@ -513,11 +510,12 @@ struct jbd2_journal_handle
 	int			h_err;
 
 	/* Flags [no locking] */
-	unsigned int	h_sync:		1;
-	unsigned int	h_reserved:	1;
-	unsigned int	h_aborted:	1;
-	unsigned int	h_type:		8;
-	unsigned int	h_line_no:	16;
+	unsigned char	h_sync:		1;
+	unsigned char	h_reserved:	1;
+	unsigned char	h_aborted:	1;
+	unsigned char	h_invalid:	1;
+	unsigned char	h_type;
+	unsigned short	h_line_no;
 
 	unsigned long		h_start_jiffies;
 	unsigned int		h_requested_credits;

@@ -163,6 +163,8 @@ typedef u32 dma_addr_t;
 typedef unsigned int __bitwise gfp_t;
 typedef unsigned int __bitwise slab_flags_t;
 typedef unsigned int __bitwise fmode_t;
+typedef unsigned int __bitwise blk_mode_t;
+typedef unsigned int __bitwise fop_flags_t;
 
 #ifdef CONFIG_PHYS_ADDR_T_64BIT
 typedef u64 phys_addr_t;
@@ -224,6 +226,12 @@ struct ustat {
 	char			f_fpack[6];
 };
 
+struct kcov_common_handle_id {
+#ifdef CONFIG_KCOV
+	u64 val;
+#endif
+};
+
 /**
  * struct callback_head - callback structure for use with RCU and task_work
  * @next: next update requests in a list
@@ -248,6 +256,16 @@ struct callback_head {
 	void (*func)(struct callback_head *head);
 } __attribute__((aligned(sizeof(void *))));
 #define rcu_head callback_head
+
+#ifdef CONFIG_KVFREE_RCU_BATCHED
+struct kvfree_rcu_head {
+	struct kvfree_rcu_head *next;
+};
+#else
+struct kvfree_rcu_head {
+	struct rcu_head head;
+};
+#endif
 
 typedef void (*rcu_callback_t)(struct rcu_head *head);
 typedef void (*call_rcu_func_t)(struct rcu_head *head, rcu_callback_t func);

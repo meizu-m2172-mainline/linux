@@ -147,6 +147,13 @@
 #define ASUS_WMI_DEVID_GPU_MUX		0x00090016
 #define ASUS_WMI_DEVID_GPU_MUX_VIVO	0x00090026
 
+/* Keystone dongle insert/remove state.
+ * PRESENCE_BIT (0x00010000) encodes insert state:
+ * 0x00010000 = inserted, 0x00000000 = absent. STATUS_BIT is never set.
+ * 0xFFFFFFFE means no keystone slot on this machine.
+ */
+#define ASUS_WMI_DEVID_KEYSTONE		0x00120091
+
 /* TUF laptop RGB modes/colours */
 #define ASUS_WMI_DEVID_TUF_RGB_MODE	0x00100056
 #define ASUS_WMI_DEVID_TUF_RGB_MODE2	0x0010005A
@@ -196,6 +203,7 @@ int asus_wmi_evaluate_method(u32 method_id, u32 arg0, u32 arg1, u32 *retval);
 int asus_hid_register_listener(struct asus_hid_listener *cdev);
 void asus_hid_unregister_listener(struct asus_hid_listener *cdev);
 int asus_hid_event(enum asus_hid_event event);
+bool asus_wmi_custom_fan_curve_is_enabled(void);
 #else
 static inline void set_ally_mcu_hack(enum asus_ally_mcu_hack status)
 {
@@ -226,6 +234,10 @@ static inline void asus_hid_unregister_listener(struct asus_hid_listener *bdev)
 static inline int asus_hid_event(enum asus_hid_event event)
 {
 	return -ENODEV;
+}
+static inline bool asus_wmi_custom_fan_curve_is_enabled(void)
+{
+	return false;
 }
 #endif
 

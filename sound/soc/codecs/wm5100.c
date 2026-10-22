@@ -2659,7 +2659,15 @@ static int wm5100_runtime_resume(struct device *dev)
 	}
 
 	regcache_cache_only(wm5100->regmap, false);
-	regcache_sync(wm5100->regmap);
+	ret = regcache_sync(wm5100->regmap);
+	if (ret) {
+		regcache_cache_only(wm5100->regmap, true);
+		regcache_mark_dirty(wm5100->regmap);
+		gpiod_set_value_cansleep(wm5100->ldo_ena, 0);
+		regulator_bulk_disable(ARRAY_SIZE(wm5100->core_supplies),
+				       wm5100->core_supplies);
+		return ret;
+	}
 
 	return 0;
 }
@@ -2669,7 +2677,7 @@ static const struct dev_pm_ops wm5100_pm = {
 };
 
 static const struct i2c_device_id wm5100_i2c_id[] = {
-	{ "wm5100" },
+	{ .name = "wm5100" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm5100_i2c_id);

@@ -3,6 +3,7 @@
 #define SELFTESTS_VFIO_LIB_INCLUDE_LIBVFIO_ASSERT_H
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 
@@ -45,10 +46,32 @@
 	VFIO_LOG_AND_EXIT(_fmt, ##__VA_ARGS__);			\
 } while (0)
 
+#define malloc_assert(_size) ({					\
+	size_t __size = (_size);				\
+	void *__ptr = malloc(__size);				\
+	VFIO_ASSERT_NOT_NULL(__ptr, "malloc(%zu) failed",	\
+			     __size);				\
+	__ptr;							\
+})
+
+#define calloc_assert(_nmemb, _size) ({				\
+	size_t __nmemb = (_nmemb);				\
+	size_t __size = (_size);				\
+	void *__ptr = calloc(__nmemb, __size);			\
+	VFIO_ASSERT_NOT_NULL(__ptr, "calloc(%zu, %zu) failed",	\
+			     __nmemb, __size);			\
+	__ptr;							\
+})
+
 #define ioctl_assert(_fd, _op, _arg) do {						       \
 	void *__arg = (_arg);								       \
 	int __ret = ioctl((_fd), (_op), (__arg));					       \
 	VFIO_ASSERT_EQ(__ret, 0, "ioctl(%s, %s, %s) returned %d\n", #_fd, #_op, #_arg, __ret); \
+} while (0)
+
+#define snprintf_assert(_s, _size, _fmt, ...) do {                      \
+	int __ret = snprintf(_s, _size, _fmt, ##__VA_ARGS__);           \
+	VFIO_ASSERT_LT(__ret, _size);                                   \
 } while (0)
 
 #endif /* SELFTESTS_VFIO_LIB_INCLUDE_LIBVFIO_ASSERT_H */

@@ -25,6 +25,7 @@
 #include <linux/sizes.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_format_helper.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -164,7 +165,7 @@ static const uint32_t ast_cursor_plane_formats[] = {
 };
 
 static int ast_cursor_plane_helper_atomic_check(struct drm_plane *plane,
-						struct drm_atomic_state *state)
+						struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_framebuffer *new_fb = new_plane_state->fb;
@@ -244,7 +245,7 @@ static const u8 *ast_cursor_plane_get_argb4444(struct ast_cursor_plane *ast_curs
 }
 
 static void ast_cursor_plane_helper_atomic_update(struct drm_plane *plane,
-						  struct drm_atomic_state *state)
+						  struct drm_atomic_commit *state)
 {
 	struct ast_cursor_plane *ast_cursor_plane = to_ast_cursor_plane(plane);
 	struct ast_plane *ast_plane = to_ast_plane(plane);
@@ -309,7 +310,7 @@ static void ast_cursor_plane_helper_atomic_update(struct drm_plane *plane,
 }
 
 static void ast_cursor_plane_helper_atomic_disable(struct drm_plane *plane,
-						   struct drm_atomic_state *state)
+						   struct drm_atomic_commit *state)
 {
 	struct ast_device *ast = to_ast_device(plane->dev);
 
@@ -355,6 +356,8 @@ int ast_cursor_plane_init(struct ast_device *ast)
 	}
 	drm_plane_helper_add(cursor_plane, &ast_cursor_plane_helper_funcs);
 	drm_plane_enable_fb_damage_clips(cursor_plane);
+	drm_plane_create_blend_mode_property(cursor_plane,
+					     BIT(DRM_MODE_BLEND_COVERAGE));
 
 	return 0;
 }

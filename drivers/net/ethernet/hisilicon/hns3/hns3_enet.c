@@ -86,25 +86,39 @@ module_param(page_pool_enabled, bool, 0400);
  *   Class, Class Mask, private data (not used) }
  */
 static const struct pci_device_id hns3_pci_tbl[] = {
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_GE), 0},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_25GE), 0},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_25GE_RDMA),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_25GE_RDMA_MACSEC),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_50GE_RDMA),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_50GE_RDMA_MACSEC),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_100G_RDMA_MACSEC),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_200G_RDMA),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_VF), 0},
-	{PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_RDMA_DCB_PFC_VF),
-	 HNAE3_DEV_SUPPORT_ROCE_DCB_BITS},
+	{
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_GE),
+		.driver_data = 0,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_25GE),
+		.driver_data = 0,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_25GE_RDMA),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_25GE_RDMA_MACSEC),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_50GE_RDMA),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_50GE_RDMA_MACSEC),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_100G_RDMA_MACSEC),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_200G_RDMA),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_VF),
+		.driver_data = 0,
+	}, {
+		PCI_VDEVICE(HUAWEI, HNAE3_DEV_ID_RDMA_DCB_PFC_VF),
+		.driver_data = HNAE3_DEV_SUPPORT_ROCE_DCB_BITS,
+	},
 	/* required last entry */
-	{0,}
+	{ }
 };
 MODULE_DEVICE_TABLE(pci, hns3_pci_tbl);
 
@@ -2664,13 +2678,12 @@ static int hns3_setup_tc(struct net_device *netdev, void *type_data)
 static int hns3_setup_tc_cls_flower(struct hns3_nic_priv *priv,
 				    struct flow_cls_offload *flow)
 {
-	int tc = tc_classid_to_hwtc(priv->netdev, flow->classid);
 	struct hnae3_handle *h = hns3_get_handle(priv->netdev);
 
 	switch (flow->command) {
 	case FLOW_CLS_REPLACE:
 		if (h->ae_algo->ops->add_cls_flower)
-			return h->ae_algo->ops->add_cls_flower(h, flow, tc);
+			return h->ae_algo->ops->add_cls_flower(h, flow);
 		break;
 	case FLOW_CLS_DESTROY:
 		if (h->ae_algo->ops->del_cls_flower)
@@ -2812,32 +2825,28 @@ static int hns3_nic_change_mtu(struct net_device *netdev, int new_mtu)
 	return ret;
 }
 
-static int hns3_get_timeout_queue(struct net_device *ndev)
+static bool hns3_dump_timeout_queue(struct net_device *ndev,
+				    unsigned int txqueue)
 {
-	unsigned int i;
+	unsigned int timedout_ms;
+	struct netdev_queue *q;
 
-	/* Find the stopped queue the same way the stack does */
-	for (i = 0; i < ndev->num_tx_queues; i++) {
-		unsigned int timedout_ms;
-		struct netdev_queue *q;
-
-		q = netdev_get_tx_queue(ndev, i);
-		timedout_ms = netif_xmit_timeout_ms(q);
-		if (timedout_ms) {
+	q = netdev_get_tx_queue(ndev, txqueue);
+	timedout_ms = netif_xmit_timeout_ms(q);
+	if (timedout_ms) {
 #ifdef CONFIG_BQL
-			struct dql *dql = &q->dql;
+		struct dql *dql = &q->dql;
 
-			netdev_info(ndev, "DQL info last_cnt: %u, queued: %u, adj_limit: %u, completed: %u\n",
-				    dql->last_obj_cnt, dql->num_queued,
-				    dql->adj_limit, dql->num_completed);
+		netdev_info(ndev, "DQL info last_cnt: %u, queued: %u, adj_limit: %u, completed: %u\n",
+			    dql->last_obj_cnt, dql->num_queued,
+			    dql->adj_limit, dql->num_completed);
 #endif
-			netdev_info(ndev, "queue state: 0x%lx, delta msecs: %u\n",
-				    q->state, timedout_ms);
-			break;
-		}
+		netdev_info(ndev, "queue state: 0x%lx, delta msecs: %u\n",
+			    q->state, timedout_ms);
+		return true;
 	}
 
-	return i;
+	return false;
 }
 
 static void hns3_dump_queue_stats(struct net_device *ndev,
@@ -2887,15 +2896,15 @@ static void hns3_dump_queue_reg(struct net_device *ndev,
 				      HNS3_RING_TX_RING_EBD_OFFSET_REG));
 }
 
-static bool hns3_get_tx_timeo_queue_info(struct net_device *ndev)
+static bool hns3_get_tx_timeo_queue_info(struct net_device *ndev,
+					 unsigned int txqueue)
 {
 	struct hns3_nic_priv *priv = netdev_priv(ndev);
 	struct hnae3_handle *h = hns3_get_handle(ndev);
 	struct hns3_enet_ring *tx_ring;
-	u32 timeout_queue;
 
-	timeout_queue = hns3_get_timeout_queue(ndev);
-	if (timeout_queue >= ndev->num_tx_queues) {
+	if (txqueue >= h->kinfo.num_tqps ||
+	    !hns3_dump_timeout_queue(ndev, txqueue)) {
 		netdev_info(ndev,
 			    "no netdev TX timeout queue found, timeout count: %llu\n",
 			    priv->tx_timeout_count);
@@ -2904,8 +2913,8 @@ static bool hns3_get_tx_timeo_queue_info(struct net_device *ndev)
 
 	priv->tx_timeout_count++;
 
-	tx_ring = &priv->ring[timeout_queue];
-	hns3_dump_queue_stats(ndev, tx_ring, timeout_queue);
+	tx_ring = &priv->ring[txqueue];
+	hns3_dump_queue_stats(ndev, tx_ring, txqueue);
 
 	/* When mac received many pause frames continuous, it's unable to send
 	 * packets, which may cause tx timeout
@@ -2928,7 +2937,7 @@ static void hns3_nic_net_timeout(struct net_device *ndev, unsigned int txqueue)
 	struct hns3_nic_priv *priv = netdev_priv(ndev);
 	struct hnae3_handle *h = priv->ae_handle;
 
-	if (!hns3_get_tx_timeo_queue_info(ndev))
+	if (!hns3_get_tx_timeo_queue_info(ndev, txqueue))
 		return;
 
 	/* request the reset, and let the hclge to determine

@@ -17,10 +17,7 @@ use crate::{
         from_result,
         to_result, //
     },
-    io::{
-        mem::IoRequest,
-        Resource, //
-    },
+    io::Resource,
     irq::{
         self,
         IrqRequest, //
@@ -30,6 +27,9 @@ use crate::{
     types::Opaque,
     ThisModule, //
 };
+
+#[cfg(CONFIG_HAS_IOMEM)]
+use crate::io::mem::IoRequest;
 
 use core::{
     marker::PhantomData,
@@ -45,18 +45,18 @@ pub struct Adapter<T: Driver>(T);
 
 // SAFETY:
 // - `bindings::platform_driver` is a C type declared as `repr(C)`.
-// - `T` is the type of the driver's device private data.
+// - `T::Data` is the type of the driver's device private data.
 // - `struct platform_driver` embeds a `struct device_driver`.
 // - `DEVICE_DRIVER_OFFSET` is the correct byte offset to the embedded `struct device_driver`.
-unsafe impl<T: Driver + 'static> driver::DriverLayout for Adapter<T> {
+unsafe impl<T: Driver> driver::DriverLayout for Adapter<T> {
     type DriverType = bindings::platform_driver;
-    type DriverData = T;
+    type DriverData<'bound> = T::Data<'bound>;
     const DEVICE_DRIVER_OFFSET: usize = core::mem::offset_of!(Self::DriverType, driver);
 }
 
 // SAFETY: A call to `unregister` for a given instance of `DriverType` is guaranteed to be valid if
 // a preceding call to `register` has been successful.
-unsafe impl<T: Driver + 'static> driver::RegistrationOps for Adapter<T> {
+unsafe impl<T: Driver> driver::RegistrationOps for Adapter<T> {
     unsafe fn register(
         pdrv: &Opaque<Self::DriverType>,
         name: &'static CStr,
@@ -82,7 +82,9 @@ unsafe impl<T: Driver + 'static> driver::RegistrationOps for Adapter<T> {
         }
 
         // SAFETY: `pdrv` is guaranteed to be a valid `DriverType`.
-        to_result(unsafe { bindings::__platform_driver_register(pdrv.get(), module.0) })
+        to_result(unsafe {
+            bindings::__platform_driver_register(pdrv.get(), module.as_ptr(), name.as_char_ptr())
+        })
     }
 
     unsafe fn unregister(pdrv: &Opaque<Self::DriverType>) {
@@ -91,14 +93,15 @@ unsafe impl<T: Driver + 'static> driver::RegistrationOps for Adapter<T> {
     }
 }
 
-impl<T: Driver + 'static> Adapter<T> {
+impl<T: Driver> Adapter<T> {
     extern "C" fn probe_callback(pdev: *mut bindings::platform_device) -> kernel::ffi::c_int {
         // SAFETY: The platform bus only ever calls the probe callback with a valid pointer to a
         // `struct platform_device`.
         //
         // INVARIANT: `pdev` is valid for the duration of `probe_callback()`.
-        let pdev = unsafe { &*pdev.cast::<Device<device::CoreInternal>>() };
-        let info = <Self as driver::Adapter>::id_info(pdev.as_ref());
+        let pdev = unsafe { &*pdev.cast::<Device<device::CoreInternal<'_>>>() };
+        // SAFETY: `pdev` matched data is of type `Self::IdInfo`.
+        let info = unsafe { <Self as driver::Adapter>::id_info(pdev.as_ref()) };
 
         from_result(|| {
             let data = T::probe(pdev, info);
@@ -113,18 +116,18 @@ impl<T: Driver + 'static> Adapter<T> {
         // `struct platform_device`.
         //
         // INVARIANT: `pdev` is valid for the duration of `remove_callback()`.
-        let pdev = unsafe { &*pdev.cast::<Device<device::CoreInternal>>() };
+        let pdev = unsafe { &*pdev.cast::<Device<device::CoreInternal<'_>>>() };
 
         // SAFETY: `remove_callback` is only ever called after a successful call to
         // `probe_callback`, hence it's guaranteed that `Device::set_drvdata()` has been called
-        // and stored a `Pin<KBox<T>>`.
-        let data = unsafe { pdev.as_ref().drvdata_borrow::<T>() };
+        // and stored a `Pin<KBox<T::Data<'_>>>`.
+        let data = unsafe { pdev.as_ref().drvdata_borrow::<T::Data<'_>>() };
 
         T::unbind(pdev, data);
     }
 }
 
-impl<T: Driver + 'static> driver::Adapter for Adapter<T> {
+impl<T: Driver> driver::Adapter for Adapter<T> {
     type IdInfo = T::IdInfo;
 
     fn of_id_table() -> Option<of::IdTable<Self::IdInfo>> {
@@ -174,7 +177,6 @@ macro_rules! module_platform_driver {
 ///
 /// kernel::of_device_table!(
 ///     OF_TABLE,
-///     MODULE_OF_TABLE,
 ///     <MyDriver as platform::Driver>::IdInfo,
 ///     [
 ///         (of::DeviceId::new(c"test,device"), ())
@@ -183,7 +185,6 @@ macro_rules! module_platform_driver {
 ///
 /// kernel::acpi_device_table!(
 ///     ACPI_TABLE,
-///     MODULE_ACPI_TABLE,
 ///     <MyDriver as platform::Driver>::IdInfo,
 ///     [
 ///         (acpi::DeviceId::new(c"LNUXBEEF"), ())
@@ -192,18 +193,19 @@ macro_rules! module_platform_driver {
 ///
 /// impl platform::Driver for MyDriver {
 ///     type IdInfo = ();
+///     type Data<'bound> = Self;
 ///     const OF_ID_TABLE: Option<of::IdTable<Self::IdInfo>> = Some(&OF_TABLE);
 ///     const ACPI_ID_TABLE: Option<acpi::IdTable<Self::IdInfo>> = Some(&ACPI_TABLE);
 ///
-///     fn probe(
-///         _pdev: &platform::Device<Core>,
-///         _id_info: Option<&Self::IdInfo>,
-///     ) -> impl PinInit<Self, Error> {
+///     fn probe<'bound>(
+///         _pdev: &'bound platform::Device<Core<'_>>,
+///         _id_info: Option<&'bound Self::IdInfo>,
+///     ) -> impl PinInit<Self::Data<'bound>, Error> + 'bound {
 ///         Err(ENODEV)
 ///     }
 /// }
 ///```
-pub trait Driver: Send {
+pub trait Driver {
     /// The type holding driver private data about each device id supported by the driver.
     // TODO: Use associated_type_defaults once stabilized:
     //
@@ -211,6 +213,9 @@ pub trait Driver: Send {
     // type IdInfo: 'static = ();
     // ```
     type IdInfo: 'static;
+
+    /// The type of the driver's bus device private data.
+    type Data<'bound>: Send + 'bound;
 
     /// The table of OF device ids supported by the driver.
     const OF_ID_TABLE: Option<of::IdTable<Self::IdInfo>> = None;
@@ -222,10 +227,10 @@ pub trait Driver: Send {
     ///
     /// Called when a new platform device is added or discovered.
     /// Implementers should attempt to initialize the device here.
-    fn probe(
-        dev: &Device<device::Core>,
-        id_info: Option<&Self::IdInfo>,
-    ) -> impl PinInit<Self, Error>;
+    fn probe<'bound>(
+        dev: &'bound Device<device::Core<'_>>,
+        id_info: Option<&'bound Self::IdInfo>,
+    ) -> impl PinInit<Self::Data<'bound>, Error> + 'bound;
 
     /// Platform driver unbind.
     ///
@@ -236,8 +241,8 @@ pub trait Driver: Send {
     /// `&Device<Core>` or `&Device<Bound>` reference. For instance, drivers may try to perform I/O
     /// operations to gracefully tear down the device.
     ///
-    /// Otherwise, release operations for driver resources should be performed in `Self::drop`.
-    fn unbind(dev: &Device<device::Core>, this: Pin<&Self>) {
+    /// Otherwise, release operations for driver resources should be performed in `Drop`.
+    fn unbind<'bound>(dev: &'bound Device<device::Core<'_>>, this: Pin<&Self::Data<'bound>>) {
         let _ = (dev, this);
     }
 }
@@ -301,6 +306,7 @@ impl<Ctx: device::DeviceContext> Device<Ctx> {
     }
 }
 
+#[cfg(CONFIG_HAS_IOMEM)]
 impl Device<Bound> {
     /// Returns an `IoRequest` for the resource at `index`, if any.
     pub fn io_request_by_index(&self, index: u32) -> Option<IoRequest<'_>> {
@@ -333,22 +339,30 @@ macro_rules! define_irq_accessor_by_index {
         $handler_trait:ident
     ) => {
         $(#[$meta])*
-        pub fn $fn_name<'a, T: irq::$handler_trait + 'static>(
+        ///
+        /// # Safety
+        ///
+        /// Callers must not `mem::forget()` the resulting registration or otherwise prevent its
+        /// [`Drop`] implementation from running.
+        pub unsafe fn $fn_name<'a, T: irq::$handler_trait + 'a>(
             &'a self,
             flags: irq::Flags,
             index: u32,
             name: &'static CStr,
             handler: impl PinInit<T, Error> + 'a,
-        ) -> impl PinInit<irq::$reg_type<T>, Error> + 'a {
+        ) -> impl PinInit<irq::$reg_type<'a, T>, Error> + 'a {
             pin_init::pin_init_scope(move || {
                 let request = self.$request_fn(index)?;
 
-                Ok(irq::$reg_type::<T>::new(
-                    request,
-                    flags,
-                    name,
-                    handler,
-                ))
+                // SAFETY: Caller guarantees the Registration will not be leaked.
+                Ok(unsafe {
+                    irq::$reg_type::<T>::new(
+                        request,
+                        flags,
+                        name,
+                        handler,
+                    )
+                })
             })
         }
     };
@@ -362,22 +376,30 @@ macro_rules! define_irq_accessor_by_name {
         $handler_trait:ident
     ) => {
         $(#[$meta])*
-        pub fn $fn_name<'a, T: irq::$handler_trait + 'static>(
+        ///
+        /// # Safety
+        ///
+        /// Callers must not `mem::forget()` the resulting registration or otherwise prevent its
+        /// [`Drop`] implementation from running.
+        pub unsafe fn $fn_name<'a, T: irq::$handler_trait + 'a>(
             &'a self,
             flags: irq::Flags,
             irq_name: &'a CStr,
             name: &'static CStr,
             handler: impl PinInit<T, Error> + 'a,
-        ) -> impl PinInit<irq::$reg_type<T>, Error> + 'a {
+        ) -> impl PinInit<irq::$reg_type<'a, T>, Error> + 'a {
             pin_init::pin_init_scope(move || {
                 let request = self.$request_fn(irq_name)?;
 
-                Ok(irq::$reg_type::<T>::new(
-                    request,
-                    flags,
-                    name,
-                    handler,
-                ))
+                // SAFETY: Caller guarantees the Registration will not be leaked.
+                Ok(unsafe {
+                    irq::$reg_type::<T>::new(
+                        request,
+                        flags,
+                        name,
+                        handler,
+                    )
+                })
             })
         }
     };
@@ -509,7 +531,7 @@ impl Device<Bound> {
 kernel::impl_device_context_deref!(unsafe { Device });
 kernel::impl_device_context_into_aref!(Device);
 
-impl crate::dma::Device for Device<device::Core> {}
+impl<'a> crate::dma::Device<'a> for Device<device::Core<'a>> {}
 
 // SAFETY: Instances of `Device` are always reference-counted.
 unsafe impl crate::sync::aref::AlwaysRefCounted for Device {
@@ -561,3 +583,7 @@ unsafe impl Send for Device {}
 // SAFETY: `Device` can be shared among threads because all methods of `Device`
 // (i.e. `Device<Normal>) are thread safe.
 unsafe impl Sync for Device {}
+
+// SAFETY: Same as `Device<Normal>` -- the underlying `struct platform_device` is the same;
+// `Bound` is a zero-sized type-state marker that does not affect thread safety.
+unsafe impl Sync for Device<device::Bound> {}

@@ -34,6 +34,7 @@
 
 #include <asm/microcode.h>
 #include <asm/processor.h>
+#include <asm/cpuid/api.h>
 #include <asm/cmdline.h>
 #include <asm/setup.h>
 #include <asm/cpu.h>
@@ -135,8 +136,7 @@ struct cont_desc {
  * Microcode patch container file is prepended to the initrd in cpio
  * format. See Documentation/arch/x86/microcode.rst
  */
-static const char
-ucode_path[] __maybe_unused = "kernel/x86/microcode/AuthenticAMD.bin";
+static const char ucode_path[] = "kernel/x86/microcode/AuthenticAMD.bin";
 
 /*
  * This is CPUID(1).EAX on the BSP. It is used in two ways:
@@ -232,11 +232,6 @@ static u32 get_cutoff_revision(u32 rev)
 static bool need_sha_check(u32 cur_rev)
 {
 	u32 cutoff;
-
-	if (!cur_rev) {
-		cur_rev = cpuid_to_ucode_rev(bsp_cpuid_1_eax);
-		pr_info_once("No current revision, generating the lowest one: 0x%x\n", cur_rev);
-	}
 
 	cutoff = get_cutoff_revision(cur_rev);
 	if (cutoff)
@@ -338,6 +333,13 @@ static u32 get_patch_level(void)
 	}
 
 	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+	if (!rev) {
+		if (x86_family(bsp_cpuid_1_eax) < 0x17)
+			return rev;
+
+		rev = cpuid_to_ucode_rev(bsp_cpuid_1_eax);
+		pr_info_once("No current revision, generating the lowest one: 0x%x\n", rev);
+	}
 
 	return rev;
 }

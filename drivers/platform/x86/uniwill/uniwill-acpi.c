@@ -95,6 +95,9 @@
 
 #define EC_ADDR_MAIN_FAN_RPM_2		0x0465
 
+#define EC_ADDR_SCREEN_STATUS		0x0466
+#define SCREEN_SUSPENDED		BIT(6)
+
 #define EC_ADDR_SECOND_FAN_RPM_1	0x046C
 
 #define EC_ADDR_SECOND_FAN_RPM_2	0x046D
@@ -109,9 +112,35 @@
 
 #define EC_ADDR_BAT_CYCLE_COUNT_2	0x04A7
 
+#define EC_ADDR_OEM_9			0x0726
+#define AC_AUTO_BOOT_ENABLE		BIT(3)
+
 #define EC_ADDR_PROJECT_ID		0x0740
+#define PROJECT_ID_NONE			0x00
+#define PROJECT_ID_GI			0x01
+#define PROJECT_ID_GJ			0x02
+#define PROJECT_ID_GK			0x03
+#define PROJECT_ID_GICN			0x04
+#define PROJECT_ID_GJCN			0x05
+#define PROJECT_ID_GK5CN_X		0x06
+#define PROJECT_ID_GK7CN_S		0x07
+#define PROJECT_ID_GK7CPCS_GK5CQ7Z	0x08
+#define PROJECT_ID_PF			0x09
+#define PROJECT_ID_GK5CP_4X_5X_6X	0x0A
+#define PROJECT_ID_IDP			0x0B
+#define PROJECT_ID_IDY_6Y		0x0C
+#define PROJECT_ID_IDY_7Y		0x0D
+#define PROJECT_ID_PF4MU_PF4MN_PF5MU	0x0E
+#define PROJECT_ID_CML_GAMING		0x0F
+#define PROJECT_ID_GK7NXXR		0x10
+#define PROJECT_ID_GM5MU1Y		0x11
 #define PROJECT_ID_PH4TRX1		0x12
+#define PROJECT_ID_PH4TUX1		0x13
+#define PROJECT_ID_PH4TQX1		0x14
 #define PROJECT_ID_PH6TRX1		0x15
+#define PROJECT_ID_PH6TQXX		0x16
+#define PROJECT_ID_PHXAXXX		0x17
+#define PROJECT_ID_PHXPXXX		0x18
 
 #define EC_ADDR_AP_OEM			0x0741
 #define	ENABLE_MANUAL_CTRL		BIT(0)
@@ -214,6 +243,7 @@
 #define FAN_TABLE_OFFICE_MODE		BIT(2)
 #define FAN_V3				BIT(3)
 #define DEFAULT_MODE			BIT(4)
+#define ENABLE_CHINA_MODE		BIT(6)
 
 #define EC_ADDR_PL1_SETTING		0x0783
 
@@ -225,11 +255,12 @@
 #define FAN_CURVE_LENGTH		5
 
 #define EC_ADDR_KBD_STATUS		0x078C
-#define KBD_WHITE_ONLY			BIT(0)	// ~single color
-#define KBD_SINGLE_COLOR_OFF		BIT(1)
+/* Unreliable on some models, use the device descriptor instead. */
+#define KBD_WHITE_ONLY			BIT(0)
+#define KBD_POWER_OFF			BIT(1)
 #define KBD_TURBO_LEVEL_MASK		GENMASK(3, 2)
 #define KBD_APPLY			BIT(4)
-#define KBD_BRIGHTNESS			GENMASK(7, 5)
+#define KBD_BRIGHTNESS_MASK		GENMASK(7, 5)
 
 #define EC_ADDR_FAN_CTRL		0x078E
 #define FAN3P5				BIT(1)
@@ -254,6 +285,10 @@
 
 #define EC_ADDR_OEM_4			0x07A6
 #define OVERBOOST_DYN_TEMP_OFF		BIT(1)
+#define CHARGING_PROFILE_MASK		GENMASK(5, 4)
+#define CHARGING_PROFILE_HIGH_CAPACITY	0x00
+#define CHARGING_PROFILE_BALANCED	0x01
+#define CHARGING_PROFILE_STATIONARY	0x02
 #define TOUCHPAD_TOGGLE_OFF		BIT(6)
 
 #define EC_ADDR_CHARGE_CTRL		0x07B9
@@ -314,19 +349,26 @@
 #define FAN_TABLE_LENGTH	16
 
 #define LED_CHANNELS		3
-#define LED_MAX_BRIGHTNESS	200
+
+#define KBD_LED_CHANNELS	3
+#define KBD_LED_MAX_INTENSITY	50
 
 #define UNIWILL_FEATURE_FN_LOCK			BIT(0)
 #define UNIWILL_FEATURE_SUPER_KEY		BIT(1)
 #define UNIWILL_FEATURE_TOUCHPAD_TOGGLE		BIT(2)
 #define UNIWILL_FEATURE_LIGHTBAR		BIT(3)
-#define UNIWILL_FEATURE_BATTERY			BIT(4)
-#define UNIWILL_FEATURE_CPU_TEMP		BIT(5)
-#define UNIWILL_FEATURE_GPU_TEMP		BIT(6)
-#define UNIWILL_FEATURE_PRIMARY_FAN		BIT(7)
-#define UNIWILL_FEATURE_SECONDARY_FAN		BIT(8)
-#define UNIWILL_FEATURE_NVIDIA_CTGP_CONTROL	BIT(9)
-#define UNIWILL_FEATURE_USB_C_POWER_PRIORITY	BIT(10)
+#define UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT	BIT(4)
+/* Mutually exclusive with the charge limit feature */
+#define UNIWILL_FEATURE_BATTERY_CHARGE_MODES	BIT(5)
+#define UNIWILL_FEATURE_CPU_TEMP		BIT(6)
+#define UNIWILL_FEATURE_GPU_TEMP		BIT(7)
+#define UNIWILL_FEATURE_PRIMARY_FAN		BIT(8)
+#define UNIWILL_FEATURE_SECONDARY_FAN		BIT(9)
+#define UNIWILL_FEATURE_NVIDIA_CTGP_CONTROL	BIT(10)
+#define UNIWILL_FEATURE_USB_C_POWER_PRIORITY	BIT(11)
+#define UNIWILL_FEATURE_KEYBOARD_BACKLIGHT	BIT(12)
+#define UNIWILL_FEATURE_AC_AUTO_BOOT		BIT(13)
+#define UNIWILL_FEATURE_USB_POWERSHARE		BIT(14)
 
 enum usb_c_power_priority_options {
 	USB_C_POWER_PRIORITY_CHARGING = 0,
@@ -338,16 +380,39 @@ struct uniwill_data {
 	acpi_handle handle;
 	struct regmap *regmap;
 	unsigned int features;
+	u8 project_id;
 	struct acpi_battery_hook hook;
-	unsigned int last_charge_ctrl;
 	struct mutex battery_lock;	/* Protects the list of currently registered batteries */
-	unsigned int last_status;
-	unsigned int last_switch_status;
+	union {
+		struct {
+			/* Protects writes to last_charge_type */
+			struct mutex charge_type_lock;
+			enum power_supply_charge_type last_charge_type;
+		};
+		unsigned int last_charge_ctrl;
+	};
+	bool last_fn_lock_state;
+	bool last_super_key_enable_state;
+	bool last_touchpad_toggle_enable_state;
+	bool last_usb_powershare_high_state;
 	struct mutex super_key_lock;	/* Protects the toggling of the super key lock state */
 	struct list_head batteries;
 	struct mutex led_lock;		/* Protects writes to the lightbar registers */
+	u8 lightbar_max_brightness;
 	struct led_classdev_mc led_mc_cdev;
 	struct mc_subled led_mc_subled_info[LED_CHANNELS];
+	bool kbd_led_single_color;
+	u8 kbd_led_max_brightness;
+	unsigned int last_kbd_status;
+	union {
+		struct {
+			/* Protects writes to the RGB keyboard backlight registers */
+			struct mutex kbd_rgb_led_lock;
+			struct led_classdev_mc kbd_led_mc_cdev;
+			struct mc_subled kbd_led_mc_subled_info[KBD_LED_CHANNELS];
+		};
+		struct led_classdev kbd_led_cdev;
+	};
 	struct mutex input_lock;	/* Protects input sequence during notify */
 	struct input_dev *input_device;
 	struct notifier_block nb;
@@ -362,6 +427,9 @@ struct uniwill_battery_entry {
 
 struct uniwill_device_descriptor {
 	unsigned int features;
+	bool kbd_led_single_color;
+	u8 kbd_led_max_brightness;
+	u8 lightbar_max_brightness;
 	/* Executed during driver probing */
 	int (*probe)(struct uniwill_data *data);
 };
@@ -413,6 +481,9 @@ static const struct key_entry uniwill_keymap[] = {
 	{ KE_KEY,       UNIWILL_OSD_KBDILLUMDOWN,               { KEY_KBDILLUMDOWN }},
 	{ KE_KEY,       UNIWILL_OSD_KBDILLUMUP,                 { KEY_KBDILLUMUP }},
 
+	/* Reported when the EC changed the keyboard backlight brightness */
+	{ KE_IGNORE,	UNIWILL_OSD_BACKLIGHT_LEVEL_CHANGE,	{ KEY_UNKNOWN }},
+
 	/* Reported when the user wants to toggle the microphone mute status */
 	{ KE_KEY,       UNIWILL_OSD_MIC_MUTE,                   { KEY_MICMUTE }},
 
@@ -421,11 +492,6 @@ static const struct key_entry uniwill_keymap[] = {
 
 	/* Reported when the user wants to toggle the brightness of the keyboard */
 	{ KE_KEY,       UNIWILL_OSD_KBDILLUMTOGGLE,             { KEY_KBDILLUMTOGGLE }},
-	{ KE_KEY,       UNIWILL_OSD_KB_LED_LEVEL0,              { KEY_KBDILLUMTOGGLE }},
-	{ KE_KEY,       UNIWILL_OSD_KB_LED_LEVEL1,              { KEY_KBDILLUMTOGGLE }},
-	{ KE_KEY,       UNIWILL_OSD_KB_LED_LEVEL2,              { KEY_KBDILLUMTOGGLE }},
-	{ KE_KEY,       UNIWILL_OSD_KB_LED_LEVEL3,              { KEY_KBDILLUMTOGGLE }},
-	{ KE_KEY,       UNIWILL_OSD_KB_LED_LEVEL4,              { KEY_KBDILLUMTOGGLE }},
 
 	/* FIXME: find out the exact meaning of those events */
 	{ KE_IGNORE,    UNIWILL_OSD_BAT_CHARGE_FULL_24_H,       { KEY_UNKNOWN }},
@@ -433,6 +499,9 @@ static const struct key_entry uniwill_keymap[] = {
 
 	/* Reported when the user wants to toggle the benchmark mode status */
 	{ KE_IGNORE,    UNIWILL_OSD_BENCHMARK_MODE_TOGGLE,      { KEY_UNKNOWN }},
+
+	/* Reported when the screen is enabled/disabled during resume/suspend */
+	{ KE_IGNORE,	UNIWILL_OSD_SCREEN_STATE_CHANGED,	{ KEY_UNKNOWN }},
 
 	/* Reported when the user wants to toggle the webcam */
 	{ KE_IGNORE,    UNIWILL_OSD_WEBCAM_TOGGLE,              { KEY_UNKNOWN }},
@@ -444,6 +513,12 @@ static inline bool uniwill_device_supports(const struct uniwill_data *data,
 					   unsigned int features)
 {
 	return (data->features & features) == features;
+}
+
+static inline bool uniwill_device_supports_any(const struct uniwill_data *data,
+					       unsigned int features)
+{
+	return data->features & features;
 }
 
 static int uniwill_ec_reg_write(void *context, unsigned int reg, unsigned int val)
@@ -520,6 +595,7 @@ static const struct regmap_bus uniwill_ec_bus = {
 static bool uniwill_writeable_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
+	case EC_ADDR_OEM_9:
 	case EC_ADDR_AP_OEM:
 	case EC_ADDR_LIGHTBAR_AC_CTRL:
 	case EC_ADDR_LIGHTBAR_AC_RED:
@@ -527,6 +603,11 @@ static bool uniwill_writeable_reg(struct device *dev, unsigned int reg)
 	case EC_ADDR_LIGHTBAR_AC_BLUE:
 	case EC_ADDR_BIOS_OEM:
 	case EC_ADDR_TRIGGER:
+	case EC_ADDR_RGB_RED:
+	case EC_ADDR_RGB_GREEN:
+	case EC_ADDR_RGB_BLUE:
+	case EC_ADDR_BIOS_OEM_2:
+	case EC_ADDR_KBD_STATUS:
 	case EC_ADDR_OEM_4:
 	case EC_ADDR_CHARGE_CTRL:
 	case EC_ADDR_LIGHTBAR_BAT_CTRL:
@@ -554,6 +635,7 @@ static bool uniwill_readable_reg(struct device *dev, unsigned int reg)
 	case EC_ADDR_SECOND_FAN_RPM_1:
 	case EC_ADDR_SECOND_FAN_RPM_2:
 	case EC_ADDR_BAT_ALERT:
+	case EC_ADDR_OEM_9:
 	case EC_ADDR_PROJECT_ID:
 	case EC_ADDR_AP_OEM:
 	case EC_ADDR_LIGHTBAR_AC_CTRL:
@@ -563,8 +645,14 @@ static bool uniwill_readable_reg(struct device *dev, unsigned int reg)
 	case EC_ADDR_BIOS_OEM:
 	case EC_ADDR_PWM_1:
 	case EC_ADDR_PWM_2:
+	case EC_ADDR_SUPPORT_2:
 	case EC_ADDR_TRIGGER:
 	case EC_ADDR_SWITCH_STATUS:
+	case EC_ADDR_RGB_RED:
+	case EC_ADDR_RGB_GREEN:
+	case EC_ADDR_RGB_BLUE:
+	case EC_ADDR_BIOS_OEM_2:
+	case EC_ADDR_KBD_STATUS:
 	case EC_ADDR_OEM_4:
 	case EC_ADDR_CHARGE_CTRL:
 	case EC_ADDR_LIGHTBAR_BAT_CTRL:
@@ -596,8 +684,11 @@ static bool uniwill_volatile_reg(struct device *dev, unsigned int reg)
 	case EC_ADDR_BIOS_OEM:
 	case EC_ADDR_PWM_1:
 	case EC_ADDR_PWM_2:
+	case EC_ADDR_SUPPORT_2:
 	case EC_ADDR_TRIGGER:
 	case EC_ADDR_SWITCH_STATUS:
+	case EC_ADDR_KBD_STATUS:
+	case EC_ADDR_OEM_4:
 	case EC_ADDR_CHARGE_CTRL:
 	case EC_ADDR_USB_C_POWER_PRIORITY:
 		return true;
@@ -619,11 +710,22 @@ static const struct regmap_config uniwill_ec_config = {
 	.use_single_write = true,
 };
 
+static int uniwill_write_fn_lock(struct uniwill_data *data, bool status)
+{
+	unsigned int value;
+
+	if (status)
+		value = FN_LOCK_STATUS;
+	else
+		value = 0;
+
+	return regmap_update_bits(data->regmap, EC_ADDR_BIOS_OEM, FN_LOCK_STATUS, value);
+}
+
 static ssize_t fn_lock_store(struct device *dev, struct device_attribute *attr, const char *buf,
 			     size_t count)
 {
 	struct uniwill_data *data = dev_get_drvdata(dev);
-	unsigned int value;
 	bool enable;
 	int ret;
 
@@ -631,21 +733,15 @@ static ssize_t fn_lock_store(struct device *dev, struct device_attribute *attr, 
 	if (ret < 0)
 		return ret;
 
-	if (enable)
-		value = FN_LOCK_STATUS;
-	else
-		value = 0;
-
-	ret = regmap_update_bits(data->regmap, EC_ADDR_BIOS_OEM, FN_LOCK_STATUS, value);
+	ret = uniwill_write_fn_lock(data, enable);
 	if (ret < 0)
 		return ret;
 
 	return count;
 }
 
-static ssize_t fn_lock_show(struct device *dev, struct device_attribute *attr, char *buf)
+static int uniwill_read_fn_lock(struct uniwill_data *data, bool *status)
 {
-	struct uniwill_data *data = dev_get_drvdata(dev);
 	unsigned int value;
 	int ret;
 
@@ -653,22 +749,30 @@ static ssize_t fn_lock_show(struct device *dev, struct device_attribute *attr, c
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", !!(value & FN_LOCK_STATUS));
+	*status = !!(value & FN_LOCK_STATUS);
+
+	return 0;
+}
+
+static ssize_t fn_lock_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	bool status;
+	int ret;
+
+	ret = uniwill_read_fn_lock(data, &status);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", status);
 }
 
 static DEVICE_ATTR_RW(fn_lock);
 
-static ssize_t super_key_enable_store(struct device *dev, struct device_attribute *attr,
-				      const char *buf, size_t count)
+static int uniwill_write_super_key_enable(struct uniwill_data *data, bool status)
 {
-	struct uniwill_data *data = dev_get_drvdata(dev);
 	unsigned int value;
-	bool enable;
 	int ret;
-
-	ret = kstrtobool(buf, &enable);
-	if (ret < 0)
-		return ret;
 
 	guard(mutex)(&data->super_key_lock);
 
@@ -680,37 +784,17 @@ static ssize_t super_key_enable_store(struct device *dev, struct device_attribut
 	 * We can only toggle the super key lock, so we return early if the setting
 	 * is already in the correct state.
 	 */
-	if (enable == !(value & SUPER_KEY_LOCK_STATUS))
-		return count;
+	if (status == !(value & SUPER_KEY_LOCK_STATUS))
+		return 0;
 
-	ret = regmap_write_bits(data->regmap, EC_ADDR_TRIGGER, TRIGGER_SUPER_KEY_LOCK,
-				TRIGGER_SUPER_KEY_LOCK);
-	if (ret < 0)
-		return ret;
-
-	return count;
+	return regmap_write_bits(data->regmap, EC_ADDR_TRIGGER, TRIGGER_SUPER_KEY_LOCK,
+				 TRIGGER_SUPER_KEY_LOCK);
 }
 
-static ssize_t super_key_enable_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t super_key_enable_store(struct device *dev, struct device_attribute *attr,
+				      const char *buf, size_t count)
 {
 	struct uniwill_data *data = dev_get_drvdata(dev);
-	unsigned int value;
-	int ret;
-
-	ret = regmap_read(data->regmap, EC_ADDR_SWITCH_STATUS, &value);
-	if (ret < 0)
-		return ret;
-
-	return sysfs_emit(buf, "%d\n", !(value & SUPER_KEY_LOCK_STATUS));
-}
-
-static DEVICE_ATTR_RW(super_key_enable);
-
-static ssize_t touchpad_toggle_enable_store(struct device *dev, struct device_attribute *attr,
-					    const char *buf, size_t count)
-{
-	struct uniwill_data *data = dev_get_drvdata(dev);
-	unsigned int value;
 	bool enable;
 	int ret;
 
@@ -718,22 +802,74 @@ static ssize_t touchpad_toggle_enable_store(struct device *dev, struct device_at
 	if (ret < 0)
 		return ret;
 
-	if (enable)
-		value = 0;
-	else
-		value = TOUCHPAD_TOGGLE_OFF;
-
-	ret = regmap_update_bits(data->regmap, EC_ADDR_OEM_4, TOUCHPAD_TOGGLE_OFF, value);
+	ret = uniwill_write_super_key_enable(data, enable);
 	if (ret < 0)
 		return ret;
 
 	return count;
 }
 
-static ssize_t touchpad_toggle_enable_show(struct device *dev, struct device_attribute *attr,
-					   char *buf)
+static int uniwill_read_super_key_enable(struct uniwill_data *data, bool *status)
+{
+	unsigned int value;
+	int ret;
+
+	ret = regmap_read(data->regmap, EC_ADDR_SWITCH_STATUS, &value);
+	if (ret < 0)
+		return ret;
+
+	*status = !(value & SUPER_KEY_LOCK_STATUS);
+
+	return 0;
+}
+
+static ssize_t super_key_enable_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct uniwill_data *data = dev_get_drvdata(dev);
+	bool status;
+	int ret;
+
+	ret = uniwill_read_super_key_enable(data, &status);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", status);
+}
+
+static DEVICE_ATTR_RW(super_key_enable);
+
+static int uniwill_write_touchpad_toggle_enable(struct uniwill_data *data, bool status)
+{
+	unsigned int value;
+
+	if (status)
+		value = 0;
+	else
+		value = TOUCHPAD_TOGGLE_OFF;
+
+	return regmap_update_bits(data->regmap, EC_ADDR_OEM_4, TOUCHPAD_TOGGLE_OFF, value);
+}
+
+static ssize_t touchpad_toggle_enable_store(struct device *dev, struct device_attribute *attr,
+					    const char *buf, size_t count)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_write_touchpad_toggle_enable(data, enable);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static int uniwill_read_touchpad_toggle_enable(struct uniwill_data *data, bool *status)
+{
 	unsigned int value;
 	int ret;
 
@@ -741,7 +877,23 @@ static ssize_t touchpad_toggle_enable_show(struct device *dev, struct device_att
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", !(value & TOUCHPAD_TOGGLE_OFF));
+	*status = !(value & TOUCHPAD_TOGGLE_OFF);
+
+	return 0;
+}
+
+static ssize_t touchpad_toggle_enable_show(struct device *dev, struct device_attribute *attr,
+					   char *buf)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	bool status;
+	int ret;
+
+	ret = uniwill_read_touchpad_toggle_enable(data, &status);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", status);
 }
 
 static DEVICE_ATTR_RW(touchpad_toggle_enable);
@@ -995,6 +1147,109 @@ static int usb_c_power_priority_init(struct uniwill_data *data)
 	return 0;
 }
 
+static ssize_t ac_auto_boot_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	unsigned int regval;
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret < 0)
+		return ret;
+
+	if (enable)
+		regval = AC_AUTO_BOOT_ENABLE;
+	else
+		regval = 0;
+
+	ret = regmap_update_bits(data->regmap, EC_ADDR_OEM_9, AC_AUTO_BOOT_ENABLE, regval);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t ac_auto_boot_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	unsigned int regval;
+	int ret;
+
+	ret = regmap_read(data->regmap, EC_ADDR_OEM_9, &regval);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", !!(regval & AC_AUTO_BOOT_ENABLE));
+}
+
+static DEVICE_ATTR_RW(ac_auto_boot);
+
+static int uniwill_write_usb_powershare_high(struct uniwill_data *data, bool status)
+{
+	unsigned int value;
+
+	if (status)
+		value = TRIGGER_USB_CHARGING;
+	else
+		value = 0;
+
+	/*
+	 * Normaly this RMW-sequence could also trigger the super key toggle,
+	 * but the EC seems to take care that those bits are always read as 0.
+	 */
+	return regmap_update_bits(data->regmap, EC_ADDR_TRIGGER, TRIGGER_USB_CHARGING, value);
+}
+
+static ssize_t usb_powershare_high_store(struct device *dev, struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_write_usb_powershare_high(data, enable);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static int uniwill_read_usb_powershare_high(struct uniwill_data *data, bool *status)
+{
+	unsigned int value;
+	int ret;
+
+	ret = regmap_read(data->regmap, EC_ADDR_TRIGGER, &value);
+	if (ret < 0)
+		return ret;
+
+	*status = !!(value & TRIGGER_USB_CHARGING);
+
+	return 0;
+}
+
+static ssize_t usb_powershare_high_show(struct device *dev, struct device_attribute *attr,
+					char *buf)
+{
+	struct uniwill_data *data = dev_get_drvdata(dev);
+	bool status;
+	int ret;
+
+	ret = uniwill_read_usb_powershare_high(data, &status);
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", status);
+}
+
+static DEVICE_ATTR_RW(usb_powershare_high);
+
 static struct attribute *uniwill_attrs[] = {
 	/* Keyboard-related */
 	&dev_attr_fn_lock.attr,
@@ -1006,6 +1261,8 @@ static struct attribute *uniwill_attrs[] = {
 	/* Power-management-related */
 	&dev_attr_ctgp_offset.attr,
 	&dev_attr_usb_c_power_priority.attr,
+	&dev_attr_ac_auto_boot.attr,
+	&dev_attr_usb_powershare_high.attr,
 	NULL
 };
 
@@ -1042,6 +1299,16 @@ static umode_t uniwill_attr_is_visible(struct kobject *kobj, struct attribute *a
 
 	if (attr == &dev_attr_usb_c_power_priority.attr) {
 		if (uniwill_device_supports(data, UNIWILL_FEATURE_USB_C_POWER_PRIORITY))
+			return attr->mode;
+	}
+
+	if (attr == &dev_attr_ac_auto_boot.attr) {
+		if (uniwill_device_supports(data, UNIWILL_FEATURE_AC_AUTO_BOOT))
+			return attr->mode;
+	}
+
+	if (attr == &dev_attr_usb_powershare_high.attr) {
+		if (uniwill_device_supports(data, UNIWILL_FEATURE_USB_POWERSHARE))
 			return attr->mode;
 	}
 
@@ -1250,7 +1517,7 @@ static int uniwill_led_brightness_set(struct led_classdev *led_cdev, enum led_br
 
 	for (int i = 0; i < LED_CHANNELS; i++) {
 		/* Prevent the brightness values from overflowing */
-		value = min(LED_MAX_BRIGHTNESS, data->led_mc_subled_info[i].brightness);
+		value = min(data->lightbar_max_brightness, data->led_mc_subled_info[i].brightness);
 		ret = regmap_write(data->regmap, uniwill_led_channel_to_ac_reg[i], value);
 		if (ret < 0)
 			return ret;
@@ -1319,14 +1586,14 @@ static int uniwill_led_init(struct uniwill_data *data)
 		return ret;
 
 	data->led_mc_cdev.led_cdev.color = LED_COLOR_ID_MULTI;
-	data->led_mc_cdev.led_cdev.max_brightness = LED_MAX_BRIGHTNESS;
+	data->led_mc_cdev.led_cdev.max_brightness = data->lightbar_max_brightness;
 	data->led_mc_cdev.led_cdev.flags = LED_REJECT_NAME_CONFLICT;
 	data->led_mc_cdev.led_cdev.brightness_set_blocking = uniwill_led_brightness_set;
 
 	if (value & LIGHTBAR_S0_OFF)
 		data->led_mc_cdev.led_cdev.brightness = 0;
 	else
-		data->led_mc_cdev.led_cdev.brightness = LED_MAX_BRIGHTNESS;
+		data->led_mc_cdev.led_cdev.brightness = data->lightbar_max_brightness;
 
 	for (int i = 0; i < LED_CHANNELS; i++) {
 		data->led_mc_subled_info[i].color_index = color_indices[i];
@@ -1339,7 +1606,7 @@ static int uniwill_led_init(struct uniwill_data *data)
 		 * Make sure that the initial intensity value is not greater than
 		 * the maximum brightness.
 		 */
-		value = min(LED_MAX_BRIGHTNESS, value);
+		value = min(data->lightbar_max_brightness, value);
 		ret = regmap_write(data->regmap, uniwill_led_channel_to_ac_reg[i], value);
 		if (ret < 0)
 			return ret;
@@ -1359,6 +1626,246 @@ static int uniwill_led_init(struct uniwill_data *data)
 							 &init_data);
 }
 
+static int uniwill_notify_kbd_led(struct uniwill_data *data, int brightness)
+{
+	struct led_classdev *led_cdev;
+	int ret;
+
+	if (data->kbd_led_single_color)
+		led_cdev = &data->kbd_led_cdev;
+	else
+		led_cdev = &data->kbd_led_mc_cdev.led_cdev;
+
+	guard(mutex)(&led_cdev->led_access);
+
+	/* Sync the LED brightness with the actual hardware state */
+	ret = led_update_brightness(led_cdev);
+	if (ret < 0)
+		return ret;
+
+	led_classdev_notify_brightness_hw_changed(led_cdev, brightness);
+
+	return 0;
+}
+
+#define KBD_LED_MASK	(KBD_BRIGHTNESS_MASK | KBD_APPLY | KBD_POWER_OFF)
+
+static int uniwill_kbd_led_write_brightness(struct uniwill_data *data, int brightness)
+{
+	/* KBD_POWER_OFF is always implicitly cleared */
+	unsigned int regval = FIELD_PREP(KBD_BRIGHTNESS_MASK, brightness) | KBD_APPLY;
+
+	/* We must ensure that the "apply" bit is always written */
+	return regmap_write_bits(data->regmap, EC_ADDR_KBD_STATUS, KBD_LED_MASK, regval);
+}
+
+static int uniwill_kbd_led_read_brightness(struct uniwill_data *data)
+{
+	unsigned int regval;
+	int ret;
+
+	ret = regmap_read(data->regmap, EC_ADDR_KBD_STATUS, &regval);
+	if (ret < 0)
+		return ret;
+
+	return min(FIELD_GET(KBD_BRIGHTNESS_MASK, regval), data->kbd_led_max_brightness);
+}
+
+static int uniwill_kbd_led_brightness_set(struct led_classdev *led_cdev,
+					  enum led_brightness brightness)
+{
+	struct uniwill_data *data = container_of(led_cdev, struct uniwill_data, kbd_led_cdev);
+
+	return uniwill_kbd_led_write_brightness(data, brightness);
+}
+
+static enum led_brightness uniwill_kbd_led_brightness_get(struct led_classdev *led_cdev)
+{
+	struct uniwill_data *data = container_of(led_cdev, struct uniwill_data, kbd_led_cdev);
+
+	return uniwill_kbd_led_read_brightness(data);
+}
+
+static const unsigned int uniwill_kbd_led_channel_to_reg[KBD_LED_CHANNELS] = {
+	EC_ADDR_RGB_RED,
+	EC_ADDR_RGB_GREEN,
+	EC_ADDR_RGB_BLUE,
+};
+
+static int uniwill_kbd_led_mc_brightness_set(struct led_classdev *led_cdev,
+					     enum led_brightness brightness)
+{
+	struct led_classdev_mc *led_mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct uniwill_data *data = container_of(led_mc_cdev, struct uniwill_data, kbd_led_mc_cdev);
+	unsigned int min_intensity = 0;
+	unsigned int regval;
+	int ret;
+
+	guard(mutex)(&data->kbd_rgb_led_lock);
+
+	/*
+	 * The EC interprets a RGB value of 0x000000 as a command to restore
+	 * the device-specfic default RGB value. Work around this by writing
+	 * a RGB value of 0x010101 (faint white) instead.
+	 */
+	if (data->kbd_led_mc_subled_info[0].intensity == 0 &&
+	    data->kbd_led_mc_subled_info[1].intensity == 0 &&
+	    data->kbd_led_mc_subled_info[2].intensity == 0)
+		min_intensity = 1;
+
+	for (int i = 0; i < KBD_LED_CHANNELS; i++) {
+		regval = max(data->kbd_led_mc_subled_info[i].intensity, min_intensity);
+		ret = regmap_write(data->regmap, uniwill_kbd_led_channel_to_reg[i], regval);
+		if (ret < 0)
+			return ret;
+	}
+
+	ret = regmap_write_bits(data->regmap, EC_ADDR_TRIGGER, RGB_APPLY_COLOR, RGB_APPLY_COLOR);
+	if (ret < 0)
+		return ret;
+
+	return uniwill_kbd_led_write_brightness(data, brightness);
+}
+
+static enum led_brightness uniwill_kbd_led_mc_brightness_get(struct led_classdev *led_cdev)
+{
+	struct led_classdev_mc *led_mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct uniwill_data *data = container_of(led_mc_cdev, struct uniwill_data, kbd_led_mc_cdev);
+
+	return uniwill_kbd_led_read_brightness(data);
+}
+
+static int uniwill_white_kbd_led_init(struct uniwill_data *data)
+{
+	struct led_init_data init_data = {
+		.default_label = "white:" LED_FUNCTION_KBD_BACKLIGHT,
+		.devicename = DRIVER_NAME,
+		.devname_mandatory = true,
+	};
+
+	data->kbd_led_cdev.max_brightness = data->kbd_led_max_brightness;
+	data->kbd_led_cdev.color = LED_COLOR_ID_WHITE;
+	data->kbd_led_cdev.flags = LED_BRIGHT_HW_CHANGED | LED_REJECT_NAME_CONFLICT;
+	data->kbd_led_cdev.brightness_set_blocking = uniwill_kbd_led_brightness_set;
+	data->kbd_led_cdev.brightness_get = uniwill_kbd_led_brightness_get;
+
+	return devm_led_classdev_register_ext(data->dev, &data->kbd_led_cdev, &init_data);
+}
+
+static int uniwill_rgb_kbd_led_init(struct uniwill_data *data)
+{
+	unsigned int color_indices[KBD_LED_CHANNELS] = {
+		LED_COLOR_ID_RED,
+		LED_COLOR_ID_GREEN,
+		LED_COLOR_ID_BLUE,
+	};
+	struct led_init_data init_data = {
+		.default_label = "multicolor:" LED_FUNCTION_KBD_BACKLIGHT,
+		.devicename = DRIVER_NAME,
+		.devname_mandatory = true,
+	};
+	bool intensity_all_zeros = true;
+	bool needs_trigger = false;
+	unsigned int regval;
+	int ret;
+
+	for (int i = 0; i < KBD_LED_CHANNELS; i++) {
+		data->kbd_led_mc_subled_info[i].color_index = color_indices[i];
+
+		ret = regmap_read(data->regmap, uniwill_kbd_led_channel_to_reg[i], &regval);
+		if (ret < 0)
+			return ret;
+
+		/*
+		 * Make sure that the initial intensity value is not greater than
+		 * the maximum intensity.
+		 */
+		if (regval > KBD_LED_MAX_INTENSITY) {
+			regval = KBD_LED_MAX_INTENSITY;
+			ret = regmap_write(data->regmap, uniwill_kbd_led_channel_to_reg[i], regval);
+			if (ret < 0)
+				return ret;
+
+			needs_trigger = true;
+		}
+
+		if (regval)
+			intensity_all_zeros = false;
+
+		data->kbd_led_mc_subled_info[i].intensity = regval;
+		data->kbd_led_mc_subled_info[i].max_intensity = KBD_LED_MAX_INTENSITY;
+		data->kbd_led_mc_subled_info[i].channel = i;
+	}
+
+	/* See uniwill_kbd_led_mc_brightness_set() for an explaination. */
+	if (intensity_all_zeros) {
+		for (int i = 0; i < KBD_LED_CHANNELS; i++) {
+			data->kbd_led_mc_subled_info[i].intensity = 1;
+			ret = regmap_write(data->regmap, uniwill_kbd_led_channel_to_reg[i], 1);
+			if (ret < 0)
+				return ret;
+		}
+
+		needs_trigger = true;
+	}
+
+	if (needs_trigger) {
+		ret = regmap_write_bits(data->regmap, EC_ADDR_TRIGGER, RGB_APPLY_COLOR,
+					RGB_APPLY_COLOR);
+		if (ret < 0)
+			return ret;
+	}
+
+	ret = devm_mutex_init(data->dev, &data->kbd_rgb_led_lock);
+	if (ret < 0)
+		return ret;
+
+	data->kbd_led_mc_cdev.led_cdev.max_brightness = data->kbd_led_max_brightness;
+	data->kbd_led_mc_cdev.led_cdev.color = LED_COLOR_ID_MULTI;
+	data->kbd_led_mc_cdev.led_cdev.flags = LED_BRIGHT_HW_CHANGED | LED_REJECT_NAME_CONFLICT;
+	data->kbd_led_mc_cdev.led_cdev.brightness_set_blocking = uniwill_kbd_led_mc_brightness_set;
+	data->kbd_led_mc_cdev.led_cdev.brightness_get = uniwill_kbd_led_mc_brightness_get;
+	data->kbd_led_mc_cdev.subled_info = data->kbd_led_mc_subled_info;
+	data->kbd_led_mc_cdev.num_colors = KBD_LED_CHANNELS;
+
+	return devm_led_classdev_multicolor_register_ext(data->dev, &data->kbd_led_mc_cdev,
+							 &init_data);
+}
+
+static int uniwill_kbd_led_init(struct uniwill_data *data)
+{
+	unsigned int regval;
+	int ret;
+
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+		return 0;
+
+	ret = regmap_read(data->regmap, EC_ADDR_SUPPORT_2, &regval);
+	if (ret < 0)
+		return ret;
+
+	if (!(regval & CHINA_MODE)) {
+		ret = regmap_set_bits(data->regmap, EC_ADDR_BIOS_OEM_2, ENABLE_CHINA_MODE);
+		if (ret < 0)
+			return ret;
+	}
+
+	ret = regmap_read(data->regmap, EC_ADDR_KBD_STATUS, &regval);
+	if (ret < 0)
+		return ret;
+
+	regval |= KBD_APPLY;
+	regval &= ~KBD_POWER_OFF;
+	ret = regmap_write(data->regmap, EC_ADDR_KBD_STATUS, regval);
+	if (ret < 0)
+		return ret;
+
+	if (data->kbd_led_single_color)
+		return uniwill_white_kbd_led_init(data);
+
+	return uniwill_rgb_kbd_led_init(data);
+}
+
 static unsigned int uniwill_sanitize_battery_threshold(unsigned int value)
 {
 	/* 0 means "charging threshold not active" */
@@ -1367,6 +1874,30 @@ static unsigned int uniwill_sanitize_battery_threshold(unsigned int value)
 
 	/* Guard against invalid values */
 	return min(value, 100);
+}
+
+static int uniwill_read_charge_type(struct uniwill_data *data, enum power_supply_charge_type *type)
+{
+	unsigned int value;
+	int ret;
+
+	ret = regmap_read(data->regmap, EC_ADDR_OEM_4, &value);
+	if (ret < 0)
+		return ret;
+
+	switch (FIELD_GET(CHARGING_PROFILE_MASK, value)) {
+	case CHARGING_PROFILE_HIGH_CAPACITY:
+		*type = POWER_SUPPLY_CHARGE_TYPE_STANDARD;
+		return 0;
+	case CHARGING_PROFILE_BALANCED:
+		*type = POWER_SUPPLY_CHARGE_TYPE_LONGLIFE;
+		return 0;
+	case CHARGING_PROFILE_STATIONARY:
+		*type = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
+		return 0;
+	default:
+		return -EPROTO;
+	}
 }
 
 static int uniwill_get_property(struct power_supply *psy, const struct power_supply_ext *ext,
@@ -1379,6 +1910,16 @@ static int uniwill_get_property(struct power_supply *psy, const struct power_sup
 	int ret;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_CHARGE_TYPES:
+		/*
+		 * We need to use the cached value here because the charging mode
+		 * reported by the EC might temporarily change when a external power
+		 * source has been connected.
+		 */
+		mutex_lock(&data->charge_type_lock);
+		val->intval = data->last_charge_type;
+		mutex_unlock(&data->charge_type_lock);
+		return 0;
 	case POWER_SUPPLY_PROP_HEALTH:
 		ret = power_supply_get_property_direct(psy, POWER_SUPPLY_PROP_PRESENT, &prop);
 		if (ret < 0)
@@ -1423,13 +1964,52 @@ static int uniwill_get_property(struct power_supply *psy, const struct power_sup
 	}
 }
 
+static int uniwill_write_charge_type(struct uniwill_data *data, enum power_supply_charge_type type)
+{
+	unsigned int value;
+
+	switch (type) {
+	case POWER_SUPPLY_CHARGE_TYPE_TRICKLE:
+		value = FIELD_PREP(CHARGING_PROFILE_MASK, CHARGING_PROFILE_STATIONARY);
+		break;
+	case POWER_SUPPLY_CHARGE_TYPE_STANDARD:
+		value = FIELD_PREP(CHARGING_PROFILE_MASK, CHARGING_PROFILE_HIGH_CAPACITY);
+		break;
+	case POWER_SUPPLY_CHARGE_TYPE_LONGLIFE:
+		value = FIELD_PREP(CHARGING_PROFILE_MASK, CHARGING_PROFILE_BALANCED);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return regmap_update_bits(data->regmap, EC_ADDR_OEM_4, CHARGING_PROFILE_MASK, value);
+}
+
+static int uniwill_restore_charge_type(struct uniwill_data *data)
+{
+	guard(mutex)(&data->charge_type_lock);
+
+	return uniwill_write_charge_type(data, data->last_charge_type);
+}
+
 static int uniwill_set_property(struct power_supply *psy, const struct power_supply_ext *ext,
 				void *drvdata, enum power_supply_property psp,
 				const union power_supply_propval *val)
 {
 	struct uniwill_data *data = drvdata;
+	int ret;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_CHARGE_TYPES:
+		mutex_lock(&data->charge_type_lock);
+
+		ret = uniwill_write_charge_type(data, val->intval);
+		if (ret >= 0)
+			data->last_charge_type = val->intval;
+
+		mutex_unlock(&data->charge_type_lock);
+
+		return ret;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
 		if (val->intval < 0 || val->intval > 100)
 			return -EINVAL;
@@ -1445,21 +2025,41 @@ static int uniwill_property_is_writeable(struct power_supply *psy,
 					 const struct power_supply_ext *ext, void *drvdata,
 					 enum power_supply_property psp)
 {
-	if (psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD)
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CHARGE_TYPES:
+	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
 		return true;
-
-	return false;
+	default:
+		return false;
+	}
 }
 
-static const enum power_supply_property uniwill_properties[] = {
+static const enum power_supply_property uniwill_charge_limit_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
 };
 
-static const struct power_supply_ext uniwill_extension = {
+static const struct power_supply_ext uniwill_charge_limit_extension = {
 	.name = DRIVER_NAME,
-	.properties = uniwill_properties,
-	.num_properties = ARRAY_SIZE(uniwill_properties),
+	.properties = uniwill_charge_limit_properties,
+	.num_properties = ARRAY_SIZE(uniwill_charge_limit_properties),
+	.get_property = uniwill_get_property,
+	.set_property = uniwill_set_property,
+	.property_is_writeable = uniwill_property_is_writeable,
+};
+
+static const enum power_supply_property uniwill_charge_modes_properties[] = {
+	POWER_SUPPLY_PROP_CHARGE_TYPES,
+	POWER_SUPPLY_PROP_HEALTH,
+};
+
+static const struct power_supply_ext uniwill_charge_modes_extension = {
+	.name = DRIVER_NAME,
+	.charge_types = BIT(POWER_SUPPLY_CHARGE_TYPE_TRICKLE) |
+			BIT(POWER_SUPPLY_CHARGE_TYPE_STANDARD) |
+			BIT(POWER_SUPPLY_CHARGE_TYPE_LONGLIFE),
+	.properties = uniwill_charge_modes_properties,
+	.num_properties = ARRAY_SIZE(uniwill_charge_modes_properties),
 	.get_property = uniwill_get_property,
 	.set_property = uniwill_set_property,
 	.property_is_writeable = uniwill_property_is_writeable,
@@ -1475,7 +2075,13 @@ static int uniwill_add_battery(struct power_supply *battery, struct acpi_battery
 	if (!entry)
 		return -ENOMEM;
 
-	ret = power_supply_register_extension(battery, &uniwill_extension, data->dev, data);
+	if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT))
+		ret = power_supply_register_extension(battery, &uniwill_charge_limit_extension,
+						      data->dev, data);
+	else
+		ret = power_supply_register_extension(battery, &uniwill_charge_modes_extension,
+						      data->dev, data);
+
 	if (ret < 0) {
 		kfree(entry);
 		return ret;
@@ -1504,7 +2110,10 @@ static int uniwill_remove_battery(struct power_supply *battery, struct acpi_batt
 		}
 	}
 
-	power_supply_unregister_extension(battery, &uniwill_extension);
+	if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT))
+		power_supply_unregister_extension(battery, &uniwill_charge_limit_extension);
+	else
+		power_supply_unregister_extension(battery, &uniwill_charge_modes_extension);
 
 	return 0;
 }
@@ -1514,28 +2123,37 @@ static int uniwill_battery_init(struct uniwill_data *data)
 	unsigned int value, threshold, sanitized;
 	int ret;
 
-	if (!uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY))
-		return 0;
-
-	ret = regmap_read(data->regmap, EC_ADDR_CHARGE_CTRL, &value);
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * The charge control threshold might be initialized with 0 by
-	 * the EC to signal that said threshold is uninitialized. We thus
-	 * need to replace this placeholder value with a valid one (100)
-	 * to signal that we want to take control of battery charging.
-	 * For the sake of completeness we also apply this to other
-	 * invalid threshold values.
-	 */
-	threshold = FIELD_GET(CHARGE_CTRL_MASK, value);
-	sanitized = uniwill_sanitize_battery_threshold(threshold);
-	if (threshold != sanitized) {
-		FIELD_MODIFY(CHARGE_CTRL_MASK, &value, sanitized);
-		ret = regmap_write(data->regmap, EC_ADDR_CHARGE_CTRL, value);
+	if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT)) {
+		ret = regmap_read(data->regmap, EC_ADDR_CHARGE_CTRL, &value);
 		if (ret < 0)
 			return ret;
+
+		/*
+		 * The charge control threshold might be initialized with 0 by
+		 * the EC to signal that said threshold is uninitialized. We thus
+		 * need to replace this placeholder value with a valid one (100)
+		 * to signal that we want to take control of battery charging.
+		 * For the sake of completeness we also apply this to other
+		 * invalid threshold values.
+		 */
+		threshold = FIELD_GET(CHARGE_CTRL_MASK, value);
+		sanitized = uniwill_sanitize_battery_threshold(threshold);
+		if (threshold != sanitized) {
+			FIELD_MODIFY(CHARGE_CTRL_MASK, &value, sanitized);
+			ret = regmap_write(data->regmap, EC_ADDR_CHARGE_CTRL, value);
+			if (ret < 0)
+				return ret;
+		}
+	} else if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_MODES)) {
+		ret = devm_mutex_init(data->dev, &data->charge_type_lock);
+		if (ret < 0)
+			return ret;
+
+		ret = uniwill_read_charge_type(data, &data->last_charge_type);
+		if (ret < 0)
+			return ret;
+	} else {
+		return 0;
 	}
 
 	ret = devm_mutex_init(data->dev, &data->battery_lock);
@@ -1554,10 +2172,13 @@ static int uniwill_notifier_call(struct notifier_block *nb, unsigned long action
 {
 	struct uniwill_data *data = container_of(nb, struct uniwill_data, nb);
 	struct uniwill_battery_entry *entry;
+	int ret;
 
 	switch (action) {
 	case UNIWILL_OSD_BATTERY_ALERT:
-		if (!uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY))
+		if (!uniwill_device_supports_any(data,
+						 UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT |
+						 UNIWILL_FEATURE_BATTERY_CHARGE_MODES))
 			return NOTIFY_DONE;
 
 		mutex_lock(&data->battery_lock);
@@ -1568,10 +2189,24 @@ static int uniwill_notifier_call(struct notifier_block *nb, unsigned long action
 
 		return NOTIFY_OK;
 	case UNIWILL_OSD_DC_ADAPTER_CHANGED:
-		if (!uniwill_device_supports(data, UNIWILL_FEATURE_USB_C_POWER_PRIORITY))
+		if (!uniwill_device_supports_any(data,
+						 UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
+						 UNIWILL_FEATURE_USB_C_POWER_PRIORITY))
 			return NOTIFY_DONE;
 
-		return notifier_from_errno(usb_c_power_priority_restore(data));
+		if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_MODES)) {
+			ret = uniwill_restore_charge_type(data);
+			if (ret < 0)
+				return notifier_from_errno(ret);
+		}
+
+		if (uniwill_device_supports(data, UNIWILL_FEATURE_USB_C_POWER_PRIORITY)) {
+			ret = usb_c_power_priority_restore(data);
+			if (ret < 0)
+				return notifier_from_errno(ret);
+		}
+
+		return NOTIFY_OK;
 	case UNIWILL_OSD_FN_LOCK:
 		if (!uniwill_device_supports(data, UNIWILL_FEATURE_FN_LOCK))
 			return NOTIFY_DONE;
@@ -1579,6 +2214,31 @@ static int uniwill_notifier_call(struct notifier_block *nb, unsigned long action
 		sysfs_notify(&data->dev->kobj, NULL, "fn_lock");
 
 		return NOTIFY_OK;
+	case UNIWILL_OSD_KB_LED_LEVEL0:
+		if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+			return NOTIFY_DONE;
+
+		return notifier_from_errno(uniwill_notify_kbd_led(data, 0));
+	case UNIWILL_OSD_KB_LED_LEVEL1:
+		if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+			return NOTIFY_DONE;
+
+		return notifier_from_errno(uniwill_notify_kbd_led(data, 1));
+	case UNIWILL_OSD_KB_LED_LEVEL2:
+		if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+			return NOTIFY_DONE;
+
+		return notifier_from_errno(uniwill_notify_kbd_led(data, 2));
+	case UNIWILL_OSD_KB_LED_LEVEL3:
+		if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+			return NOTIFY_DONE;
+
+		return notifier_from_errno(uniwill_notify_kbd_led(data, 3));
+	case UNIWILL_OSD_KB_LED_LEVEL4:
+		if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+			return NOTIFY_DONE;
+
+		return notifier_from_errno(uniwill_notify_kbd_led(data, 4));
 	default:
 		mutex_lock(&data->input_lock);
 		sparse_keymap_report_event(data->input_device, action, 1, true);
@@ -1632,6 +2292,7 @@ static int uniwill_ec_init(struct uniwill_data *data)
 	if (ret < 0)
 		return ret;
 
+	data->project_id = value;
 	dev_dbg(data->dev, "Project ID: %u\n", value);
 
 	ret = regmap_set_bits(data->regmap, EC_ADDR_AP_OEM, ENABLE_MANUAL_CTRL);
@@ -1675,6 +2336,9 @@ static int uniwill_probe(struct platform_device *pdev)
 		return ret;
 
 	data->features = device_descriptor.features;
+	data->kbd_led_single_color = device_descriptor.kbd_led_single_color;
+	data->kbd_led_max_brightness = device_descriptor.kbd_led_max_brightness;
+	data->lightbar_max_brightness = device_descriptor.lightbar_max_brightness;
 
 	/*
 	 * Some devices might need to perform some device-specific initialization steps
@@ -1692,6 +2356,10 @@ static int uniwill_probe(struct platform_device *pdev)
 		return ret;
 
 	ret = uniwill_led_init(data);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_kbd_led_init(data);
 	if (ret < 0)
 		return ret;
 
@@ -1723,10 +2391,10 @@ static int uniwill_suspend_fn_lock(struct uniwill_data *data)
 		return 0;
 
 	/*
-	 * The EC_ADDR_BIOS_OEM is marked as volatile, so we have to restore it
+	 * EC_ADDR_BIOS_OEM is marked as volatile, so we have to restore it
 	 * ourselves.
 	 */
-	return regmap_read(data->regmap, EC_ADDR_BIOS_OEM, &data->last_status);
+	return uniwill_read_fn_lock(data, &data->last_fn_lock_state);
 }
 
 static int uniwill_suspend_super_key(struct uniwill_data *data)
@@ -1735,15 +2403,27 @@ static int uniwill_suspend_super_key(struct uniwill_data *data)
 		return 0;
 
 	/*
-	 * The EC_ADDR_SWITCH_STATUS is marked as volatile, so we have to restore it
+	 * EC_ADDR_SWITCH_STATUS is marked as volatile, so we have to restore it
 	 * ourselves.
 	 */
-	return regmap_read(data->regmap, EC_ADDR_SWITCH_STATUS, &data->last_switch_status);
+	return uniwill_read_super_key_enable(data, &data->last_super_key_enable_state);
+}
+
+static int uniwill_suspend_touchpad_toggle(struct uniwill_data *data)
+{
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_TOUCHPAD_TOGGLE))
+		return 0;
+
+	/*
+	 * EC_ADDR_OEM_4 is marked as volatile, so we have to restore it
+	 * ourselves.
+	 */
+	return uniwill_read_touchpad_toggle_enable(data, &data->last_touchpad_toggle_enable_state);
 }
 
 static int uniwill_suspend_battery(struct uniwill_data *data)
 {
-	if (!uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY))
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT))
 		return 0;
 
 	/*
@@ -1752,6 +2432,43 @@ static int uniwill_suspend_battery(struct uniwill_data *data)
 	 * be declared as volatile due to CHARGE_CTRL_REACHED.
 	 */
 	return regmap_read(data->regmap, EC_ADDR_CHARGE_CTRL, &data->last_charge_ctrl);
+}
+
+static int uniwill_suspend_kbd_led(struct uniwill_data *data)
+{
+	unsigned int regval;
+	int ret;
+
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
+		return 0;
+
+	ret = regmap_read(data->regmap, EC_ADDR_KBD_STATUS, &regval);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * Save the current keyboard backlight settings in order to restore them
+	 * during resume. We cannot use the regmap code for that since this register
+	 * needs to be declared as volatile because the brightness can be changed
+	 * by the EC.
+	 */
+	data->last_kbd_status = regval;
+	FIELD_MODIFY(KBD_BRIGHTNESS_MASK, &regval, 0);
+	regval |= KBD_APPLY | KBD_POWER_OFF;
+
+	return regmap_write(data->regmap, EC_ADDR_KBD_STATUS, regval);
+}
+
+static int uniwill_suspend_usb_powershare(struct uniwill_data *data)
+{
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_USB_POWERSHARE))
+		return 0;
+
+	/*
+	 * EC_ADDR_TRIGGER is marked as volatile, so we have to restore it
+	 * ourselves.
+	 */
+	return uniwill_read_usb_powershare_high(data, &data->last_usb_powershare_high_state);
 }
 
 static int uniwill_suspend_nvidia_ctgp(struct uniwill_data *data)
@@ -1776,7 +2493,19 @@ static int uniwill_suspend(struct device *dev)
 	if (ret < 0)
 		return ret;
 
+	ret = uniwill_suspend_touchpad_toggle(data);
+	if (ret < 0)
+		return ret;
+
 	ret = uniwill_suspend_battery(data);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_suspend_kbd_led(data);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_suspend_usb_powershare(data);
 	if (ret < 0)
 		return ret;
 
@@ -1795,36 +2524,60 @@ static int uniwill_resume_fn_lock(struct uniwill_data *data)
 	if (!uniwill_device_supports(data, UNIWILL_FEATURE_FN_LOCK))
 		return 0;
 
-	return regmap_update_bits(data->regmap, EC_ADDR_BIOS_OEM, FN_LOCK_STATUS,
-				  data->last_status);
+	return uniwill_write_fn_lock(data, data->last_fn_lock_state);
 }
 
 static int uniwill_resume_super_key(struct uniwill_data *data)
 {
-	unsigned int value;
-	int ret;
-
 	if (!uniwill_device_supports(data, UNIWILL_FEATURE_SUPER_KEY))
 		return 0;
 
-	ret = regmap_read(data->regmap, EC_ADDR_SWITCH_STATUS, &value);
-	if (ret < 0)
-		return ret;
+	return uniwill_write_super_key_enable(data, data->last_super_key_enable_state);
+}
 
-	if ((data->last_switch_status & SUPER_KEY_LOCK_STATUS) == (value & SUPER_KEY_LOCK_STATUS))
+static int uniwill_resume_touchpad_toggle(struct uniwill_data *data)
+{
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_TOUCHPAD_TOGGLE))
 		return 0;
 
-	return regmap_write_bits(data->regmap, EC_ADDR_TRIGGER, TRIGGER_SUPER_KEY_LOCK,
-				 TRIGGER_SUPER_KEY_LOCK);
+	return uniwill_write_touchpad_toggle_enable(data, data->last_touchpad_toggle_enable_state);
 }
 
 static int uniwill_resume_battery(struct uniwill_data *data)
 {
-	if (!uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY))
+	if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_MODES))
+		return uniwill_restore_charge_type(data);
+
+	if (uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT))
+		return regmap_update_bits(data->regmap, EC_ADDR_CHARGE_CTRL, CHARGE_CTRL_MASK,
+					  data->last_charge_ctrl);
+
+	return 0;
+}
+
+static int uniwill_resume_kbd_led(struct uniwill_data *data)
+{
+	int ret;
+
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_KEYBOARD_BACKLIGHT))
 		return 0;
 
-	return regmap_update_bits(data->regmap, EC_ADDR_CHARGE_CTRL, CHARGE_CTRL_MASK,
-				  data->last_charge_ctrl);
+	ret = regmap_write(data->regmap, EC_ADDR_KBD_STATUS, data->last_kbd_status | KBD_APPLY);
+	if (ret < 0)
+		return ret;
+
+	if (data->kbd_led_single_color)
+		return 0;
+
+	return regmap_write_bits(data->regmap, EC_ADDR_TRIGGER, RGB_APPLY_COLOR, RGB_APPLY_COLOR);
+}
+
+static int uniwill_resume_usb_powershare(struct uniwill_data *data)
+{
+	if (!uniwill_device_supports(data, UNIWILL_FEATURE_USB_POWERSHARE))
+		return 0;
+
+	return uniwill_write_usb_powershare_high(data, data->last_usb_powershare_high_state);
 }
 
 static int uniwill_resume_nvidia_ctgp(struct uniwill_data *data)
@@ -1863,7 +2616,19 @@ static int uniwill_resume(struct device *dev)
 	if (ret < 0)
 		return ret;
 
+	ret = uniwill_resume_touchpad_toggle(data);
+	if (ret < 0)
+		return ret;
+
 	ret = uniwill_resume_battery(data);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_resume_kbd_led(data);
+	if (ret < 0)
+		return ret;
+
+	ret = uniwill_resume_usb_powershare(data);
 	if (ret < 0)
 		return ret;
 
@@ -1897,20 +2662,37 @@ static struct platform_driver uniwill_driver = {
 	.shutdown = uniwill_shutdown,
 };
 
+static struct uniwill_device_descriptor machenike_l16p_descriptor __initdata = {
+	.features = UNIWILL_FEATURE_FN_LOCK |
+		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_CPU_TEMP |
+		    UNIWILL_FEATURE_GPU_TEMP |
+		    UNIWILL_FEATURE_PRIMARY_FAN |
+		    UNIWILL_FEATURE_SECONDARY_FAN |
+		    UNIWILL_FEATURE_NVIDIA_CTGP_CONTROL |
+		    UNIWILL_FEATURE_KEYBOARD_BACKLIGHT |
+		    UNIWILL_FEATURE_AC_AUTO_BOOT |
+		    UNIWILL_FEATURE_USB_POWERSHARE,
+	.kbd_led_single_color = false,
+	.kbd_led_max_brightness = 4,
+};
+
 static struct uniwill_device_descriptor lapqc71a_lapqc71b_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_SUPER_KEY |
-		    UNIWILL_FEATURE_BATTERY |
+		    UNIWILL_FEATURE_LIGHTBAR |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_GPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
 		    UNIWILL_FEATURE_SECONDARY_FAN,
+	.lightbar_max_brightness = 36,
 };
 
 static struct uniwill_device_descriptor lapac71h_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
 		    UNIWILL_FEATURE_TOUCHPAD_TOGGLE |
-		    UNIWILL_FEATURE_BATTERY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_GPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
@@ -1922,11 +2704,12 @@ static struct uniwill_device_descriptor lapkc71f_descriptor __initdata = {
 		    UNIWILL_FEATURE_SUPER_KEY |
 		    UNIWILL_FEATURE_TOUCHPAD_TOGGLE |
 		    UNIWILL_FEATURE_LIGHTBAR |
-		    UNIWILL_FEATURE_BATTERY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_GPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
 		    UNIWILL_FEATURE_SECONDARY_FAN,
+	.lightbar_max_brightness = 200,
 };
 
 /*
@@ -1939,6 +2722,7 @@ static struct uniwill_device_descriptor lapkc71f_descriptor __initdata = {
 static struct uniwill_device_descriptor tux_featureset_1_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
 		    UNIWILL_FEATURE_SECONDARY_FAN |
@@ -1948,6 +2732,7 @@ static struct uniwill_device_descriptor tux_featureset_1_descriptor __initdata =
 static struct uniwill_device_descriptor tux_featureset_1_nvidia_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_GPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
@@ -1958,6 +2743,7 @@ static struct uniwill_device_descriptor tux_featureset_1_nvidia_descriptor __ini
 static struct uniwill_device_descriptor tux_featureset_2_nvidia_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_GPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
@@ -1966,22 +2752,39 @@ static struct uniwill_device_descriptor tux_featureset_2_nvidia_descriptor __ini
 		    UNIWILL_FEATURE_USB_C_POWER_PRIORITY,
 };
 
-static struct uniwill_device_descriptor tux_featureset_3_descriptor __initdata = {
-	.features = UNIWILL_FEATURE_FN_LOCK |
-		    UNIWILL_FEATURE_SUPER_KEY |
-		    UNIWILL_FEATURE_CPU_TEMP |
-		    UNIWILL_FEATURE_PRIMARY_FAN |
-		    UNIWILL_FEATURE_SECONDARY_FAN,
-};
-
 static struct uniwill_device_descriptor tux_featureset_3_nvidia_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_GPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
 		    UNIWILL_FEATURE_SECONDARY_FAN |
 		    UNIWILL_FEATURE_NVIDIA_CTGP_CONTROL,
+};
+
+static struct uniwill_device_descriptor tux_featureset_4_descriptor __initdata = {
+	.features = UNIWILL_FEATURE_FN_LOCK |
+		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
+		    UNIWILL_FEATURE_CPU_TEMP |
+		    UNIWILL_FEATURE_PRIMARY_FAN |
+		    UNIWILL_FEATURE_SECONDARY_FAN |
+		    UNIWILL_FEATURE_AC_AUTO_BOOT |
+		    UNIWILL_FEATURE_USB_POWERSHARE,
+};
+
+static struct uniwill_device_descriptor tux_featureset_4_nvidia_descriptor __initdata = {
+	.features = UNIWILL_FEATURE_FN_LOCK |
+		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
+		    UNIWILL_FEATURE_CPU_TEMP |
+		    UNIWILL_FEATURE_GPU_TEMP |
+		    UNIWILL_FEATURE_PRIMARY_FAN |
+		    UNIWILL_FEATURE_SECONDARY_FAN |
+		    UNIWILL_FEATURE_NVIDIA_CTGP_CONTROL |
+		    UNIWILL_FEATURE_AC_AUTO_BOOT |
+		    UNIWILL_FEATURE_USB_POWERSHARE,
 };
 
 static int phxtxx1_probe(struct uniwill_data *data)
@@ -2002,6 +2805,7 @@ static int phxtxx1_probe(struct uniwill_data *data)
 static struct uniwill_device_descriptor phxtxx1_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
 		    UNIWILL_FEATURE_USB_C_POWER_PRIORITY,
@@ -2027,6 +2831,7 @@ static int phxarx1_phxaqf1_probe(struct uniwill_data *data)
 static struct uniwill_device_descriptor phxarx1_phxaqf1_descriptor __initdata = {
 	.features = UNIWILL_FEATURE_FN_LOCK |
 		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
 		    UNIWILL_FEATURE_CPU_TEMP |
 		    UNIWILL_FEATURE_PRIMARY_FAN |
 		    UNIWILL_FEATURE_SECONDARY_FAN |
@@ -2041,8 +2846,38 @@ static struct uniwill_device_descriptor pf5pu1g_descriptor __initdata = {
 		    UNIWILL_FEATURE_PRIMARY_FAN,
 };
 
+static struct uniwill_device_descriptor x4sp4nal_descriptor __initdata = {
+	.features = UNIWILL_FEATURE_FN_LOCK |
+		    UNIWILL_FEATURE_SUPER_KEY |
+		    UNIWILL_FEATURE_BATTERY_CHARGE_MODES |
+		    UNIWILL_FEATURE_CPU_TEMP |
+		    UNIWILL_FEATURE_PRIMARY_FAN |
+		    UNIWILL_FEATURE_SECONDARY_FAN |
+		    UNIWILL_FEATURE_KEYBOARD_BACKLIGHT |
+		    UNIWILL_FEATURE_AC_AUTO_BOOT |
+		    UNIWILL_FEATURE_USB_POWERSHARE,
+	.kbd_led_single_color = true,
+	.kbd_led_max_brightness = 2,
+};
+
 static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 	{
+		.ident = "AiStone X4SP4NAL",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "AiStone"),
+			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X4SP4NAL"),
+		},
+		.driver_data = &x4sp4nal_descriptor,
+	},
+	{
+		.ident = "MACHENIKE L16 Pro",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "MACHENIKE"),
+			DMI_EXACT_MATCH(DMI_BOARD_NAME, "L16P"),
+		},
+		.driver_data = &machenike_l16p_descriptor,
+	},
+	{
 		.ident = "XMG FUSION 15 (L19)",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "SchenkerTechnologiesGmbH"),
@@ -2071,6 +2906,13 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "LAPQC71B"),
+		},
+		.driver_data = &lapqc71a_lapqc71b_descriptor,
+	},
+	{
+		.ident = "Avell A60 MUV",
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "A60 MUV"),
 		},
 		.driver_data = &lapqc71a_lapqc71b_descriptor,
 	},
@@ -2152,7 +2994,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GXxHRXx"),
 		},
-		.driver_data = &tux_featureset_3_descriptor,
+		.driver_data = &tux_featureset_4_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Pro 14/15 Gen9 Intel/Commodore Omnia-Book 15 Gen9",
@@ -2160,7 +3002,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GXxMRXx"),
 		},
-		.driver_data = &tux_featureset_3_descriptor,
+		.driver_data = &tux_featureset_4_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Pro 14/15 Gen10 AMD",
@@ -2168,7 +3010,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "XxHP4NAx"),
 		},
-		.driver_data = &tux_featureset_3_descriptor,
+		.driver_data = &tux_featureset_4_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Pro 14/15 Gen10 AMD",
@@ -2176,7 +3018,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "XxKK4NAx_XxSP4NAx"),
 		},
-		.driver_data = &tux_featureset_3_descriptor,
+		.driver_data = &tux_featureset_4_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Pro 15 Gen10 Intel",
@@ -2184,7 +3026,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "XxAR4NAx"),
 		},
-		.driver_data = &tux_featureset_3_descriptor,
+		.driver_data = &tux_featureset_4_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Max 15 Gen10 AMD",
@@ -2192,7 +3034,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X5KK45xS_X5SP45xS"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Max 16 Gen10 AMD",
@@ -2200,7 +3042,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X6HP45xU"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Max 16 Gen10 AMD",
@@ -2208,7 +3050,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X6KK45xU_X6SP45xU"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Max 15 Gen10 Intel",
@@ -2216,7 +3058,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X5AR45xS"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO InfinityBook Max 16 Gen10 Intel",
@@ -2224,7 +3066,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X6AR55xU"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Polaris 15 Gen1 AMD",
@@ -2384,7 +3226,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GMxHGxx"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris Slim 15 Gen6 Intel/Commodore ORION Slim 15 Gen6",
@@ -2392,7 +3234,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GM5IXxA"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris 16 Gen6 Intel/Commodore ORION 16 Gen6",
@@ -2400,7 +3242,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GM6IXxB_MB1"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris 16 Gen6 Intel/Commodore ORION 16 Gen6",
@@ -2408,7 +3250,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GM6IXxB_MB2"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris 17 Gen6 Intel/Commodore ORION 17 Gen6",
@@ -2416,7 +3258,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "GM7IXxN"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris 16 Gen7 AMD",
@@ -2424,7 +3266,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X6FR5xxY"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris 16 Gen7 Intel",
@@ -2432,7 +3274,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X6AR5xxY"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Stellaris 16 Gen7 Intel",
@@ -2440,7 +3282,7 @@ static const struct dmi_system_id uniwill_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "X6AR5xxY_mLED"),
 		},
-		.driver_data = &tux_featureset_3_nvidia_descriptor,
+		.driver_data = &tux_featureset_4_nvidia_descriptor,
 	},
 	{
 		.ident = "TUXEDO Book BA15 Gen10 AMD",
@@ -2508,7 +3350,13 @@ static int __init uniwill_init(void)
 
 	if (force) {
 		/* Assume that the device supports all features except the charge limit */
-		device_descriptor.features = UINT_MAX & ~UNIWILL_FEATURE_BATTERY;
+		device_descriptor.features = UINT_MAX & ~UNIWILL_FEATURE_BATTERY_CHARGE_LIMIT;
+		/* Some models only have a (white) single color keyboard backlight */
+		device_descriptor.kbd_led_single_color = false;
+		/* Some models only support 3 brightness levels */
+		device_descriptor.kbd_led_max_brightness = 4;
+		/* Some models only support 36 brightness levels per color component */
+		device_descriptor.lightbar_max_brightness = 200;
 		pr_warn("Enabling potentially unsupported features\n");
 	}
 

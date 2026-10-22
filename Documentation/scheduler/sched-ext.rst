@@ -93,20 +93,20 @@ scheduler has been loaded):
     # cat /sys/kernel/sched_ext/enable_seq
     1
 
-Each running scheduler also exposes a per-scheduler ``events`` file under
-``/sys/kernel/sched_ext/<scheduler-name>/events`` that tracks diagnostic
-counters. Each counter occupies one ``name value`` line:
+Each running scheduler exposes an ``events`` file under its sysfs kobject
+(``/sys/kernel/sched_ext/root/events`` for the root scheduler) that tracks
+diagnostic counters. Each counter occupies one ``name value`` line:
 
 .. code-block:: none
 
-    # cat /sys/kernel/sched_ext/simple/events
+    # cat /sys/kernel/sched_ext/root/events
     SCX_EV_SELECT_CPU_FALLBACK 0
     SCX_EV_DISPATCH_LOCAL_DSQ_OFFLINE 0
     SCX_EV_DISPATCH_KEEP_LAST 123
     SCX_EV_ENQ_SKIP_EXITING 0
     SCX_EV_ENQ_SKIP_MIGRATION_DISABLED 0
     SCX_EV_REENQ_IMMED 0
-    SCX_EV_REENQ_LOCAL_REPEAT 0
+    SCX_EV_REENQ_REPEAT 0
     SCX_EV_REFILL_SLICE_DFL 456789
     SCX_EV_BYPASS_DURATION 0
     SCX_EV_BYPASS_DISPATCH 0
@@ -114,7 +114,7 @@ counters. Each counter occupies one ``name value`` line:
     SCX_EV_INSERT_NOT_OWNED 0
     SCX_EV_SUB_BYPASS_DISPATCH 0
 
-The counters are described in ``kernel/sched/ext_internal.h``; briefly:
+The counters are described in ``kernel/sched/ext/internal.h``; briefly:
 
 * ``SCX_EV_SELECT_CPU_FALLBACK``: ops.select_cpu() returned a CPU unusable by
   the task and the core scheduler silently picked a fallback CPU.
@@ -129,9 +129,9 @@ The counters are described in ``kernel/sched/ext_internal.h``; briefly:
   ``SCX_OPS_ENQ_MIGRATION_DISABLED`` is not set).
 * ``SCX_EV_REENQ_IMMED``: a task dispatched with ``SCX_ENQ_IMMED`` was
   re-enqueued because the target CPU was not available for immediate execution.
-* ``SCX_EV_REENQ_LOCAL_REPEAT``: a reenqueue of the local DSQ triggered
-  another reenqueue; recurring counts indicate incorrect ``SCX_ENQ_REENQ``
-  handling in the BPF scheduler.
+* ``SCX_EV_REENQ_REPEAT``: a reenqueue led to another reenqueue without the
+  task running in between; recurring counts indicate that the BPF scheduler
+  keeps re-deciding placements it can't honor.
 * ``SCX_EV_REFILL_SLICE_DFL``: a task's time slice was refilled with the
   default value (``SCX_SLICE_DFL``).
 * ``SCX_EV_BYPASS_DURATION``: total nanoseconds spent in bypass mode.
@@ -153,6 +153,7 @@ detailed information:
     switching_all : 1
     switched_all  : 1
     enable_state  : enabled (2)
+    aborting      : False
     bypass_depth  : 0
     nr_rejected   : 0
     enable_seq    : 1
@@ -229,7 +230,7 @@ optional. The following modified excerpt is from
 
     void BPF_STRUCT_OPS(simple_exit, struct scx_exit_info *ei)
     {
-            exit_type = ei->type;
+            exit_type = ei->kind;
     }
 
     SEC(".struct_ops")
@@ -240,6 +241,21 @@ optional. The following modified excerpt is from
             .exit                   = (void *)simple_exit,
             .name                   = "simple",
     };
+
+Scheduler-Dependent Knobs
+-------------------------
+
+The fair-class scheduler enforces CPU controller settings such as
+``cpu.max``, ``cpu.weight`` and ``cpu.idle``. For sched_ext tasks, the
+scheduler core communicates these settings to the BPF scheduler
+through ``ops.cgroup_init()`` and reports subsequent changes through
+the corresponding ``ops.cgroup_set_*()`` callbacks. Similarly, per-task
+nice changes are converted to weights and reported through
+``ops.set_weight()``.
+
+Each BPF scheduler is responsible for implementing the scheduling
+semantics of these settings and may choose to ignore them. Consult the
+loaded scheduler's documentation before relying on these controls.
 
 Dispatch Queues
 ---------------
@@ -338,6 +354,11 @@ The following briefly shows how a waking task is scheduled and executed.
      task is in BPF custody. ``ops.dequeue()`` will be called when it
      leaves (e.g., when ``ops.dispatch()`` moves it to a terminal DSQ, or
      on property change / sleep).
+
+   Note that ``ops.enqueue()`` can be called multiple times in a row without
+   an intervening call to ``ops.dequeue()``. This can happen, for example,
+   when a task on a user-created DSQ is re-enqueued using
+   ``scx_bpf_dsq_reenq()``. The task stays in BPF custody the entire time.
 
    When a task leaves BPF scheduler custody, ``ops.dequeue()`` is invoked.
    The dequeue can happen for different reasons, distinguished by flags:
@@ -488,14 +509,15 @@ a freshly woken up task gets on a CPU.
 Where to Look
 =============
 
-* ``include/linux/sched/ext.h`` defines the core data structures, ops table
-  and constants.
+* ``include/linux/sched/ext.h`` defines the core data structures and
+  constants, while the ops table (``struct sched_ext_ops``) is defined in
+  ``kernel/sched/ext/internal.h``.
 
-* ``kernel/sched/ext.c`` contains sched_ext core implementation and helpers.
+* ``kernel/sched/ext/ext.c`` contains sched_ext core implementation and helpers.
   The functions prefixed with ``scx_bpf_`` can be called from the BPF
   scheduler.
 
-* ``kernel/sched/ext_idle.c`` contains the built-in idle CPU selection policy.
+* ``kernel/sched/ext/idle.c`` contains the built-in idle CPU selection policy.
 
 * ``tools/sched_ext/`` hosts example BPF scheduler implementations.
 
@@ -503,7 +525,7 @@ Where to Look
     custom DSQ.
 
   * ``scx_qmap[.bpf].c``: A multi-level FIFO scheduler supporting five
-    levels of priority implemented with ``BPF_MAP_TYPE_QUEUE``.
+    levels of priority implemented with arena-backed doubly-linked lists.
 
   * ``scx_central[.bpf].c``: A central FIFO scheduler where all scheduling
     decisions are made on one CPU, demonstrating ``LOCAL_ON`` dispatching,
@@ -550,9 +572,10 @@ ABI Instability
 ===============
 
 The APIs provided by sched_ext to BPF schedulers programs have no stability
-guarantees. This includes the ops table callbacks and constants defined in
+guarantees. This includes the ops table callbacks defined in
+``kernel/sched/ext/internal.h`` and the constants defined in
 ``include/linux/sched/ext.h``, as well as the ``scx_bpf_`` kfuncs defined in
-``kernel/sched/ext.c`` and ``kernel/sched/ext_idle.c``.
+``kernel/sched/ext/ext.c`` and ``kernel/sched/ext/idle.c``.
 
 While we will attempt to provide a relatively stable API surface when
 possible, they are subject to change without warning between kernel

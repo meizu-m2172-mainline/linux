@@ -3,8 +3,8 @@
  * Copyright © 2022 Intel Corporation
  */
 
-#ifndef _XE_GUC_FWIF_H
-#define _XE_GUC_FWIF_H
+#ifndef _XE_GUC_FWIF_H_
+#define _XE_GUC_FWIF_H_
 
 #include <linux/bits.h>
 
@@ -68,6 +68,7 @@ struct guc_update_exec_queue_policy {
 #define   GUC_CTL_MAIN_GAMCTRL_QUEUES	BIT(9)
 #define   GUC_CTL_DISABLE_SCHEDULER	BIT(14)
 #define   GUC_CTL_ENABLE_L2FLUSH_OPT	BIT(15)
+#define   GUC_CTL_DISABLE_MULTI_QUEUE	BIT(24)
 
 #define GUC_CTL_DEBUG			3
 #define   GUC_LOG_VERBOSITY		REG_GENMASK(1, 0)

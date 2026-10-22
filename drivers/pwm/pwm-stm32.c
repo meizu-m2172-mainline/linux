@@ -193,22 +193,6 @@ out:
 	return ret;
 }
 
-/*
- * This should be moved to lib/math/div64.c. Currently there are some changes
- * pending to mul_u64_u64_div_u64. Uwe will care for that when the dust settles.
- */
-static u64 stm32_pwm_mul_u64_u64_div_u64_roundup(u64 a, u64 b, u64 c)
-{
-	u64 res = mul_u64_u64_div_u64(a, b, c);
-	/* Those multiplications might overflow but it doesn't matter */
-	u64 rem = a * b - c * res;
-
-	if (rem)
-		res += 1;
-
-	return res;
-}
-
 static int stm32_pwm_round_waveform_fromhw(struct pwm_chip *chip,
 					   struct pwm_device *pwm,
 					   const void *_wfhw,
@@ -223,16 +207,15 @@ static int stm32_pwm_round_waveform_fromhw(struct pwm_chip *chip,
 		u64 ccr_ns;
 
 		/* The result doesn't overflow for rate >= 15259 */
-		wf->period_length_ns = stm32_pwm_mul_u64_u64_div_u64_roundup(((u64)wfhw->psc + 1) * (wfhw->arr + 1),
-									     NSEC_PER_SEC, rate);
+		wf->period_length_ns = mul_u64_u64_div_u64_roundup(((u64)wfhw->psc + 1) * (wfhw->arr + 1),
+								   NSEC_PER_SEC, rate);
 
-		ccr_ns = stm32_pwm_mul_u64_u64_div_u64_roundup(((u64)wfhw->psc + 1) * wfhw->ccr,
-							       NSEC_PER_SEC, rate);
+		ccr_ns = mul_u64_u64_div_u64_roundup(((u64)wfhw->psc + 1) * wfhw->ccr, NSEC_PER_SEC, rate);
 
 		if (wfhw->ccer & TIM_CCER_CCxP(ch + 1)) {
 			wf->duty_length_ns =
-				stm32_pwm_mul_u64_u64_div_u64_roundup(((u64)wfhw->psc + 1) * (wfhw->arr + 1 - wfhw->ccr),
-								      NSEC_PER_SEC, rate);
+				mul_u64_u64_div_u64_roundup(((u64)wfhw->psc + 1) * (wfhw->arr + 1 - wfhw->ccr),
+							    NSEC_PER_SEC, rate);
 
 			wf->duty_offset_ns = ccr_ns;
 		} else {
@@ -935,9 +918,9 @@ static int stm32_pwm_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(stm32_pwm_pm_ops, stm32_pwm_suspend, stm32_pwm_resume);
 
 static const struct of_device_id stm32_pwm_of_match[] = {
-	{ .compatible = "st,stm32-pwm",	},
-	{ .compatible = "st,stm32mp25-pwm", },
-	{ /* end node */ },
+	{ .compatible = "st,stm32-pwm" },
+	{ .compatible = "st,stm32mp25-pwm" },
+	{ /* end node */ }
 };
 MODULE_DEVICE_TABLE(of, stm32_pwm_of_match);
 

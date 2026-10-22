@@ -62,7 +62,7 @@ struct {
 
 /*
  * If we encounter a #GP during the guest PMU sanity check, then the guest
- * PMU is not functional. Inform the hypervisor via GUEST_SYNC(0).
+ * PMU is not functional. Inform the hypervisor via GUEST_SYNC(-EFAULT).
  */
 static void guest_gp_handler(struct ex_regs *regs)
 {
@@ -73,7 +73,7 @@ static void guest_gp_handler(struct ex_regs *regs)
  * Check that we can write a new value to the given MSR and read it back.
  * The caller should provide a non-empty set of bits that are safe to flip.
  *
- * Return on success. GUEST_SYNC(0) on error.
+ * Return on success, GUEST_SYNC(-EIO) on error.
  */
 static void check_msr(u32 msr, u64 bits_to_flip)
 {
@@ -731,6 +731,8 @@ static void test_filter_ioctl(struct kvm_vcpu *vcpu)
 
 static void intel_run_fixed_counter_guest_code(u8 idx)
 {
+	u8 nr_fixed_counters = this_cpu_property(X86_PROPERTY_PMU_NR_FIXED_COUNTERS);
+
 	for (;;) {
 		wrmsr(MSR_CORE_PERF_GLOBAL_CTRL, 0);
 		wrmsr(MSR_CORE_PERF_FIXED_CTR0 + idx, 0);
@@ -738,6 +740,10 @@ static void intel_run_fixed_counter_guest_code(u8 idx)
 		/* Only OS_EN bit is enabled for fixed counter[idx]. */
 		wrmsr(MSR_CORE_PERF_FIXED_CTR_CTRL, FIXED_PMC_CTRL(idx, FIXED_PMC_KERNEL));
 		wrmsr(MSR_CORE_PERF_GLOBAL_CTRL, FIXED_PMC_GLOBAL_CTRL_ENABLE(idx));
+		if (nr_fixed_counters > 1)
+			wrmsr(MSR_CORE_PERF_FIXED_CTR_CTRL,
+			      FIXED_PMC_CTRL(idx, FIXED_PMC_KERNEL) |
+			      FIXED_PMC_CTRL((idx + 1) % nr_fixed_counters, FIXED_PMC_KERNEL));
 		__asm__ __volatile__("loop ." : "+c"((int){NUM_BRANCHES}));
 		wrmsr(MSR_CORE_PERF_GLOBAL_CTRL, 0);
 

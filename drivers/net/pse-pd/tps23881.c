@@ -1520,16 +1520,12 @@ static int tps23881_i2c_probe(struct i2c_client *client)
 				     "failed to register PSE controller\n");
 	}
 
-	ret = tps23881_setup_irq(priv, client->irq);
-	if (ret)
-		return ret;
-
-	return ret;
+	return tps23881_setup_irq(priv, client->irq);
 }
 
 static const struct i2c_device_id tps23881_id[] = {
-	{ "tps23881", .driver_data = (kernel_ulong_t)&tps23881_info[TPS23881] },
-	{ "tps23881b", .driver_data = (kernel_ulong_t)&tps23881_info[TPS23881B] },
+	{ .name = "tps23881", .driver_data = (kernel_ulong_t)&tps23881_info[TPS23881] },
+	{ .name = "tps23881b", .driver_data = (kernel_ulong_t)&tps23881_info[TPS23881B] },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tps23881_id);

@@ -22,8 +22,7 @@ Supported chips:
 
 	       Intel 64 and IA-32 Architectures Software Developer's Manual
 	       Volume 3A: System Programming Guide
-
-	       http://softwarecommunity.intel.com/Wiki/Mobility/720.htm
+	       (https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 
 Author: Rudolf Marek
 
@@ -45,18 +44,19 @@ Temperature known as TjMax is the maximum junction temperature of processor,
 which depends on the CPU model. See table below. At this temperature, protection
 mechanism will perform actions to forcibly cool down the processor. Alarm
 may be raised, if the temperature grows enough (more than TjMax) to trigger
-the Out-Of-Spec bit. Following table summarizes the exported sysfs files:
+the Out-Of-Spec bit. The following table summarizes the exported sysfs files:
 
-All Sysfs entries are named with their core_id (represented here by 'X').
+All sysfs entries are named with their core_id (represented here by 'X').
 
 ================= ========================================================
 tempX_input	  Core temperature (in millidegrees Celsius).
-tempX_max	  All cooling devices should be turned on (on Core2).
+tempX_max	  Maximum recommended operating temperature (Tcontrol).
+		  All cooling devices should be turned on.
 tempX_crit	  Maximum junction temperature (in millidegrees Celsius).
 tempX_crit_alarm  Set when Out-of-spec bit is set, never clears.
 		  Correct CPU operation is no longer guaranteed.
 tempX_label	  Contains string "Core X", where X is processor
-		  number. For Package temp, this will be "Physical id Y",
+		  number. For Package temp, this will be "Package id Y",
 		  where Y is the package number.
 ================= ========================================================
 

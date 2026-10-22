@@ -3,6 +3,7 @@
  * Copyright (C) 2014-2026 NVIDIA CORPORATION.  All rights reserved.
  */
 
+#include <linux/cleanup.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
@@ -10,9 +11,11 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/pm.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
 #include <linux/tegra-icc.h>
@@ -20,6 +23,9 @@
 #include <soc/tegra/fuse.h>
 
 #include "mc.h"
+
+static DEFINE_MUTEX(tegra_mc_debugfs_root_lock);
+static struct dentry *tegra_mc_debugfs_root;
 
 static const struct of_device_id tegra_mc_of_match[] = {
 #ifdef CONFIG_ARCH_TEGRA_2x_SOC
@@ -48,6 +54,9 @@ static const struct of_device_id tegra_mc_of_match[] = {
 #endif
 #ifdef CONFIG_ARCH_TEGRA_234_SOC
 	{ .compatible = "nvidia,tegra234-mc", .data = &tegra234_mc_soc },
+#endif
+#ifdef CONFIG_ARCH_TEGRA_238_SOC
+	{ .compatible = "nvidia,tegra238-mc", .data = &tegra238_mc_soc },
 #endif
 #ifdef CONFIG_ARCH_TEGRA_264_SOC
 	{ .compatible = "nvidia,tegra264-mc", .data = &tegra264_mc_soc },
@@ -594,6 +603,13 @@ irqreturn_t tegra30_mc_handle_irq(int irq, void *data)
 	if (!status)
 		return IRQ_NONE;
 
+	if (!mc->soc->regs) {
+		dev_err_ratelimited(mc->dev,
+				    "MC error interrupt 0x%08lx with no error register map, Clearing.\n",
+				    status);
+		goto clear;
+	}
+
 	for_each_set_bit(bit, &status, 32) {
 		const char *error = tegra_mc_status_names[bit] ?: "unknown";
 		const char *client = "unknown", *desc;
@@ -732,6 +748,7 @@ irqreturn_t tegra30_mc_handle_irq(int irq, void *data)
 				    desc, perm);
 	}
 
+clear:
 	/* clear interrupts */
 	if (mc->soc->num_channels) {
 		mc_ch_writel(mc, channel, status, MC_INTSTATUS);
@@ -774,7 +791,7 @@ struct icc_node *tegra_mc_icc_xlate(const struct of_phandle_args *spec, void *da
 	struct icc_node *node;
 
 	list_for_each_entry(node, &mc->provider.nodes, node_list) {
-		if (node->id == spec->args[0])
+		if (tegra_mc_client_id_from_node(node) == spec->args[0])
 			return node;
 	}
 
@@ -830,6 +847,7 @@ const struct tegra_mc_icc_ops tegra_mc_icc_ops = {
  */
 static int tegra_mc_interconnect_setup(struct tegra_mc *mc)
 {
+	int node_id = dev_to_node(mc->dev);
 	struct icc_node *node;
 	unsigned int i;
 	int err;
@@ -850,31 +868,40 @@ static int tegra_mc_interconnect_setup(struct tegra_mc *mc)
 	icc_provider_init(&mc->provider);
 
 	/* create Memory Controller node */
-	node = icc_node_create(TEGRA_ICC_MC);
+	node = tegra_mc_icc_node_create(node_id, TEGRA_ICC_MC);
 	if (IS_ERR(node))
 		return PTR_ERR(node);
 
-	node->name = "Memory Controller";
+	if (node_id == NUMA_NO_NODE)
+		node->name = "Memory Controller";
+	else
+		node->name = dev_name(mc->dev);
+
 	icc_node_add(node, &mc->provider);
 
 	/* link Memory Controller to External Memory Controller */
-	err = icc_link_create(node, TEGRA_ICC_EMC);
+	err = tegra_mc_icc_link_create(node, node_id, TEGRA_ICC_EMC);
 	if (err)
 		goto remove_nodes;
 
 	for (i = 0; i < mc->soc->num_clients; i++) {
 		/* create MC client node */
-		node = icc_node_create(mc->soc->clients[i].id);
+		node = tegra_mc_icc_node_create(node_id, mc->soc->clients[i].id);
 		if (IS_ERR(node)) {
 			err = PTR_ERR(node);
 			goto remove_nodes;
 		}
 
-		node->name = mc->soc->clients[i].name;
+		if (node_id == NUMA_NO_NODE)
+			node->name = mc->soc->clients[i].name;
+		else
+			node->name = devm_kasprintf(mc->dev, GFP_KERNEL, "%d-%s",
+						    node_id, mc->soc->clients[i].name);
+
 		icc_node_add(node, &mc->provider);
 
 		/* link Memory Client to Memory Controller */
-		err = icc_link_create(node, TEGRA_ICC_MC);
+		err = tegra_mc_icc_link_create(node, node_id, TEGRA_ICC_MC);
 		if (err)
 			goto remove_nodes;
 
@@ -910,6 +937,19 @@ static void tegra_mc_num_channel_enabled(struct tegra_mc *mc)
 	}
 }
 
+static void tegra_mc_setup_intmask(struct tegra_mc *mc)
+{
+	unsigned int i;
+
+	for (i = 0; i < mc->soc->num_intmasks; i++) {
+		if (mc->soc->num_channels)
+			mc_ch_writel(mc, MC_BROADCAST_CHANNEL, mc->soc->intmasks[i].mask,
+				     mc->soc->intmasks[i].reg);
+		else
+			mc_writel(mc, mc->soc->intmasks[i].mask, mc->soc->intmasks[i].reg);
+	}
+}
+
 static int tegra_mc_probe(struct platform_device *pdev)
 {
 	struct tegra_mc *mc;
@@ -940,7 +980,16 @@ static int tegra_mc_probe(struct platform_device *pdev)
 	if (IS_ERR(mc->regs))
 		return PTR_ERR(mc->regs);
 
-	mc->debugfs.root = debugfs_create_dir("mc", NULL);
+	scoped_guard(mutex, &tegra_mc_debugfs_root_lock) {
+		if (!tegra_mc_debugfs_root)
+			tegra_mc_debugfs_root = debugfs_create_dir("mc", NULL);
+
+		if (dev_to_node(mc->dev) == NUMA_NO_NODE)
+			mc->debugfs.root = tegra_mc_debugfs_root;
+		else
+			mc->debugfs.root = debugfs_create_dir(dev_name(mc->dev),
+							      tegra_mc_debugfs_root);
+	}
 
 	if (mc->soc->ops && mc->soc->ops->probe) {
 		err = mc->soc->ops->probe(mc);
@@ -970,13 +1019,7 @@ static int tegra_mc_probe(struct platform_device *pdev)
 			}
 		}
 
-		for (i = 0; i < mc->soc->num_intmasks; i++) {
-			if (mc->soc->num_channels)
-				mc_ch_writel(mc, MC_BROADCAST_CHANNEL, mc->soc->intmasks[i].mask,
-					     mc->soc->intmasks[i].reg);
-			else
-				mc_writel(mc, mc->soc->intmasks[i].mask, mc->soc->intmasks[i].reg);
-		}
+		tegra_mc_setup_intmask(mc);
 	}
 
 	if (mc->soc->reset_ops) {
@@ -1010,10 +1053,25 @@ static void tegra_mc_sync_state(struct device *dev)
 		icc_sync_state(dev);
 }
 
+static int tegra_mc_resume(struct device *dev)
+{
+	struct tegra_mc *mc = dev_get_drvdata(dev);
+
+	if (mc->soc->ops && mc->soc->ops->resume)
+		mc->soc->ops->resume(mc);
+
+	tegra_mc_setup_intmask(mc);
+
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(tegra_mc_pm_ops, NULL, tegra_mc_resume);
+
 static struct platform_driver tegra_mc_driver = {
 	.driver = {
 		.name = "tegra-mc",
 		.of_match_table = tegra_mc_of_match,
+		.pm = pm_sleep_ptr(&tegra_mc_pm_ops),
 		.suppress_bind_attrs = true,
 		.sync_state = tegra_mc_sync_state,
 	},

@@ -58,6 +58,8 @@ struct cec_notifier;
 struct drm_printer;
 struct intel_connector;
 struct intel_ddi_buf_trans;
+struct intel_dp_link_caps;
+struct intel_dp_link_training;
 struct intel_fbc;
 struct intel_global_objs_state;
 struct intel_hdcp_shim;
@@ -150,7 +152,6 @@ struct intel_framebuffer {
 	unsigned int min_alignment;
 	unsigned int vtd_guard;
 
-	unsigned int (*panic_tiling)(unsigned int x, unsigned int y, unsigned int width);
 	struct intel_panic *panic;
 };
 
@@ -177,10 +178,12 @@ struct intel_encoder {
 	enum intel_output_type (*compute_output_type)(struct intel_encoder *,
 						      struct intel_crtc_state *,
 						      struct drm_connector_state *);
-	int (*compute_config)(struct intel_encoder *,
+	int (*compute_config)(struct intel_atomic_state *,
+			      struct intel_encoder *,
 			      struct intel_crtc_state *,
 			      struct drm_connector_state *);
-	int (*compute_config_late)(struct intel_encoder *,
+	int (*compute_config_late)(struct intel_atomic_state *,
+				   struct intel_encoder *,
 				   struct intel_crtc_state *,
 				   struct drm_connector_state *);
 	void (*pre_pll_enable)(struct intel_atomic_state *,
@@ -634,7 +637,7 @@ struct dpll {
 };
 
 struct intel_atomic_state {
-	struct drm_atomic_state base;
+	struct drm_atomic_commit base;
 
 	struct ref_tracker *wakeref;
 
@@ -684,13 +687,14 @@ struct intel_plane_state {
 
 	struct i915_vma *ggtt_vma;
 	struct i915_vma *dpt_vma;
-	unsigned long flags;
-#define PLANE_HAS_FENCE BIT(0)
 
 	struct intel_fb_view view;
 
 	/* for legacy cursor fb unpin */
 	struct drm_vblank_work unpin_work;
+
+	/* fenced region ID (-1 if none) */
+	s8 fence_id;
 
 	/* Plane pxp decryption state */
 	bool decrypt;
@@ -756,9 +760,7 @@ struct intel_plane_state {
 };
 
 struct intel_initial_plane_config {
-	struct intel_framebuffer *fb;
-	struct intel_memory_region *mem;
-	resource_size_t phys_base;
+	struct drm_framebuffer *fb;
 	struct i915_vma *vma;
 	int size;
 	u32 base;
@@ -998,7 +1000,7 @@ struct intel_casf {
 	struct scaler_filter_coeff coeff[SCALER_FILTER_NUM_TAPS];
 	u8 strength;
 	u8 win_size;
-	bool casf_enable;
+	bool enable;
 };
 
 struct intel_crtc_state {
@@ -1036,8 +1038,9 @@ struct intel_crtc_state {
 		/* logical state of LUTs */
 		struct drm_property_blob *degamma_lut, *gamma_lut, *ctm;
 		struct drm_display_mode mode, pipe_mode, adjusted_mode;
+		u32 background_color;
 		enum drm_scaling_filter scaling_filter;
-		struct intel_casf casf_params;
+		u8 sharpness_strength;
 	} hw;
 
 	/* actual state of LUTs */
@@ -1079,6 +1082,13 @@ struct intel_crtc_state {
 	 * panel fitter/pipe scaler downscaling.
 	 */
 	unsigned int pixel_rate;
+
+	/*
+	 * Pipe pixel rate for CDCLK, adjusted for
+	 * panel fitter/pipe scaler downscaling.
+	 * CDCLK use cases need further adjustment.
+	 */
+	unsigned int pixel_rate_cdclk;
 
 	/* Whether to set up the PCH/FDI. Note that we never allow sharing
 	 * between pch encoders and cpu encoders. */
@@ -1177,6 +1187,8 @@ struct intel_crtc_state {
 	bool has_sel_update;
 	bool enable_psr2_sel_fetch;
 	bool enable_psr2_su_region_et;
+	/* Drop the stale selective fetch enable bits as selective fetch is turned off */
+	bool clear_psr2_sel_fetch;
 	bool req_psr2_sdp_prior_scanline;
 	bool has_panel_replay;
 	bool link_off_after_as_sdp_when_pr_active;
@@ -1185,7 +1197,6 @@ struct intel_crtc_state {
 	bool pkg_c_latency_used;
 	/* Only used for state verification. */
 	enum intel_panel_replay_dsc_support panel_replay_dsc_support;
-	u32 dc3co_exitline;
 	u16 su_y_granularity;
 	u8 active_non_psr_pipes;
 	u8 entry_setup_frames;
@@ -1224,6 +1235,7 @@ struct intel_crtc_state {
 
 	/* Panel fitter placement and size for Ironlake+ */
 	struct {
+		struct intel_casf casf;
 		struct drm_rect dst;
 		bool enabled;
 		bool force_thru;
@@ -1369,7 +1381,7 @@ struct intel_crtc_state {
 	enum transcoder master_transcoder;
 
 	/* Bitmask to indicate slaves attached */
-	u8 sync_mode_slaves_mask;
+	u16 sync_mode_slaves_mask;
 
 	/* Only valid on TGL+ */
 	enum transcoder mst_master_transcoder;
@@ -1572,6 +1584,10 @@ struct intel_crtc {
 #endif
 
 	bool vblank_psr_notify;
+
+	struct {
+		bool enabled;
+	} cmtg;
 };
 
 struct intel_plane_error {
@@ -1663,7 +1679,7 @@ struct intel_plane {
 	container_of_const((fb), struct intel_framebuffer, base)
 
 struct intel_hdmi {
-	i915_reg_t hdmi_reg;
+	intel_reg_t hdmi_reg;
 	struct {
 		enum drm_dp_dual_mode_type type;
 		int max_tmds_clock;
@@ -1771,14 +1787,16 @@ struct intel_psr {
 	ktime_t last_exit;
 	bool sink_not_reliable;
 	bool irq_aux_error;
+	/* DC3CO allowed used to control PSR configuration */
+	bool dc3co_allowed;
+	/* DC3CO disable work */
+	struct delayed_work dc3co_work;
 	u16 su_w_granularity;
 	u16 su_y_granularity;
 	bool source_panel_replay_support;
 	bool sink_panel_replay_support;
 	bool panel_replay_enabled;
-	u32 dc3co_exitline;
 	u32 dc3co_exit_delay;
-	struct delayed_work dc3co_work;
 	u8 entry_setup_frames;
 
 	u8 io_wake_lines;
@@ -1794,8 +1812,16 @@ struct intel_psr {
 	struct ref_tracker *vblank_wakeref;
 };
 
+struct intel_dp_link_config {
+	int rate;
+	int lane_count;
+};
+
+#define INTEL_DP_LINK_CONFIG_NULL \
+	((struct intel_dp_link_config){})
+
 struct intel_dp {
-	i915_reg_t output_reg;
+	intel_reg_t output_reg;
 	u32 DP;
 	int link_rate;
 	u8 lane_count;
@@ -1819,28 +1845,9 @@ struct intel_dp {
 	bool use_rate_select;
 	/* Max sink lane count as reported by DP_MAX_LANE_COUNT */
 	int max_sink_lane_count;
-	/* intersection of source and sink rates */
-	int num_common_rates;
-	int common_rates[DP_MAX_SUPPORTED_RATES];
 	struct {
 		/* TODO: move the rest of link specific fields to here */
 		bool active;
-		/* common rate,lane_count configs in bw order */
-		int num_configs;
-#define INTEL_DP_MAX_LANE_COUNT			4
-#define INTEL_DP_MAX_SUPPORTED_LANE_CONFIGS	(ilog2(INTEL_DP_MAX_LANE_COUNT) + 1)
-#define INTEL_DP_LANE_COUNT_EXP_BITS		order_base_2(INTEL_DP_MAX_SUPPORTED_LANE_CONFIGS)
-#define INTEL_DP_LINK_RATE_IDX_BITS		(BITS_PER_TYPE(u8) - INTEL_DP_LANE_COUNT_EXP_BITS)
-#define INTEL_DP_MAX_LINK_CONFIGS		(DP_MAX_SUPPORTED_RATES * \
-						 INTEL_DP_MAX_SUPPORTED_LANE_CONFIGS)
-		struct intel_dp_link_config {
-			u8 link_rate_idx:INTEL_DP_LINK_RATE_IDX_BITS;
-			u8 lane_count_exp:INTEL_DP_LANE_COUNT_EXP_BITS;
-		} configs[INTEL_DP_MAX_LINK_CONFIGS];
-		/* Max lane count for the current link */
-		int max_lane_count;
-		/* Max rate for the current link */
-		int max_rate;
 		/*
 		 * Link parameters for which the MST topology was probed.
 		 * Tracking these ensures that the MST path resources are
@@ -1849,13 +1856,8 @@ struct intel_dp {
 		 */
 		int mst_probed_lane_count;
 		int mst_probed_rate;
-		int force_lane_count;
-		int force_rate;
-		bool retrain_disabled;
-		/* Sequential link training failures after a passing LT */
-		int seq_train_failures;
-		int force_train_failure;
-		bool force_retrain;
+		struct intel_dp_link_training *training;
+		struct intel_dp_link_caps *caps;
 	} link;
 	bool reset_link_params;
 	int mso_link_count;
@@ -1874,9 +1876,11 @@ struct intel_dp {
 	/* connector directly attached - won't be use for modeset in mst world */
 	struct intel_connector *attached_connector;
 	bool as_sdp_supported;
+	bool as_sdp_v2_supported;
 
 	struct drm_dp_tunnel *tunnel;
 	bool tunnel_suspended:1;
+	u8 disabled_uhbr_lane_mask;
 
 	struct {
 		struct intel_dp_mst_encoder *stream_encoders[I915_MAX_PIPES];
@@ -1892,8 +1896,8 @@ struct intel_dp {
 	u32 (*get_aux_send_ctl)(struct intel_dp *dp, int send_bytes,
 				u32 aux_clock_divider);
 
-	i915_reg_t (*aux_ch_ctl_reg)(struct intel_dp *dp);
-	i915_reg_t (*aux_ch_data_reg)(struct intel_dp *dp, int index);
+	intel_reg_t (*aux_ch_ctl_reg)(struct intel_dp *dp);
+	intel_reg_t (*aux_ch_data_reg)(struct intel_dp *dp, int index);
 
 	/* This is called before a link training is starterd */
 	void (*prepare_link_retrain)(struct intel_dp *intel_dp,
@@ -1943,6 +1947,8 @@ struct intel_dp {
 	bool oui_valid;
 
 	bool colorimetry_support;
+
+	bool sst_split_sdp_support;
 
 	struct {
 		enum transcoder transcoder;
@@ -2120,7 +2126,7 @@ static inline bool intel_encoder_is_dp(struct intel_encoder *encoder)
 		return true;
 	case INTEL_OUTPUT_DDI:
 		/* Skip pure HDMI/DVI DDI encoders */
-		return i915_mmio_reg_valid(enc_to_intel_dp(encoder)->output_reg);
+		return intel_reg_valid(enc_to_intel_dp(encoder)->output_reg);
 	default:
 		return false;
 	}
@@ -2133,7 +2139,7 @@ static inline bool intel_encoder_is_hdmi(struct intel_encoder *encoder)
 		return true;
 	case INTEL_OUTPUT_DDI:
 		/* See if the HDMI encoder is valid. */
-		return i915_mmio_reg_valid(enc_to_intel_hdmi(encoder)->hdmi_reg);
+		return intel_reg_valid(enc_to_intel_hdmi(encoder)->hdmi_reg);
 	default:
 		return false;
 	}

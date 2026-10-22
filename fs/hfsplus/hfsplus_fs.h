@@ -214,8 +214,6 @@ struct hfsplus_inode_info {
 	sector_t fs_blocks;
 	u8 userflags;		/* BSD user file flags */
 	u32 subfolders;		/* Subfolder count (HFSX only) */
-	struct list_head open_dir_list;
-	spinlock_t open_dir_lock;
 	loff_t phys_size;
 
 	struct inode vfs_inode;
@@ -272,8 +270,7 @@ struct hfs_find_data {
 };
 
 struct hfsplus_readdir_data {
-	struct list_head list;
-	struct file *file;
+	loff_t pos;
 	struct hfsplus_cat_key key;
 };
 
@@ -524,6 +521,12 @@ static inline u32 hfsplus_cat_thread_size(const struct hfsplus_cat_thread *threa
 	       be16_to_cpu(thread->nodeName.length) * sizeof(hfsplus_unichr);
 }
 
+static inline
+bool is_hfs_thread_record_type(u16 type)
+{
+	return type == HFSPLUS_FOLDER_THREAD || type == HFSPLUS_FILE_THREAD;
+}
+
 int hfsplus_brec_read_cat(struct hfs_find_data *fd, hfsplus_cat_entry *entry);
 
 /*
@@ -591,6 +594,85 @@ bool is_bnode_offset_valid(struct hfs_bnode *node, u32 off)
 }
 
 static inline
+bool hfs_bnode_num_recs_invalid(struct hfs_bnode *node)
+{
+	u32 node_size;
+	u32 table_size;
+	u32 area_size;
+	u32 rec_size = sizeof(__be16);
+	u32 desc_size = sizeof(struct hfs_bnode_desc);
+
+	if (!node || !node->tree)
+		return true;
+
+	node_size = node->tree->node_size;
+	if (node_size < desc_size)
+		return true;
+
+	area_size = node_size - desc_size;
+	table_size = ((u32)node->num_recs + 1) * rec_size;
+
+	return table_size > area_size;
+}
+
+static inline
+bool hfs_brec_record_invalid(struct hfs_bnode *node, int record)
+{
+	if (hfs_bnode_num_recs_invalid(node))
+		return true;
+	if (record < 0)
+		return true;
+
+	return record >= node->num_recs;
+}
+
+static inline
+bool hfs_brec_offsets_invalid(struct hfs_bnode *node, u16 off, u16 next_off)
+{
+	u32 table_size;
+	u32 table_start;
+	u32 rec_size = sizeof(__be16);
+	u32 desc_size = sizeof(struct hfs_bnode_desc);
+
+	if (!node || !node->tree)
+		return true;
+
+	if (off < desc_size || (off & 1))
+		return true;
+
+	if (next_off <= off ||
+	    next_off > node->tree->node_size ||
+	    (next_off & 1))
+		return true;
+
+	table_size = ((u32)node->num_recs + 1) * rec_size;
+	table_start = node->tree->node_size - table_size;
+	if (next_off > table_start)
+		return true;
+
+	return false;
+}
+
+static inline
+bool hfs_brec_len_invalid(struct hfs_bnode *node, u16 len)
+{
+	if (!node || !node->tree)
+		return true;
+
+	return len == 0 || len > node->tree->node_size;
+}
+
+static inline
+void hfs_find_result_init(struct hfs_find_data *fd)
+{
+	fd->record = -1;
+	fd->keyoffset = -1;
+	fd->keylength = -1;
+	fd->entryoffset = -1;
+	fd->entrylength = -1;
+}
+
+static inline
 u32 check_and_correct_requested_length(struct hfs_bnode *node, u32 off, u32 len)
 {
 	unsigned int node_size;
@@ -600,7 +682,7 @@ u32 check_and_correct_requested_length(struct hfs_bnode *node, u32 off, u32 len)
 
 	node_size = node->tree->node_size;
 
-	if ((off + len) > node_size) {
+	if ((u64)off + len > node_size) {
 		u32 new_len = node_size - off;
 
 		pr_err("requested length has been corrected: "

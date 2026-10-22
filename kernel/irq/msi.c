@@ -591,7 +591,7 @@ void msi_device_destroy_sysfs(struct device *dev)
 	msi_for_each_desc(desc, dev, MSI_DESC_ALL)
 		msi_sysfs_remove_desc(dev, desc);
 }
-#endif /* CONFIG_PCI_MSI_ARCH_FALLBACK || CONFIG_PCI_XEN */
+#endif /* CONFIG_PCI_MSI_ARCH_FALLBACKS || CONFIG_PCI_XEN */
 #else /* CONFIG_SYSFS */
 static inline int msi_sysfs_create_group(struct device *dev) { return 0; }
 static inline int msi_sysfs_populate_desc(struct device *dev, struct msi_desc *desc) { return 0; }
@@ -1683,7 +1683,6 @@ void msi_domain_free_irqs_range(struct device *dev, unsigned int domid,
 	guard(msi_descs_lock)(dev);
 	msi_domain_free_irqs_range_locked(dev, domid, first, last);
 }
-EXPORT_SYMBOL_GPL(msi_domain_free_irqs_all);
 
 /**
  * msi_domain_free_irqs_all_locked - Free all interrupts from a MSI interrupt domain
@@ -1714,6 +1713,7 @@ void msi_domain_free_irqs_all(struct device *dev, unsigned int domid)
 	guard(msi_descs_lock)(dev);
 	msi_domain_free_irqs_all_locked(dev, domid);
 }
+EXPORT_SYMBOL_GPL(msi_domain_free_irqs_all);
 
 /**
  * msi_device_domain_free_wired - Free a wired interrupt in @domain

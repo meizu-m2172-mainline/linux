@@ -29,13 +29,11 @@
 		};
 	};
 
-	pmu: pmu@ff111000 {
+	pmu: pmu {
 		compatible = "arm,cortex-a9-pmu";
 		interrupt-parent = <&intc>;
 		interrupts = <0 124 4>, <0 125 4>;
 		interrupt-affinity = <&cpu0>, <&cpu1>;
-		reg = <0xff111000 0x1000>,
-		      <0xff113000 0x1000>;
 	};
 
 	intc: interrupt-controller@ffffd000 {
@@ -449,7 +447,7 @@
 		gmac1: ethernet@ff802000 {
 			compatible = "altr,socfpga-stmmac-a10-s10", "snps,dwmac-3.72a", "snps,dwmac";
 			altr,sysmgr-syscon = <&sysmgr 0x48 8>;
-		        reg = <0xff802000 0x2000>;
+			reg = <0xff802000 0x2000>;
 			interrupts = <0 93 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "macirq";
 			/* Filled in by bootloader */

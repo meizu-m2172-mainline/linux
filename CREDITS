@@ -197,6 +197,9 @@ S: Hauptstrasse 19
 S: 79837 St. Blasien
 S: Germany
 
+N: Ferenc Bakonyi
+D: Hercules graphics adapter framebuffer driver
+
 N: Krishna Balasubramanian
 E: balasub@cis.ohio-state.edu
 D: Wrote SYS V IPC (part of standard kernel since 0.99.10)
@@ -636,6 +639,10 @@ S: The Mathematical Institute
 S: 25-29 St Giles
 S: Oxford
 S: United Kingdom
+
+N: Bingbu Cao
+E: bingbu.cao@amd.com
+D: Ipu6, ipu7 and camera sensor drivers
 
 N: Luiz Fernando N. Capitulino
 E: lcapitulino@mandriva.com.br
@@ -1317,6 +1324,11 @@ D: Initial GPL'd Frame Relay driver
 D: Dynamic PPP devices
 D: Sundry modularizations (PPP, IPX, ...) and fixes
 
+N: Steve French
+E: sfrench@samba.org
+E: smfrench@gmail.com
+D: Author and maintainer of the cifs filesystem for many years.
+
 N: Bob Frey
 E: bobf@advansys.com
 D: AdvanSys SCSI driver
@@ -1499,6 +1511,10 @@ S: South Africa
 N: Andy Gross
 E: agross@kernel.org
 D: Qualcomm SoC subsystem and drivers
+
+N: Mark Gross
+E: markgross@kernel.org
+D: x86/mellanox platform maintenance and various x86 specific drivers
 
 N: Grant Grundler
 E: grantgrundler@gmail.com
@@ -1813,6 +1829,10 @@ D: md boot support
 S: Am Strand 5
 S: D-19063 Schwerin
 S: Germany
+
+N: Haowen Hu
+E: srcres258@furdevs.cn
+D: Traditional Chinese (zh_TW) documentation translation and maintenance
 
 N: Jan Hubicka
 E: hubicka@freesoft.cz
@@ -2241,6 +2261,7 @@ S: Canada
 N: Krzysztof Kozlowski
 E: krzk@kernel.org
 D: NFC network subsystem and drivers maintainer
+D: Samsung S2M/S5M Multifunction PMIC device drivers for Exynos platforms
 
 N: Christian Krafft
 D: PowerPC Cell support
@@ -2804,6 +2825,7 @@ D: Some of PAS 16 mixer & PCM support, inet6-apps
 
 N: William (Bill) Metzenthen
 E: billm@suburbia.net
+E: billm@melbpc.org.au
 D: Author of the FPU emulator.
 D: Minor kernel hacker for other lost causes (Hercules mono, etc).
 S: 22 Parker Street
@@ -2900,6 +2922,10 @@ S: Germany
 N: Thomas Molina
 E: tmolina@cablespeed.com
 D: bug fixes, documentation, minor hackery
+
+N: Bob Moore
+E: robert.moore@intel.com
+D: ACPI Component Architecture (ACPICA)
 
 N: Paul Moore
 E: paul@paul-moore.com
@@ -3090,6 +3116,10 @@ S: Germany
 N: Jens Osterkamp
 E: jens@de.ibm.com
 D: Maintainer of Spidernet network driver for Cell
+
+N: Kent Overstreet
+E: kent.overstreet@linux.dev
+D: Co-authored and contributed to Memory Allocation Profiling
 
 N: Gadi Oxman
 E: gadio@netvision.net.il
@@ -3329,6 +3359,9 @@ E: rpurdie@rpsys.net
 D: Backlight subsystem maintainer
 S: United Kingdom
 
+N: Tian Shu Qiu
+D: Ipu6, ipu7 and camera sensor drivers
+
 N: Daniel Quinlan
 E: quinlan@pathname.com
 W: https://www.pathname.com/~quinlan/
@@ -3367,6 +3400,10 @@ S: USA
 N: Anil Ravindranath
 E: anil_ravindranath@pmc-sierra.com
 D: PMC-Sierra MaxRAID driver
+
+N: Dwaipayan Ray
+E: dwaipayanray1@gmail.com
+D: checkpatch improvements
 
 N: Eric S. Raymond
 E: esr@thyrsus.com
@@ -3617,6 +3654,13 @@ S: 69 rue Dunois
 S: 75013 Paris
 S: France
 
+N: Wolfram Sang
+E: wsa@kernel.org
+W: sang-engineering.com
+P: rsa4096/140DE4CC14A029B6 3991 B1EA B9E2 6751 A4F7 645D 140D E4CC 14A0 29B6
+D: I2C Maintainer 2012 - 2026
+S: Berlin, Germany
+
 N: Aleksa Sarai
 E: cyphar@cyphar.com
 W: https://www.cyphar.com/
@@ -3668,7 +3712,17 @@ D: Macintosh IDE Driver
 
 N: Peter De Schrijver
 E: stud11@cc4.kuleuven.ac.be
+E: p2@mind.be
+E: peter.de-schrijver@nokia.com
+E: pdeschrijver@nvidia.com
+E: p2@psychaos.be
+D: Apollo Domain workstations
+D: Ariadne and Hydra Amiga Ethernet drivers
+D: IBM PS/2, Microchannel, and Token Ring support
 D: Mitsumi CD-ROM driver patches March version
+D: TWL4030 power management and audio codec driver
+D: OMAP power management
+D: NVIDIA Tegra clock and BPMP drivers, among many other things
 S: Molenbaan 29
 S: B2240 Zandhoven
 S: Belgium
@@ -4066,6 +4120,10 @@ S: 4226 Landgreen Street
 S: Rockville, Maryland 20853
 S: USA
 
+N: Michael Turquette
+E: mturquette@baylibre.com
+D: common clk maintenance
+
 N: Stephen Tweedie
 E: sct@redhat.com
 P: 1024/E7A417AD E2 FE A4 20 34 EC ED FC 7D 7E 67 8D E0 31 D1 69
@@ -4251,6 +4309,10 @@ N: Juergen Weigert
 E: jnweiger@immd4.informatik.uni-erlangen.de
 D: The Linux Support Team Erlangen
 
+N: Russ Weight
+E: russ.weight@gmail.com
+D: Added support for Firmware Upload to the Firmware Loader
+
 N: David Weinehall
 E: tao@acc.umu.se
 P: 1024D/DC47CA16 7ACE 0FB0 7A74 F994 9B36  E1D1 D14E 8526 DC47 CA16
@@ -4414,6 +4476,13 @@ S: The Netherlands
 
 N: Thomas Woller
 D: CS461x Cirrus Logic sound driver
+
+N: Darrick J. Wong
+E: djwong@kernel.org
+D: ext4 filesystem
+D: XFS filesystem and online fsck
+D: Various hwmon drivers
+S: USA
 
 N: David Woodhouse
 E: dwmw2@infradead.org

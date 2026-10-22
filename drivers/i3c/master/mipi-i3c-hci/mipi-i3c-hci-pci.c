@@ -223,6 +223,13 @@ static const struct mipi_i3c_hci_pci_info intel_si_2_info = {
 	.control_instance_pm = true,
 };
 
+static const struct mipi_i3c_hci_pci_info amd_pt_info = {
+	.name = "amd-pt-i3c-hci",
+	.id = {0},
+	.instance_offset = {0},
+	.instance_count = 1,
+};
+
 static int mipi_i3c_hci_pci_find_instance(struct mipi_i3c_hci_pci *hci, struct device *dev)
 {
 	for (int i = 0; i < INST_MAX; i++) {
@@ -265,11 +272,20 @@ static bool mipi_i3c_hci_pci_is_operational(struct device *dev, bool update)
 struct mipi_i3c_hci_pci_pm_data {
 	struct device *dev[INST_MAX];
 	int dev_cnt;
+	bool can_wakeup;
+	bool may_wakeup;
 };
 
 static bool mipi_i3c_hci_pci_is_mfd(struct device *dev)
 {
 	return dev_is_platform(dev) && mfd_get_cell(to_platform_device(dev));
+}
+
+static bool mipi_i3c_hci_pci_any_wakeup_enabled(struct device *dev)
+{
+	struct i3c_hci *hci = dev_get_drvdata(dev);
+
+	return i3c_master_has_wakeup_enabled_devs(&hci->master);
 }
 
 static int mipi_i3c_hci_pci_suspend_instance(struct device *dev, void *data)
@@ -286,6 +302,9 @@ static int mipi_i3c_hci_pci_suspend_instance(struct device *dev, void *data)
 		return ret;
 
 	pm_data->dev[pm_data->dev_cnt++] = dev;
+
+	if (pm_data->can_wakeup && mipi_i3c_hci_pci_any_wakeup_enabled(dev))
+		pm_data->may_wakeup = true;
 
 	return 0;
 }
@@ -317,12 +336,19 @@ static int mipi_i3c_hci_pci_suspend(struct device *dev)
 	if (!hci->info->control_instance_pm)
 		return 0;
 
+	pm_data.can_wakeup = device_can_wakeup(dev);
+
 	ret = device_for_each_child_reverse(dev, &pm_data, mipi_i3c_hci_pci_suspend_instance);
-	if (ret)
+	if (ret) {
 		for (int i = 0; i < pm_data.dev_cnt; i++)
 			i3c_hci_rpm_resume(pm_data.dev[i]);
+		return ret;
+	}
 
-	return ret;
+	if (device_may_wakeup(dev) != pm_data.may_wakeup)
+		device_set_wakeup_enable(dev, pm_data.may_wakeup);
+
+	return 0;
 }
 
 static int mipi_i3c_hci_pci_resume(struct device *dev)
@@ -461,21 +487,23 @@ static const struct dev_pm_ops mipi_i3c_hci_pci_pm_ops = {
 
 static const struct pci_device_id mipi_i3c_hci_pci_devices[] = {
 	/* Wildcat Lake-U */
-	{ PCI_VDEVICE(INTEL, 0x4d7c), (kernel_ulong_t)&intel_mi_1_info},
-	{ PCI_VDEVICE(INTEL, 0x4d6f), (kernel_ulong_t)&intel_si_2_info},
+	{ PCI_VDEVICE(INTEL, 0x4d7c), .driver_data = (kernel_ulong_t)&intel_mi_1_info },
+	{ PCI_VDEVICE(INTEL, 0x4d6f), .driver_data = (kernel_ulong_t)&intel_si_2_info },
 	/* Panther Lake-H */
-	{ PCI_VDEVICE(INTEL, 0xe37c), (kernel_ulong_t)&intel_mi_1_info},
-	{ PCI_VDEVICE(INTEL, 0xe36f), (kernel_ulong_t)&intel_si_2_info},
+	{ PCI_VDEVICE(INTEL, 0xe37c), .driver_data = (kernel_ulong_t)&intel_mi_1_info },
+	{ PCI_VDEVICE(INTEL, 0xe36f), .driver_data = (kernel_ulong_t)&intel_si_2_info },
 	/* Panther Lake-P */
-	{ PCI_VDEVICE(INTEL, 0xe47c), (kernel_ulong_t)&intel_mi_1_info},
-	{ PCI_VDEVICE(INTEL, 0xe46f), (kernel_ulong_t)&intel_si_2_info},
+	{ PCI_VDEVICE(INTEL, 0xe47c), .driver_data = (kernel_ulong_t)&intel_mi_1_info },
+	{ PCI_VDEVICE(INTEL, 0xe46f), .driver_data = (kernel_ulong_t)&intel_si_2_info },
 	/* Nova Lake-S */
-	{ PCI_VDEVICE(INTEL, 0x6e2c), (kernel_ulong_t)&intel_mi_1_info},
-	{ PCI_VDEVICE(INTEL, 0x6e2d), (kernel_ulong_t)&intel_mi_2_info},
+	{ PCI_VDEVICE(INTEL, 0x6e2c), .driver_data = (kernel_ulong_t)&intel_mi_1_info },
+	{ PCI_VDEVICE(INTEL, 0x6e2d), .driver_data = (kernel_ulong_t)&intel_mi_2_info },
 	/* Nova Lake-H */
-	{ PCI_VDEVICE(INTEL, 0xd37c), (kernel_ulong_t)&intel_mi_1_info},
-	{ PCI_VDEVICE(INTEL, 0xd36f), (kernel_ulong_t)&intel_mi_2_info},
-	{ },
+	{ PCI_VDEVICE(INTEL, 0xd37c), .driver_data = (kernel_ulong_t)&intel_mi_1_info },
+	{ PCI_VDEVICE(INTEL, 0xd36f), .driver_data = (kernel_ulong_t)&intel_mi_2_info },
+	/* AMD_PT */
+	{ PCI_VDEVICE(AMD, 0x444c), .driver_data = (kernel_ulong_t)&amd_pt_info },
+	{ }
 };
 MODULE_DEVICE_TABLE(pci, mipi_i3c_hci_pci_devices);
 

@@ -40,6 +40,8 @@
 
 #include <trace/events/asoc.h>
 
+static u32 pop_time;
+
 /* DAPM context */
 struct snd_soc_dapm_context {
 	enum snd_soc_bias_level bias_level;
@@ -161,14 +163,14 @@ static void dapm_assert_locked(struct snd_soc_dapm_context *dapm)
 		snd_soc_dapm_mutex_assert_held(dapm);
 }
 
-static void dapm_pop_wait(u32 pop_time)
+static void dapm_pop_wait(void)
 {
 	if (pop_time)
 		schedule_timeout_uninterruptible(msecs_to_jiffies(pop_time));
 }
 
-__printf(3, 4)
-static void dapm_pop_dbg(struct device *dev, u32 pop_time, const char *fmt, ...)
+__printf(2, 3)
+static void dapm_pop_dbg(struct device *dev, const char *fmt, ...)
 {
 	va_list args;
 	char *buf;
@@ -1201,6 +1203,8 @@ static int dapm_create_or_share_kcontrol(struct snd_soc_dapm_widget *w,
 			case snd_soc_dapm_pga:
 			case snd_soc_dapm_effect:
 			case snd_soc_dapm_out_drv:
+			case snd_soc_dapm_encoder:
+			case snd_soc_dapm_decoder:
 				wname_in_long_name = true;
 				kcname_in_long_name = true;
 				break;
@@ -1872,8 +1876,7 @@ static void dapm_seq_check_event(struct snd_soc_card *card,
 	if (w->event && (w->event_flags & event)) {
 		int ret;
 
-		dapm_pop_dbg(dev, card->pop_time, "pop test : %s %s\n",
-			w->name, ev_name);
+		dapm_pop_dbg(dev, "pop test : %s %s\n", w->name, ev_name);
 		dapm_async_complete(w->dapm);
 		trace_snd_soc_dapm_widget_event_start(w, event);
 		ret = w->event(w, NULL, event);
@@ -1909,7 +1912,7 @@ static void dapm_seq_run_coalesced(struct snd_soc_card *card,
 		else
 			value |= w->off_val << w->shift;
 
-		dapm_pop_dbg(dev, card->pop_time,
+		dapm_pop_dbg(dev,
 			"pop test : Queue %s: reg=0x%x, 0x%x/0x%x\n",
 			w->name, reg, value, mask);
 
@@ -1923,10 +1926,10 @@ static void dapm_seq_run_coalesced(struct snd_soc_card *card,
 		 * same register.
 		 */
 
-		dapm_pop_dbg(dev, card->pop_time,
+		dapm_pop_dbg(dev,
 			"pop test : Applying 0x%x/0x%x to %x in %dms\n",
-			value, mask, reg, card->pop_time);
-		dapm_pop_wait(card->pop_time);
+			value, mask, reg, pop_time);
+		dapm_pop_wait();
 		dapm_update_bits(dapm, reg, mask, value);
 	}
 
@@ -2392,9 +2395,9 @@ static int dapm_power_widgets(struct snd_soc_card *card, int event,
 			return ret;
 	}
 
-	dapm_pop_dbg(card->dev, card->pop_time,
-		"DAPM sequencing finished, waiting %dms\n", card->pop_time);
-	dapm_pop_wait(card->pop_time);
+	dapm_pop_dbg(card->dev,
+		"DAPM sequencing finished, waiting %dms\n", pop_time);
+	dapm_pop_wait();
 
 	trace_snd_soc_dapm_done(card, event);
 
@@ -2560,6 +2563,11 @@ static const struct file_operations dapm_bias_fops = {
 	.read = dapm_bias_read_file,
 	.llseek = default_llseek,
 };
+
+void snd_soc_dapm_debugfs_pop_time(struct dentry *parent)
+{
+	debugfs_create_u32("dapm_pop_time", 0644, parent, &pop_time);
+}
 
 void snd_soc_dapm_debugfs_init(struct snd_soc_dapm_context *dapm,
 	struct dentry *parent)
@@ -2779,6 +2787,8 @@ static ssize_t dapm_widget_show_component(struct snd_soc_component *component,
 		case snd_soc_dapm_pga:
 		case snd_soc_dapm_effect:
 		case snd_soc_dapm_out_drv:
+		case snd_soc_dapm_encoder:
+		case snd_soc_dapm_decoder:
 		case snd_soc_dapm_mixer:
 		case snd_soc_dapm_mixer_named_ctl:
 		case snd_soc_dapm_supply:
@@ -2906,20 +2916,18 @@ static struct snd_soc_dapm_widget *dapm_find_widget(
 {
 	struct snd_soc_dapm_widget *w;
 	struct snd_soc_dapm_widget *fallback = NULL;
-	char prefixed_pin[80];
-	const char *pin_name;
-	const char *prefix = dapm_prefix(dapm);
-
-	if (prefix) {
-		snprintf(prefixed_pin, sizeof(prefixed_pin), "%s %s",
-			 prefix, pin);
-		pin_name = prefixed_pin;
-	} else {
-		pin_name = pin;
-	}
+	bool pin_has_prefix = snd_soc_dapm_pin_has_prefix(dapm->card, pin);
+	bool match;
 
 	for_each_card_widgets(dapm->card, w) {
-		if (!strcmp(w->name, pin_name)) {
+		match = false;
+
+		if (!strcmp(pin, w->name))
+			match = true;
+		else if (!pin_has_prefix && !snd_soc_dapm_widget_name_cmp(w, pin))
+			match = true;
+
+		if (match) {
 			if (w->dapm == dapm)
 				return w;
 			else
@@ -3363,6 +3371,8 @@ int snd_soc_dapm_new_widgets(struct snd_soc_card *card)
 		case snd_soc_dapm_pga:
 		case snd_soc_dapm_effect:
 		case snd_soc_dapm_out_drv:
+		case snd_soc_dapm_encoder:
+		case snd_soc_dapm_decoder:
 			dapm_new_pga(w);
 			break;
 		case snd_soc_dapm_dai_link:
@@ -3604,7 +3614,7 @@ int snd_soc_dapm_put_enum_double(struct snd_kcontrol *kcontrol,
 	val = snd_soc_enum_item_to_val(e, item[0]) << e->shift_l;
 	mask = e->mask << e->shift_l;
 	if (e->shift_l != e->shift_r) {
-		if (item[1] > e->items)
+		if (item[1] >= e->items)
 			return -EINVAL;
 		val |= snd_soc_enum_item_to_val(e, item[1]) << e->shift_r;
 		mask |= e->mask << e->shift_r;
@@ -4606,6 +4616,36 @@ void snd_soc_dapm_connect_dai_link_widgets(struct snd_soc_card *card)
 	}
 }
 
+int snd_soc_dapm_ignore_suspend_widgets(struct snd_soc_card *card)
+{
+	struct snd_soc_dapm_widget *w;
+	int i;
+
+	for (i = 0; i < card->num_ignore_suspend_widgets; i++) {
+		w = dapm_find_widget(snd_soc_card_to_dapm(card),
+				     card->ignore_suspend_widgets[i], true);
+		if (!w) {
+			dev_err(card->dev, "ASoC: DAPM unknown ignore suspend widget %s\n",
+				card->ignore_suspend_widgets[i]);
+			return -EINVAL;
+		}
+		w->ignore_suspend = 1;
+	}
+
+	for (i = 0; i < card->num_of_ignore_suspend_widgets; i++) {
+		w = dapm_find_widget(snd_soc_card_to_dapm(card),
+				     card->of_ignore_suspend_widgets[i], true);
+		if (!w) {
+			dev_err(card->dev, "ASoC: DAPM unknown ignore suspend widget %s\n",
+				card->of_ignore_suspend_widgets[i]);
+			return -EINVAL;
+		}
+		w->ignore_suspend = 1;
+	}
+
+	return 0;
+}
+
 static void dapm_stream_event(struct snd_soc_pcm_runtime *rtd, int stream, int event)
 {
 	struct snd_soc_dai *dai;
@@ -4871,6 +4911,33 @@ int snd_soc_dapm_ignore_suspend(struct snd_soc_dapm_context *dapm,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_soc_dapm_ignore_suspend);
+
+/**
+ * snd_soc_dapm_pin_has_prefix - check if given pin has a known prefix
+ * @card: card to be checked
+ * @pin: pin name
+ *
+ * Returns true if given pin has a known prefix
+ */
+bool snd_soc_dapm_pin_has_prefix(struct snd_soc_card *card, const char *pin)
+{
+	struct snd_soc_component *component;
+	const char *prefix;
+	size_t prefix_len;
+
+	for_each_card_components(card, component) {
+		prefix = component->name_prefix;
+		if (!prefix)
+			continue;
+
+		prefix_len = strlen(prefix);
+		if (!strncmp(pin, prefix, prefix_len) && pin[prefix_len] == ' ')
+			return true;
+	}
+
+	return false;
+}
+EXPORT_SYMBOL_GPL(snd_soc_dapm_pin_has_prefix);
 
 /**
  * snd_soc_dapm_free - free dapm resources

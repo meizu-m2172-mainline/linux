@@ -26,42 +26,42 @@
 #include "nlm4xdr_gen.h"
 
 /*
- * Wrapper structures combine xdrgen types with legacy nlm_lock.
+ * Wrapper structures combine xdrgen types with legacy lockd_lock.
  * The xdrgen field must be first so the structure can be cast
  * to its XDR type for the RPC dispatch layer.
  */
 struct nlm4_testargs_wrapper {
 	struct nlm4_testargs		xdrgen;
-	struct nlm_lock			lock;
+	struct lockd_lock		lock;
 };
 
 static_assert(offsetof(struct nlm4_testargs_wrapper, xdrgen) == 0);
 
 struct nlm4_lockargs_wrapper {
 	struct nlm4_lockargs		xdrgen;
-	struct nlm_cookie		cookie;
-	struct nlm_lock			lock;
+	struct lockd_cookie		cookie;
+	struct lockd_lock		lock;
 };
 
 static_assert(offsetof(struct nlm4_lockargs_wrapper, xdrgen) == 0);
 
 struct nlm4_cancargs_wrapper {
 	struct nlm4_cancargs		xdrgen;
-	struct nlm_lock			lock;
+	struct lockd_lock		lock;
 };
 
 static_assert(offsetof(struct nlm4_cancargs_wrapper, xdrgen) == 0);
 
 struct nlm4_unlockargs_wrapper {
 	struct nlm4_unlockargs		xdrgen;
-	struct nlm_lock			lock;
+	struct lockd_lock		lock;
 };
 
 static_assert(offsetof(struct nlm4_unlockargs_wrapper, xdrgen) == 0);
 
 struct nlm4_notifyargs_wrapper {
 	struct nlm4_notifyargs		xdrgen;
-	struct nlm_reboot		reboot;
+	struct lockd_reboot		reboot;
 };
 
 static_assert(offsetof(struct nlm4_notifyargs_wrapper, xdrgen) == 0);
@@ -74,12 +74,12 @@ static_assert(offsetof(struct nlm4_notify_wrapper, xdrgen) == 0);
 
 struct nlm4_testres_wrapper {
 	struct nlm4_testres		xdrgen;
-	struct nlm_lock			lock;
+	struct lockd_lock		lock;
 };
 
 struct nlm4_shareargs_wrapper {
 	struct nlm4_shareargs		xdrgen;
-	struct nlm_lock			lock;
+	struct lockd_lock		lock;
 };
 
 static_assert(offsetof(struct nlm4_shareargs_wrapper, xdrgen) == 0);
@@ -88,7 +88,7 @@ static_assert(offsetof(struct nlm4_testres_wrapper, xdrgen) == 0);
 
 struct nlm4_res_wrapper {
 	struct nlm4_res			xdrgen;
-	struct nlm_cookie		cookie;
+	struct lockd_cookie		cookie;
 };
 
 static_assert(offsetof(struct nlm4_res_wrapper, xdrgen) == 0);
@@ -100,7 +100,7 @@ struct nlm4_shareres_wrapper {
 static_assert(offsetof(struct nlm4_shareres_wrapper, xdrgen) == 0);
 
 static __be32
-nlm4_netobj_to_cookie(struct nlm_cookie *cookie, netobj *object)
+nlm4_netobj_to_cookie(struct lockd_cookie *cookie, netobj *object)
 {
 	if (object->len > NLM_MAXCOOKIELEN)
 		return nlm_lck_denied_nolocks;
@@ -110,7 +110,7 @@ nlm4_netobj_to_cookie(struct nlm_cookie *cookie, netobj *object)
 }
 
 static __be32
-nlm4_lock_to_nlm_lock(struct nlm_lock *lock, struct nlm4_lock *alock)
+nlm4_lock_to_lockd_lock(struct lockd_lock *lock, struct nlm4_lock *alock)
 {
 	if (alock->fh.len > NFS_MAXFHSIZE)
 		return nlm_lck_denied;
@@ -119,7 +119,6 @@ nlm4_lock_to_nlm_lock(struct nlm_lock *lock, struct nlm4_lock *alock)
 	lock->oh.len = alock->oh.len;
 	lock->oh.data = alock->oh.data;
 	lock->svid = alock->svid;
-	locks_init_lock(&lock->fl);
 	lockd_set_file_lock_range4(&lock->fl, alock->l_offset, alock->l_len);
 	return nlm_granted;
 }
@@ -129,7 +128,7 @@ nlm4svc_lookup_host(struct svc_rqst *rqstp, string caller, bool monitored)
 {
 	struct nlm_host *host;
 
-	if (!nlmsvc_ops)
+	if (!rcu_access_pointer(nlmsvc_ops))
 		return NULL;
 	host = nlmsvc_lookup_host(rqstp, caller.data, caller.len);
 	if (!host)
@@ -143,7 +142,7 @@ nlm4svc_lookup_host(struct svc_rqst *rqstp, string caller, bool monitored)
 
 static __be32
 nlm4svc_lookup_file(struct svc_rqst *rqstp, struct nlm_host *host,
-		    struct nlm_lock *lock, struct nlm_file **filp,
+		    struct lockd_lock *lock, struct nlm_file **filp,
 		    struct nlm4_lock *xdr_lock, unsigned char type)
 {
 	bool is_test = (rqstp->rq_proc == NLMPROC4_TEST ||
@@ -157,6 +156,9 @@ nlm4svc_lookup_file(struct svc_rqst *rqstp, struct nlm_host *host,
 		return nlm_lck_denied_nolocks;
 	lock->fh.size = xdr_lock->fh.len;
 	memcpy(lock->fh.data, xdr_lock->fh.data, xdr_lock->fh.len);
+	if (xdr_lock->fh.len < LOCKD_FH_HASH_SIZE)
+		memset(lock->fh.data + xdr_lock->fh.len, 0,
+		       LOCKD_FH_HASH_SIZE - xdr_lock->fh.len);
 
 	lock->oh.len = xdr_lock->oh.len;
 	lock->oh.data = xdr_lock->oh.data;
@@ -270,7 +272,7 @@ static __be32 nlm4svc_proc_test(struct svc_rqst *rqstp)
 	nlmsvc_release_lockowner(&argp->lock);
 
 	if (resp->xdrgen.stat.stat == nlm_lck_denied) {
-		struct nlm_lock *conf = &resp->lock;
+		struct lockd_lock *conf = &resp->lock;
 		struct nlm4_holder *holder = &resp->xdrgen.stat.u.holder;
 
 		holder->exclusive = (conf->fl.c.flc_type != F_RDLCK);
@@ -513,12 +515,12 @@ out:
  *   nlm4_res NLMPROC4_GRANTED(nlm4_testargs) = 5;
  *
  * Permissible procedure status codes:
- *   %NLM4_GRANTED:		The requested lock was granted.
- *   %NLM4_DENIED:		The server could not allocate the resources
- *				needed to process the request.
- *   %NLM4_DENIED_GRACE_PERIOD:	The server has recently restarted and is
- *				re-establishing existing locks, and is not
- *				yet ready to accept normal service requests.
+ *   %NLM4_GRANTED:		The granted lock was accepted.
+ *   %NLM4_DENIED:		The procedure failed, possibly due to
+ *				internal resource constraints.
+ *   %NLM4_DENIED_GRACE_PERIOD:	The client host recently restarted and
+ *				its NLM is re-establishing existing locks,
+ *				so it is not yet ready to accept callbacks.
  */
 static __be32
 nlm4svc_proc_granted(struct svc_rqst *rqstp)
@@ -528,8 +530,8 @@ nlm4svc_proc_granted(struct svc_rqst *rqstp)
 
 	resp->xdrgen.cookie = argp->xdrgen.cookie;
 
-	resp->xdrgen.stat.stat = nlm4_lock_to_nlm_lock(&argp->lock,
-						       &argp->xdrgen.alock);
+	resp->xdrgen.stat.stat = nlm4_lock_to_lockd_lock(&argp->lock,
+							 &argp->xdrgen.alock);
 	if (resp->xdrgen.stat.stat)
 		goto out;
 
@@ -563,7 +565,7 @@ static const struct rpc_call_ops nlm4svc_callback_ops = {
  */
 static __be32
 nlm4svc_callback(struct svc_rqst *rqstp, struct nlm_host *host, u32 proc,
-		 __be32 (*func)(struct svc_rqst *,  struct nlm_res *))
+		 __be32 (*func)(struct svc_rqst *,  struct lockd_res *))
 {
 	struct nlm_rqst	*call;
 	__be32 stat;
@@ -586,7 +588,7 @@ nlm4svc_callback(struct svc_rqst *rqstp, struct nlm_host *host, u32 proc,
 }
 
 static __be32
-__nlm4svc_proc_test_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
+__nlm4svc_proc_test_msg(struct svc_rqst *rqstp, struct lockd_res *resp)
 {
 	struct nlm4_testargs_wrapper *argp = rqstp->rq_argp;
 	unsigned char type = argp->xdrgen.exclusive ? F_WRLCK : F_RDLCK;
@@ -646,7 +648,7 @@ static __be32 nlm4svc_proc_test_msg(struct svc_rqst *rqstp)
 }
 
 static __be32
-__nlm4svc_proc_lock_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
+__nlm4svc_proc_lock_msg(struct svc_rqst *rqstp, struct lockd_res *resp)
 {
 	struct nlm4_lockargs_wrapper *argp = rqstp->rq_argp;
 	unsigned char type = argp->xdrgen.exclusive ? F_WRLCK : F_RDLCK;
@@ -669,6 +671,8 @@ __nlm4svc_proc_lock_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
 	resp->status = nlmsvc_lock(rqstp, file, host, &argp->lock,
 				   argp->xdrgen.block, &resp->cookie,
 				   argp->xdrgen.reclaim);
+	if (resp->status == nlm__int__deadlock)
+		resp->status = nlm4_deadlock;
 	nlmsvc_release_lockowner(&argp->lock);
 
 out:
@@ -697,7 +701,7 @@ static __be32 nlm4svc_proc_lock_msg(struct svc_rqst *rqstp)
 	struct nlm4_lockargs_wrapper *argp = rqstp->rq_argp;
 	struct nlm_host *host;
 
-	host = nlm4svc_lookup_host(rqstp, argp->xdrgen.alock.caller_name, true);
+	host = nlm4svc_lookup_host(rqstp, argp->xdrgen.alock.caller_name, false);
 	if (!host)
 		return rpc_system_err;
 
@@ -706,7 +710,7 @@ static __be32 nlm4svc_proc_lock_msg(struct svc_rqst *rqstp)
 }
 
 static __be32
-__nlm4svc_proc_cancel_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
+__nlm4svc_proc_cancel_msg(struct svc_rqst *rqstp, struct lockd_res *resp)
 {
 	struct nlm4_cancargs_wrapper *argp = rqstp->rq_argp;
 	unsigned char type = argp->xdrgen.exclusive ? F_WRLCK : F_RDLCK;
@@ -770,7 +774,7 @@ static __be32 nlm4svc_proc_cancel_msg(struct svc_rqst *rqstp)
 }
 
 static __be32
-__nlm4svc_proc_unlock_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
+__nlm4svc_proc_unlock_msg(struct svc_rqst *rqstp, struct lockd_res *resp)
 {
 	struct nlm4_unlockargs_wrapper *argp = rqstp->rq_argp;
 	struct net *net = SVC_NET(rqstp);
@@ -833,7 +837,7 @@ static __be32 nlm4svc_proc_unlock_msg(struct svc_rqst *rqstp)
 }
 
 static __be32
-__nlm4svc_proc_granted_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
+__nlm4svc_proc_granted_msg(struct svc_rqst *rqstp, struct lockd_res *resp)
 {
 	struct nlm4_testargs_wrapper *argp = rqstp->rq_argp;
 
@@ -841,7 +845,7 @@ __nlm4svc_proc_granted_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
 	if (nlm4_netobj_to_cookie(&resp->cookie, &argp->xdrgen.cookie))
 		goto out;
 
-	if (nlm4_lock_to_nlm_lock(&argp->lock, &argp->xdrgen.alock))
+	if (nlm4_lock_to_lockd_lock(&argp->lock, &argp->xdrgen.alock))
 		goto out;
 
 	resp->status = nlmclnt_grant(svc_addr(rqstp), &argp->lock);
@@ -868,7 +872,8 @@ static __be32 nlm4svc_proc_granted_msg(struct svc_rqst *rqstp)
 	struct nlm4_testargs_wrapper *argp = rqstp->rq_argp;
 	struct nlm_host *host;
 
-	host = nlm4svc_lookup_host(rqstp, argp->xdrgen.alock.caller_name, false);
+	host = nlmsvc_lookup_host(rqstp, argp->xdrgen.alock.caller_name.data,
+				  argp->xdrgen.alock.caller_name.len);
 	if (!host)
 		return rpc_system_err;
 
@@ -890,7 +895,7 @@ static __be32 nlm4svc_proc_granted_res(struct svc_rqst *rqstp)
 {
 	struct nlm4_res_wrapper *argp = rqstp->rq_argp;
 
-	if (!nlmsvc_ops)
+	if (!rcu_access_pointer(nlmsvc_ops))
 		return rpc_success;
 
 	if (nlm4_netobj_to_cookie(&argp->cookie, &argp->xdrgen.cookie))
@@ -917,7 +922,7 @@ static __be32 nlm4svc_proc_granted_res(struct svc_rqst *rqstp)
 static __be32 nlm4svc_proc_sm_notify(struct svc_rqst *rqstp)
 {
 	struct nlm4_notifyargs_wrapper *argp = rqstp->rq_argp;
-	struct nlm_reboot *reboot = &argp->reboot;
+	struct lockd_reboot *reboot = &argp->reboot;
 
 	if (!nlm_privileged_requester(rqstp)) {
 		char buf[RPC_MAX_ADDRBUFLEN];
@@ -981,7 +986,7 @@ static __be32 nlm4svc_proc_share(struct svc_rqst *rqstp)
 {
 	struct nlm4_shareargs_wrapper *argp = rqstp->rq_argp;
 	struct nlm4_shareres_wrapper *resp = rqstp->rq_resp;
-	struct nlm_lock	*lock = &argp->lock;
+	struct lockd_lock *lock = &argp->lock;
 	struct nlm_host	*host = NULL;
 	struct nlm_file	*file = NULL;
 	struct nlm4_lock xdr_lock = {
@@ -1049,7 +1054,7 @@ static __be32 nlm4svc_proc_unshare(struct svc_rqst *rqstp)
 {
 	struct nlm4_shareargs_wrapper *argp = rqstp->rq_argp;
 	struct nlm4_shareres_wrapper *resp = rqstp->rq_resp;
-	struct nlm_lock	*lock = &argp->lock;
+	struct lockd_lock *lock = &argp->lock;
 	struct nlm4_lock xdr_lock = {
 		.fh		= argp->xdrgen.share.fh,
 		.oh		= argp->xdrgen.share.oh,
@@ -1074,7 +1079,9 @@ static __be32 nlm4svc_proc_unshare(struct svc_rqst *rqstp)
 	if (resp->xdrgen.stat)
 		goto out;
 
-	resp->xdrgen.stat = nlmsvc_unshare_file(host, file, &lock->oh);
+	resp->xdrgen.stat = nlmsvc_unshare_file(host, file, &lock->oh,
+						argp->xdrgen.share.access,
+						argp->xdrgen.share.mode);
 
 	nlmsvc_release_lockowner(lock);
 
@@ -1160,8 +1167,8 @@ out:
 static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_NULL] = {
 		.pc_func	= nlm4svc_proc_null,
-		.pc_decode	= nlm4_svc_decode_void,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_decode	= xdrgen_svc_decode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= XDR_void,
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1221,7 +1228,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_TEST_MSG] = {
 		.pc_func	= nlm4svc_proc_test_msg,
 		.pc_decode	= nlm4_svc_decode_nlm4_testargs,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_testargs_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1231,7 +1238,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_LOCK_MSG] = {
 		.pc_func	= nlm4svc_proc_lock_msg,
 		.pc_decode	= nlm4_svc_decode_nlm4_lockargs,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_lockargs_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1241,7 +1248,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_CANCEL_MSG] = {
 		.pc_func	= nlm4svc_proc_cancel_msg,
 		.pc_decode	= nlm4_svc_decode_nlm4_cancargs,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_cancargs_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1251,7 +1258,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_UNLOCK_MSG] = {
 		.pc_func	= nlm4svc_proc_unlock_msg,
 		.pc_decode	= nlm4_svc_decode_nlm4_unlockargs,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_unlockargs_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1261,7 +1268,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_GRANTED_MSG] = {
 		.pc_func	= nlm4svc_proc_granted_msg,
 		.pc_decode	= nlm4_svc_decode_nlm4_testargs,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_testargs_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1271,7 +1278,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_TEST_RES] = {
 		.pc_func	= nlm4svc_proc_null,
 		.pc_decode	= nlm4_svc_decode_nlm4_testres,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_testres),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1281,7 +1288,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_LOCK_RES] = {
 		.pc_func	= nlm4svc_proc_null,
 		.pc_decode	= nlm4_svc_decode_nlm4_res,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_res),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1291,7 +1298,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_CANCEL_RES] = {
 		.pc_func	= nlm4svc_proc_null,
 		.pc_decode	= nlm4_svc_decode_nlm4_res,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_res),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1301,7 +1308,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_UNLOCK_RES] = {
 		.pc_func	= nlm4svc_proc_null,
 		.pc_decode	= nlm4_svc_decode_nlm4_res,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_res),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1311,7 +1318,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_GRANTED_RES] = {
 		.pc_func	= nlm4svc_proc_granted_res,
 		.pc_decode	= nlm4_svc_decode_nlm4_res,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_res_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1321,7 +1328,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_SM_NOTIFY] = {
 		.pc_func	= nlm4svc_proc_sm_notify,
 		.pc_decode	= nlm4_svc_decode_nlm4_notifyargs,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_notifyargs_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1330,8 +1337,8 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	},
 	[17] = {
 		.pc_func	= nlm4svc_proc_unused,
-		.pc_decode	= nlm4_svc_decode_void,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_decode	= xdrgen_svc_decode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= 0,
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1340,8 +1347,8 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	},
 	[18] = {
 		.pc_func	= nlm4svc_proc_unused,
-		.pc_decode	= nlm4_svc_decode_void,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_decode	= xdrgen_svc_decode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= 0,
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1350,8 +1357,8 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	},
 	[19] = {
 		.pc_func	= nlm4svc_proc_unused,
-		.pc_decode	= nlm4_svc_decode_void,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_decode	= xdrgen_svc_decode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= 0,
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1391,7 +1398,7 @@ static const struct svc_procedure nlm4svc_procedures[24] = {
 	[NLMPROC4_FREE_ALL] = {
 		.pc_func	= nlm4svc_proc_free_all,
 		.pc_decode	= nlm4_svc_decode_nlm4_notify,
-		.pc_encode	= nlm4_svc_encode_void,
+		.pc_encode	= xdrgen_svc_encode_void,
 		.pc_argsize	= sizeof(struct nlm4_notify_wrapper),
 		.pc_argzero	= 0,
 		.pc_ressize	= 0,
@@ -1416,14 +1423,10 @@ union nlm4svc_xdrstore {
 	struct nlm4_shareres_wrapper	shareres;
 };
 
-static DEFINE_PER_CPU_ALIGNED(unsigned long,
-			      nlm4svc_call_counters[ARRAY_SIZE(nlm4svc_procedures)]);
-
 const struct svc_version nlmsvc_version4 = {
 	.vs_vers	= 4,
 	.vs_nproc	= ARRAY_SIZE(nlm4svc_procedures),
 	.vs_proc	= nlm4svc_procedures,
-	.vs_count	= nlm4svc_call_counters,
 	.vs_dispatch	= nlmsvc_dispatch,
 	.vs_xdrsize	= sizeof(union nlm4svc_xdrstore),
 };

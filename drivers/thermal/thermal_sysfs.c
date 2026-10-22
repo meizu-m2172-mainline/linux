@@ -82,7 +82,7 @@ mode_store(struct device *dev, struct device_attribute *attr,
 }
 
 #define thermal_trip_of_attr(_ptr_, _attr_)				\
-	({ 								\
+	({								\
 		struct thermal_trip_desc *td;				\
 									\
 		td = container_of(_ptr_, struct thermal_trip_desc,	\
@@ -400,8 +400,8 @@ static int create_trip_attrs(struct thermal_zone_device *tz)
 		struct thermal_trip_attrs *trip_attrs = &td->trip_attrs;
 
 		/* create trip type attribute */
-		snprintf(trip_attrs->type.name, THERMAL_NAME_LENGTH,
-			 "trip_point_%d_type", i);
+		scnprintf(trip_attrs->type.name, sizeof(trip_attrs->type.name),
+			  "trip_point_%d_type", i);
 
 		sysfs_attr_init(&trip_attrs->type.attr.attr);
 		trip_attrs->type.attr.attr.name = trip_attrs->type.name;
@@ -410,8 +410,8 @@ static int create_trip_attrs(struct thermal_zone_device *tz)
 		attrs[i] = &trip_attrs->type.attr.attr;
 
 		/* create trip temp attribute */
-		snprintf(trip_attrs->temp.name, THERMAL_NAME_LENGTH,
-			 "trip_point_%d_temp", i);
+		scnprintf(trip_attrs->temp.name, sizeof(trip_attrs->temp.name),
+			  "trip_point_%d_temp", i);
 
 		sysfs_attr_init(&trip_attrs->temp.attr.attr);
 		trip_attrs->temp.attr.attr.name = trip_attrs->temp.name;
@@ -423,8 +423,8 @@ static int create_trip_attrs(struct thermal_zone_device *tz)
 		}
 		attrs[i + tz->num_trips] = &trip_attrs->temp.attr.attr;
 
-		snprintf(trip_attrs->hyst.name, THERMAL_NAME_LENGTH,
-			 "trip_point_%d_hyst", i);
+		scnprintf(trip_attrs->hyst.name, sizeof(trip_attrs->hyst.name),
+			  "trip_point_%d_hyst", i);
 
 		sysfs_attr_init(&trip_attrs->hyst.attr.attr);
 		trip_attrs->hyst.attr.attr.name = trip_attrs->hyst.name;
@@ -536,11 +536,9 @@ cur_state_store(struct device *dev, struct device_attribute *attr,
 	unsigned long state;
 	int result;
 
-	if (sscanf(buf, "%ld\n", &state) != 1)
-		return -EINVAL;
-
-	if ((long)state < 0)
-		return -EINVAL;
+	result = kstrtoul(buf, 10, &state);
+	if (result < 0)
+		return result;
 
 	/* Requested state should be less than max_state + 1 */
 	if (state > cdev->max_state)
@@ -708,7 +706,7 @@ static ssize_t trans_table_show(struct device *dev,
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	struct cooling_dev_stats *stats;
 	ssize_t len = 0;
-	int i, j;
+	int i, j, copied;
 
 	guard(cooling_dev)(cdev);
 
@@ -716,41 +714,40 @@ static ssize_t trans_table_show(struct device *dev,
 	if (!stats)
 		return -ENODATA;
 
-	len += snprintf(buf + len, PAGE_SIZE - len, " From  :    To\n");
-	len += snprintf(buf + len, PAGE_SIZE - len, "       : ");
+	len += sysfs_emit_at(buf, len, " From  :    To\n");
+	len += sysfs_emit_at(buf, len, "       : ");
 	for (i = 0; i <= cdev->max_state; i++) {
-		if (len >= PAGE_SIZE)
-			break;
-		len += snprintf(buf + len, PAGE_SIZE - len, "state%2u  ", i);
+		copied = sysfs_emit_at(buf, len, "state%2u  ", i);
+		if (!copied)
+			goto buf_full;
+		len += copied;
 	}
-	if (len >= PAGE_SIZE)
-		return PAGE_SIZE;
-
-	len += snprintf(buf + len, PAGE_SIZE - len, "\n");
+	len += sysfs_emit_at(buf, len, "\n");
 
 	for (i = 0; i <= cdev->max_state; i++) {
-		if (len >= PAGE_SIZE)
-			break;
-
-		len += snprintf(buf + len, PAGE_SIZE - len, "state%2u:", i);
+		copied = sysfs_emit_at(buf, len, "state%2u:", i);
+		if (!copied)
+			goto buf_full;
+		len += copied;
 
 		for (j = 0; j <= cdev->max_state; j++) {
-			if (len >= PAGE_SIZE)
-				break;
-			len += snprintf(buf + len, PAGE_SIZE - len, "%8u ",
+			copied = sysfs_emit_at(buf, len, "%8u ",
 				stats->trans_table[i * (cdev->max_state + 1) + j]);
+			if (!copied)
+				goto buf_full;
+			len += copied;
 		}
-		if (len >= PAGE_SIZE)
-			break;
-		len += snprintf(buf + len, PAGE_SIZE - len, "\n");
-	}
-
-	if (len >= PAGE_SIZE) {
-		pr_warn_once("Thermal transition table exceeds PAGE_SIZE. Disabling\n");
-		len = -EFBIG;
+		copied = sysfs_emit_at(buf, len, "\n");
+		if (!copied)
+			goto buf_full;
+		len += copied;
 	}
 
 	return len;
+
+buf_full:
+	pr_warn_once("Thermal transition table exceeds PAGE_SIZE. Disabling\n");
+	return -EFBIG;
 }
 
 static DEVICE_ATTR_RO(total_trans);

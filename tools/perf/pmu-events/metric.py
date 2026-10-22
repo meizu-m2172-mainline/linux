@@ -25,7 +25,6 @@ def LoadEvents(directory: str) -> None:
       "cycles",
       "duration_time",
       "instructions",
-      "l2_itlb_misses",
   }
   for file in os.listdir(os.fsencode(directory)):
     filename = os.fsdecode(file)
@@ -94,7 +93,7 @@ def CheckEveryEvent(*names: str) -> None:
       name = name[:name.find(':')]
     elif '/' in name:
       name = name[:name.find('/')]
-      if any([name.startswith(x) for x in ['amd', 'arm', 'cpu', 'msr', 'power']]):
+      if any([name.startswith(x) for x in ['amd', 'arm', 'cpu', 'msr', 'power', 'cha', 'uncore']]):
         continue
     if name not in all_events_all_models:
       raise Exception(f"Is {name} a named json event?")
@@ -277,7 +276,7 @@ class Operator(Expression):
     lhs = self.lhs.Simplify()
     rhs = self.rhs.Simplify()
     if isinstance(lhs, Constant) and isinstance(rhs, Constant):
-      return Constant(ast.literal_eval(lhs + self.operator + rhs))
+      return Constant(ast.literal_eval(lhs.value + self.operator + rhs.value))
 
     if isinstance(self.lhs, Constant):
       if self.operator in ('+', '|') and lhs.value == '0':
@@ -299,7 +298,7 @@ class Operator(Expression):
       if self.operator == '*' and rhs.value == '0':
         return Constant(0)
 
-      if self.operator == '*' and self.rhs.value == '1':
+      if self.operator == '*' and rhs.value == '1':
         return lhs
 
     return Operator(self.operator, lhs, rhs)
@@ -317,9 +316,7 @@ class Operator(Expression):
     if self.Equals(expression):
       return Event(name)
     lhs = self.lhs.Substitute(name, expression)
-    rhs = None
-    if self.rhs:
-      rhs = self.rhs.Substitute(name, expression)
+    rhs = self.rhs.Substitute(name, expression)
     return Operator(self.operator, lhs, rhs)
 
 
@@ -383,7 +380,9 @@ class Function(Expression):
                rhs: Optional[Union[int, float, Expression]] = None):
     self.fn = fn
     self.lhs = _Constify(lhs)
-    self.rhs = _Constify(rhs)
+    self.rhs = None
+    if rhs is not None:
+      self.rhs = _Constify(rhs)
 
   def ToPerfJson(self):
     if self.rhs:
@@ -408,7 +407,8 @@ class Function(Expression):
     return Function(self.fn, lhs, rhs)
 
   def HasExperimentalEvents(self) -> bool:
-    return self.lhs.HasExperimentalEvents() or (self.rhs and self.rhs.HasExperimentalEvents())
+    return (self.lhs.HasExperimentalEvents() or
+            (self.rhs is not None and self.rhs.HasExperimentalEvents()))
 
   def Equals(self, other: Expression) -> bool:
     if isinstance(other, Function):
@@ -577,6 +577,11 @@ def source_count(event: Event) -> Function:
   return Function('source_count', event)
 
 
+def aggr_nr(event: Event) -> Function:
+  # pylint: disable=invalid-name
+  return Function('aggr_nr', event)
+
+
 def has_event(event: Event) -> Function:
   # pylint: disable=redefined-builtin
   # pylint: disable=invalid-name
@@ -619,7 +624,11 @@ class Metric:
 
   def __lt__(self, other):
     """Sort order."""
-    return self.name < other.name
+    if self.name != other.name:
+      return self.name < other.name
+    if not self.expr.Equals(other.expr):
+      return self.expr.ToPerfJson() < other.expr.ToPerfJson()
+    return self.description < other.description
 
   def AddToMetricGroup(self, group):
     """Callback used when being added to a MetricGroup."""
@@ -675,7 +684,7 @@ class MetricGroup:
 
   def Flatten(self) -> Set[Metric]:
     """Returns a set of all leaf metrics."""
-    result = set()
+    result: Set[Metric] = set()
     for x in self.metric_list:
       result = result.union(x.Flatten())
 
@@ -763,7 +772,7 @@ def ParsePerfJson(orig: str) -> Expression:
   # Convert accidentally converted scientific notation constants back
   py = re.sub(r'([0-9]+)Event\(r"(e[0-9]*)"\)', r'\1\2', py)
   # Convert all the known keywords back from events to just the keyword
-  keywords = ['if', 'else', 'min', 'max', 'd_ratio', 'source_count', 'has_event', 'strcmp_cpuid_str']
+  keywords = ['if', 'else', 'min', 'max', 'd_ratio', 'source_count', 'aggr_nr', 'has_event', 'strcmp_cpuid_str']
   for kw in keywords:
     py = re.sub(rf'Event\(r"{kw}"\)', kw, py)
   try:

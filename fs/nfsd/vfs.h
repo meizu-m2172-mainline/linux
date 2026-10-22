@@ -9,7 +9,6 @@
 #include <linux/fs.h>
 #include <linux/posix_acl.h>
 #include "nfsfh.h"
-#include "nfsd.h"
 
 /*
  * Flags for nfsd_permission
@@ -44,6 +43,10 @@ struct nfsd_file;
  * Callback function for readdir
  */
 typedef int (*nfsd_filldir_t)(void *, const char *, int, loff_t, u64, unsigned);
+
+struct readdir_cd {
+	__be32			err;	/* nfs_ok, nfserr, or nfserr_eof */
+};
 
 /* nfsd/vfs.c */
 struct nfsd_attrs {
@@ -156,6 +159,9 @@ __be32		nfsd_readdir(struct svc_rqst *, struct svc_fh *,
 			     loff_t *, struct readdir_cd *, nfsd_filldir_t);
 __be32		nfsd_statfs(struct svc_rqst *, struct svc_fh *,
 				struct kstatfs *, int access);
+int		nfsd_get_case_info(struct dentry *dentry,
+				   bool *case_insensitive,
+				   bool *case_preserving);
 
 __be32		nfsd_permission(struct svc_cred *cred, struct svc_export *exp,
 				struct dentry *dentry, int acc);

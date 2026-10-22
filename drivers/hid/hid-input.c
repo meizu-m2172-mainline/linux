@@ -375,6 +375,9 @@ static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE,
 		USB_DEVICE_ID_APPLE_MAGICTRACKPAD),
 	  HID_BATTERY_QUIRK_IGNORE },
+	{ HID_BLUETOOTH_DEVICE(BT_VENDOR_ID_APPLE,
+		USB_DEVICE_ID_APPLE_MAGICTRACKPAD2_USBC),
+	  HID_BATTERY_QUIRK_AVOID_QUERY },
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_ELECOM,
 		USB_DEVICE_ID_ELECOM_BM084),
 	  HID_BATTERY_QUIRK_IGNORE },
@@ -395,6 +398,8 @@ static const struct hid_device_id hid_battery_quirks[] = {
 	  HID_BATTERY_QUIRK_AVOID_QUERY },
 	{ HID_I2C_DEVICE(USB_VENDOR_ID_ELAN, I2C_DEVICE_ID_CHROMEBOOK_TROGDOR_POMPOM),
 	  HID_BATTERY_QUIRK_AVOID_QUERY },
+	{ HID_I2C_DEVICE(USB_VENDOR_ID_ELAN, I2C_DEVICE_ID_SURFACE_PRO_12IN),
+	  HID_BATTERY_QUIRK_IGNORE },
 	/*
 	 * Elan HID touchscreens seem to all report a non present battery,
 	 * set HID_BATTERY_QUIRK_IGNORE for all Elan I2C and USB HID devices.
@@ -430,17 +435,25 @@ static int hidinput_scale_battery_capacity(struct hid_battery *bat,
 static int hidinput_query_battery_capacity(struct hid_battery *bat)
 {
 	int ret;
+	/*
+	 * The capacity field may not be the first field in the report: some
+	 * devices (e.g. the Apple Magic Trackpad 2 over Bluetooth) precede it
+	 * with status flags. Read it from its actual byte offset in the report
+	 * (report_offset is in bits; the leading byte is the report id).
+	 */
+	int offset = 1 + bat->report_offset / 8;
+	int len = offset + 1;
 
-	u8 *buf __free(kfree) = kmalloc(4, GFP_KERNEL);
+	u8 *buf __free(kfree) = kmalloc(max(len, 4), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
-	ret = hid_hw_raw_request(bat->dev, bat->report_id, buf, 4,
+	ret = hid_hw_raw_request(bat->dev, bat->report_id, buf, max(len, 4),
 				 bat->report_type, HID_REQ_GET_REPORT);
-	if (ret < 2)
+	if (ret < len)
 		return -ENODATA;
 
-	return hidinput_scale_battery_capacity(bat, buf[1]);
+	return hidinput_scale_battery_capacity(bat, buf[offset]);
 }
 
 static int hidinput_get_battery_property(struct power_supply *psy,
@@ -519,6 +532,13 @@ static struct hid_battery *hidinput_find_battery(struct hid_device *dev,
 	return NULL;
 }
 
+static void hidinput_cleanup_battery(void *res)
+{
+	struct hid_battery *bat = res;
+
+	list_del(&bat->list);
+}
+
 static int hidinput_setup_battery(struct hid_device *dev, unsigned report_type,
 				  struct hid_field *field, bool is_percentage)
 {
@@ -584,6 +604,7 @@ static int hidinput_setup_battery(struct hid_device *dev, unsigned report_type,
 	bat->max = max;
 	bat->report_type = report_type;
 	bat->report_id = field->report->id;
+	bat->report_offset = field->report_offset;
 	bat->charge_status = POWER_SUPPLY_STATUS_DISCHARGING;
 	bat->status = HID_BATTERY_UNKNOWN;
 
@@ -610,6 +631,12 @@ static int hidinput_setup_battery(struct hid_device *dev, unsigned report_type,
 
 	power_supply_powers(bat->ps, &dev->dev);
 	list_add_tail(&bat->list, &dev->batteries);
+
+	error = devm_add_action_or_reset(&dev->dev,
+					 hidinput_cleanup_battery, bat);
+	if (error)
+		return error;
+
 	return 0;
 
 err_free_name:
@@ -2302,7 +2329,19 @@ static inline void hidinput_configure_usages(struct hid_input *hidinput,
  * Read all reports and initialize the absolute field values.
  */
 
-int hidinput_connect(struct hid_device *hid, unsigned int force)
+static bool hid_has_ff_input(struct hid_device *hdev)
+{
+	struct hid_input *hidinput;
+
+	list_for_each_entry(hidinput, &hdev->inputs, list) {
+		if (test_bit(EV_FF, hidinput->input->evbit))
+			return true;
+	}
+
+	return false;
+}
+
+int hidinput_connect(struct hid_device *hid, unsigned int connect_mask)
 {
 	struct hid_driver *drv = hid->driver;
 	struct hid_report *report;
@@ -2315,7 +2354,7 @@ int hidinput_connect(struct hid_device *hid, unsigned int force)
 
 	hid->status &= ~HID_STAT_DUP_DETECTED;
 
-	if (!force) {
+	if (!(connect_mask & HID_CONNECT_HIDINPUT_FORCE)) {
 		for (i = 0; i < hid->maxcollection; i++) {
 			struct hid_collection *col = &hid->collection[i];
 			if (col->type == HID_COLLECTION_APPLICATION ||
@@ -2380,6 +2419,11 @@ int hidinput_connect(struct hid_device *hid, unsigned int force)
 			hidinput_cleanup_hidinput(hid, hidinput);
 			continue;
 		}
+
+		if (list_is_first(&hidinput->list, &hid->inputs) &&
+		    (connect_mask & HID_CONNECT_FF) && hid->ff_init &&
+		    !hid_has_ff_input(hid))
+			hid->ff_init(hid);
 
 		if (input_register_device(hidinput->input))
 			goto out_unwind;

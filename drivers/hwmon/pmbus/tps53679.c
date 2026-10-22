@@ -187,7 +187,7 @@ static int tps53676_identify(struct i2c_client *client,
 		return -EIO;
 	for (i = 0; i < 2 * TPS53676_MAX_PHASES; i += 2) {
 		if (buf[i + 1] & 0x80) {
-			if (buf[i] & 0x08)
+			if (buf[i] & BIT(4))
 				phases_b++;
 			else
 				phases_a++;
@@ -200,6 +200,15 @@ static int tps53676_identify(struct i2c_client *client,
 	if (phases_b > 0) {
 		info->pages = 2;
 		info->phases[1] = phases_b;
+	} else {
+		/*
+		 * pmbus_set_page() does not update the PAGE register on
+		 * single-page devices, so select page 0 explicitly in case
+		 * the boot firmware left the device on another page.
+		 */
+		ret = i2c_smbus_write_byte_data(client, PMBUS_PAGE, 0);
+		if (ret < 0)
+			return ret;
 	}
 	return 0;
 }
@@ -291,15 +300,15 @@ static int tps53679_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id tps53679_id[] = {
-	{"bmr474", tps53676},
-	{"tps53647", tps53647},
-	{"tps53667", tps53667},
-	{"tps53676", tps53676},
-	{"tps53679", tps53679},
-	{"tps53681", tps53681},
-	{"tps53685", tps53685},
-	{"tps53688", tps53688},
-	{}
+	{ .name = "bmr474", .driver_data = tps53676 },
+	{ .name = "tps53647", .driver_data = tps53647 },
+	{ .name = "tps53667", .driver_data = tps53667 },
+	{ .name = "tps53676", .driver_data = tps53676 },
+	{ .name = "tps53679", .driver_data = tps53679 },
+	{ .name = "tps53681", .driver_data = tps53681 },
+	{ .name = "tps53685", .driver_data = tps53685 },
+	{ .name = "tps53688", .driver_data = tps53688 },
+	{ }
 };
 
 MODULE_DEVICE_TABLE(i2c, tps53679_id);

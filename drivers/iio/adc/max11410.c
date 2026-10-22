@@ -804,7 +804,7 @@ static int max11410_parse_channels(struct max11410_state *st,
 		chan_idx++;
 	}
 
-	channels[chan_idx] = (struct iio_chan_spec)IIO_CHAN_SOFT_TIMESTAMP(chan_idx);
+	channels[chan_idx] = IIO_CHAN_SOFT_TIMESTAMP(chan_idx);
 
 	indio_dev->num_channels = chan_idx + 1;
 	indio_dev->channels = channels;
@@ -1025,7 +1025,7 @@ static const struct of_device_id max11410_spi_of_id[] = {
 MODULE_DEVICE_TABLE(of, max11410_spi_of_id);
 
 static const struct spi_device_id max11410_id[] = {
-	{ "max11410" },
+	{ .name = "max11410" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, max11410_id);

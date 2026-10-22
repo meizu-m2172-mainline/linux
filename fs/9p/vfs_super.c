@@ -173,8 +173,8 @@ static void v9fs_kill_super(struct super_block *s)
 
 	v9fs_session_cancel(v9ses);
 	v9fs_session_close(v9ses);
-	kfree(v9ses);
-	s->s_fs_info = NULL;
+	/* v9fs_vfs_get_link_dotl() may still read ->cache in rcu pathwalk */
+	kfree_rcu(v9ses, rcu);
 	p9_debug(P9_DEBUG_VFS, "exiting kill_super\n");
 }
 
@@ -330,6 +330,7 @@ static int v9fs_init_fs_context(struct fs_context *fc)
 	ctx->session_opts.uid = INVALID_UID;
 	ctx->session_opts.dfltuid = V9FS_DEFUID;
 	ctx->session_opts.dfltgid = V9FS_DEFGID;
+	ctx->session_opts.ndentry_timeout_ms = 0;
 
 	/* initialize client options */
 	ctx->client_opts.proto_version = p9_proto_2000L;

@@ -23,6 +23,10 @@
 #define MDIO_MMD_DTEXS		5	/* DTE Extender Sublayer */
 #define MDIO_MMD_TC		6	/* Transmission Convergence */
 #define MDIO_MMD_AN		7	/* Auto-Negotiation */
+#define MDIO_MMD_SEP_PMA1	8	/* Separated PMA (1) */
+#define MDIO_MMD_SEP_PMA2	9	/* Separated PMA (2) */
+#define MDIO_MMD_SEP_PMA3	10	/* Separated PMA (3) */
+#define MDIO_MMD_SEP_PMA4	11	/* Separated PMA (4) */
 #define MDIO_MMD_POWER_UNIT	13	/* PHY Power Unit */
 #define MDIO_MMD_C22EXT		29	/* Clause 22 extension */
 #define MDIO_MMD_VEND1		30	/* Vendor specific 1 */
@@ -63,6 +67,8 @@
 					 * Lanes B-D are numbered 134-136. */
 #define MDIO_PMA_10GBR_FSRT_CSR	147	/* 10GBASE-R fast retrain status and control */
 #define MDIO_PMA_10GBR_FECABLE	170	/* 10GBASE-R FEC ability */
+#define MDIO_PMA_RSFEC_CTRL	200	/* RSFEC control */
+#define MDIO_PMA_RSFEC_LANE_MAP	206	/* RSFEC lane mapping */
 #define MDIO_PCS_10GBX_STAT1	24	/* 10GBASE-X PCS status 1 */
 #define MDIO_PCS_10GBRT_STAT1	32	/* 10GBASE-R/-T PCS status 1 */
 #define MDIO_PCS_10GBRT_STAT2	33	/* 10GBASE-R/-T PCS status 2 */
@@ -175,6 +181,10 @@
 #define MDIO_DEVS_DTEXS			MDIO_DEVS_PRESENT(MDIO_MMD_DTEXS)
 #define MDIO_DEVS_TC			MDIO_DEVS_PRESENT(MDIO_MMD_TC)
 #define MDIO_DEVS_AN			MDIO_DEVS_PRESENT(MDIO_MMD_AN)
+#define MDIO_DEVS_SEP_PMA1		MDIO_DEVS_PRESENT(MDIO_MMD_SEP_PMA1)
+#define MDIO_DEVS_SEP_PMA2		MDIO_DEVS_PRESENT(MDIO_MMD_SEP_PMA2)
+#define MDIO_DEVS_SEP_PMA3		MDIO_DEVS_PRESENT(MDIO_MMD_SEP_PMA3)
+#define MDIO_DEVS_SEP_PMA4		MDIO_DEVS_PRESENT(MDIO_MMD_SEP_PMA4)
 #define MDIO_DEVS_C22EXT		MDIO_DEVS_PRESENT(MDIO_MMD_C22EXT)
 #define MDIO_DEVS_VEND1			MDIO_DEVS_PRESENT(MDIO_MMD_VEND1)
 #define MDIO_DEVS_VEND2			MDIO_DEVS_PRESENT(MDIO_MMD_VEND2)
@@ -322,8 +332,13 @@
 #define MDIO_AN_10GBT_CTRL_ADV2_5G	0x0080	/* Advertise 2.5GBASE-T */
 #define MDIO_AN_10GBT_CTRL_ADV5G	0x0100	/* Advertise 5GBASE-T */
 #define MDIO_AN_10GBT_CTRL_ADV10G	0x1000	/* Advertise 10GBASE-T */
+#define MDIO_AN_10GBT_CTRL_MS_ENABLE	0x8000	/* Master/slave manual config enable */
+#define MDIO_AN_10GBT_CTRL_MS_VALUE	0x4000	/* Master/slave config value (1=Master) */
+#define MDIO_AN_10GBT_CTRL_MS_PORT_TYPE	0x2000	/* Master Preferred Type */
 
 /* AN 10GBASE-T status register. */
+#define MDIO_AN_10GBT_STAT_MS_FAULT	0x8000	/* Master/slave fault */
+#define MDIO_AN_10GBT_STAT_MS_RES	0x4000	/* Master/slave resolution (1=Master) */
 #define MDIO_AN_10GBT_STAT_LP2_5G	0x0020  /* LP is 2.5GBT capable */
 #define MDIO_AN_10GBT_STAT_LP5G		0x0040  /* LP is 5GBT capable */
 #define MDIO_AN_10GBT_STAT_LPTRR	0x0200	/* LP training reset req. */

@@ -36,7 +36,7 @@
 #include <linux/ktime.h>
 #include <asm/facility.h>
 #include <linux/crypto.h>
-#include <linux/mod_devicetable.h>
+#include <linux/device-id/ap.h>
 #include <linux/debugfs.h>
 #include <linux/ctype.h>
 #include <linux/module.h>
@@ -744,6 +744,23 @@ void ap_send_online_uevent(struct ap_device *ap_dev, int online)
 }
 EXPORT_SYMBOL(ap_send_online_uevent);
 
+void ap_send_se_bind_uevent(struct ap_device *ap_dev)
+{
+	char *envp[] = { "SE_BIND=1", NULL };
+
+	kobject_uevent_env(&ap_dev->device.kobj, KOBJ_CHANGE, envp);
+}
+
+void ap_send_se_assoc_uevent(struct ap_device *ap_dev, unsigned int assoc_idx)
+{
+	char buf[32];
+	char *envp[] = { buf, NULL };
+
+	snprintf(buf, sizeof(buf), "SE_ASSOC=%u", assoc_idx);
+
+	kobject_uevent_env(&ap_dev->device.kobj, KOBJ_CHANGE, envp);
+}
+
 static void ap_send_mask_changed_uevent(unsigned long *newapm,
 					unsigned long *newaqm)
 {
@@ -1156,8 +1173,8 @@ bool ap_bus_force_rescan(void)
 	 * for the lock which means the other task has finished and
 	 * stored the result in ap_scan_bus_result.
 	 */
-	if (mutex_lock_interruptible(&ap_scan_bus_mutex)) {
-		/* some error occurred, ignore and go out */
+	if (mutex_lock_killable(&ap_scan_bus_mutex)) {
+		/* fatal signal received, go out */
 		goto out;
 	}
 	rc = ap_scan_bus_result;

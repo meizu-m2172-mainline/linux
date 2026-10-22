@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 use kernel::{
     io::{
@@ -7,6 +8,7 @@ use kernel::{
         Io, //
     },
     prelude::*,
+    sizes::SizeConstants,
     time, //
 };
 
@@ -30,7 +32,6 @@ use crate::{
         Architecture,
         Chipset, //
     },
-    num::FromSafeCast,
 };
 
 // PMC
@@ -108,82 +109,6 @@ impl kernel::fmt::Display for NV_PMC_BOOT_42 {
 
 register! {
     pub(crate) NV_PBUS_SW_SCRATCH(u32)[64] @ 0x00001400 {}
-
-    /// Scratch register 0xe used as FRTS firmware error code.
-    pub(crate) NV_PBUS_SW_SCRATCH_0E_FRTS_ERR(u32) => NV_PBUS_SW_SCRATCH[0xe] {
-        31:16   frts_err_code;
-    }
-}
-
-// PFB
-
-register! {
-    /// Low bits of the physical system memory address used by the GPU to perform sysmembar
-    /// operations (see [`crate::fb::SysmemFlush`]).
-    pub(crate) NV_PFB_NISO_FLUSH_SYSMEM_ADDR(u32) @ 0x00100c10 {
-        31:0    adr_39_08;
-    }
-
-    /// High bits of the physical system memory address used by the GPU to perform sysmembar
-    /// operations (see [`crate::fb::SysmemFlush`]).
-    pub(crate) NV_PFB_NISO_FLUSH_SYSMEM_ADDR_HI(u32) @ 0x00100c40 {
-        23:0    adr_63_40;
-    }
-
-    pub(crate) NV_PFB_PRI_MMU_LOCAL_MEMORY_RANGE(u32) @ 0x00100ce0 {
-        30:30   ecc_mode_enabled => bool;
-        9:4     lower_mag;
-        3:0     lower_scale;
-    }
-
-    pub(crate) NV_PFB_PRI_MMU_WPR2_ADDR_LO(u32) @ 0x001fa824 {
-        /// Bits 12..40 of the lower (inclusive) bound of the WPR2 region.
-        31:4    lo_val;
-    }
-
-    pub(crate) NV_PFB_PRI_MMU_WPR2_ADDR_HI(u32) @ 0x001fa828 {
-        /// Bits 12..40 of the higher (exclusive) bound of the WPR2 region.
-        31:4    hi_val;
-    }
-}
-
-impl NV_PFB_PRI_MMU_LOCAL_MEMORY_RANGE {
-    /// Returns the usable framebuffer size, in bytes.
-    pub(crate) fn usable_fb_size(self) -> u64 {
-        let size = (u64::from(self.lower_mag()) << u64::from(self.lower_scale()))
-            * u64::from_safe_cast(kernel::sizes::SZ_1M);
-
-        if self.ecc_mode_enabled() {
-            // Remove the amount of memory reserved for ECC (one per 16 units).
-            size / 16 * 15
-        } else {
-            size
-        }
-    }
-}
-
-impl NV_PFB_PRI_MMU_WPR2_ADDR_LO {
-    /// Returns the lower (inclusive) bound of the WPR2 region.
-    pub(crate) fn lower_bound(self) -> u64 {
-        u64::from(self.lo_val()) << 12
-    }
-}
-
-impl NV_PFB_PRI_MMU_WPR2_ADDR_HI {
-    /// Returns the higher (exclusive) bound of the WPR2 region.
-    ///
-    /// A value of zero means the WPR2 region is not set.
-    pub(crate) fn higher_bound(self) -> u64 {
-        u64::from(self.hi_val()) << 12
-    }
-}
-
-// PGSP
-
-register! {
-    pub(crate) NV_PGSP_QUEUE_HEAD(u32) @ 0x00110c00 {
-        31:0    address;
-    }
 }
 
 // PGC6 register space.
@@ -241,29 +166,7 @@ impl NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT {
 impl NV_USABLE_FB_SIZE_IN_MB {
     /// Returns the usable framebuffer size, in bytes.
     pub(crate) fn usable_fb_size(self) -> u64 {
-        u64::from(self.value()) * u64::from_safe_cast(kernel::sizes::SZ_1M)
-    }
-}
-
-// PDISP
-
-register! {
-    pub(crate) NV_PDISP_VGA_WORKSPACE_BASE(u32) @ 0x00625f04 {
-        /// VGA workspace base address divided by 0x10000.
-        31:8    addr;
-        /// Set if the `addr` field is valid.
-        3:3     status_valid => bool;
-    }
-}
-
-impl NV_PDISP_VGA_WORKSPACE_BASE {
-    /// Returns the base address of the VGA workspace, or `None` if none exists.
-    pub(crate) fn vga_workspace_addr(self) -> Option<u64> {
-        if self.status_valid() {
-            Some(u64::from(self.addr()) << 16)
-        } else {
-            None
-        }
+        u64::from(self.value()) * u64::SZ_1M
     }
 }
 
@@ -314,6 +217,8 @@ register! {
     pub(crate) NV_PFALCON_FALCON_HWCFG2(u32) @ PFalconBase + 0x000000f4 {
         /// Signal indicating that reset is completed (GA102+).
         31:31   reset_ready => bool;
+        /// RISC-V branch privilege lockdown bit.
+        13:13   riscv_br_priv_lockdown => bool;
         /// Set to 0 after memory scrubbing is completed.
         12:12   mem_scrubbing => bool;
         10:10   riscv => bool;
@@ -426,6 +331,24 @@ register! {
     pub(crate) NV_PFALCON_FBIF_CTL(u32) @ PFalconBase + 0x00000624 {
         7:7     allow_phys_no_ctx => bool;
     }
+
+    // Falcon EMEM PIO registers (used by FSP on Hopper/Blackwell).
+    // These provide the falcon external memory communication interface.
+
+    pub(crate) NV_PFALCON_FALCON_EMEMC(u32) @ PFalconBase + 0x00000ac0 {
+        /// EMEM byte offset (4-byte aligned) within the block.
+        7:2     offs;
+        /// EMEM block to access.
+        15:8    blk;
+        /// Auto-increment the offset after each write.
+        24:24   aincw => bool;
+        /// Auto-increment the offset after each read.
+        25:25   aincr => bool;
+    }
+
+    pub(crate) NV_PFALCON_FALCON_EMEMD(u32) @ PFalconBase + 0x00000ac4 {
+        31:0    data => u32;
+    }
 }
 
 impl NV_PFALCON_FALCON_DMACTL {
@@ -449,7 +372,7 @@ impl NV_PFALCON_FALCON_DMATRFCMD {
 
 impl NV_PFALCON_FALCON_ENGINE {
     /// Resets the falcon
-    pub(crate) fn reset_engine<E: FalconEngine>(bar: &Bar0) {
+    pub(crate) fn reset_engine<E: FalconEngine>(bar: Bar0<'_>) {
         bar.update(Self::of::<E>(), |r| r.with_reset(true));
 
         // TIMEOUT: falcon engine should not take more than 10us to reset.
@@ -501,7 +424,7 @@ register! {
     /// GA102 and later.
     pub(crate) NV_PRISCV_RISCV_CPUCTL(u32) @ PFalcon2Base + 0x00000388 {
         7:7     active_stat => bool;
-        0:0     halted => bool;
+        4:4     halted => bool;
     }
 
     /// GA102 and later.
@@ -509,6 +432,27 @@ register! {
         8:8     br_fetch => bool;
         4:4     core_select => PeregrineCoreSelect;
         0:0     valid => bool;
+    }
+}
+
+// FSP (Foundation Security Processor) queue registers for Hopper/Blackwell Chain of Trust.
+// These registers manage falcon EMEM communication queues.
+
+register! {
+    pub(crate) NV_PFSP_QUEUE_HEAD(u32)[8] @ 0x008f2c00 {
+        31:0    address => u32;
+    }
+
+    pub(crate) NV_PFSP_QUEUE_TAIL(u32)[8] @ 0x008f2c04 {
+        31:0    address => u32;
+    }
+
+    pub(crate) NV_PFSP_MSGQ_HEAD(u32)[8] @ 0x008f2c80 {
+        31:0    val => u32;
+    }
+
+    pub(crate) NV_PFSP_MSGQ_TAIL(u32)[8] @ 0x008f2c84 {
+        31:0    val => u32;
     }
 }
 
@@ -535,6 +479,42 @@ pub(crate) mod ga100 {
     register! {
         pub(crate) NV_FUSE_STATUS_OPT_DISPLAY(u32) @ 0x00820c04 {
             0:0     display_disabled => bool;
+        }
+    }
+}
+
+pub(crate) const NV_THERM_I2CS_SCRATCH_FSP_BOOT_COMPLETE_STATUS_SUCCESS: u32 = 0xff;
+
+pub(crate) mod gh100 {
+    use kernel::io::register;
+
+    // PTHERM
+
+    register! {
+        pub(crate) NV_THERM_I2CS_SCRATCH(u32) @ 0x000200bc {
+            31:0    data;
+        }
+
+        // Alias to `NV_THERM_I2CS_SCRATCH` when used to check for FSP boot completion.
+        pub(crate) NV_THERM_I2CS_SCRATCH_FSP_BOOT_COMPLETE(u32) => NV_THERM_I2CS_SCRATCH {
+            31:0    fsp_boot_complete;
+        }
+    }
+}
+
+pub(crate) mod gb202 {
+    use kernel::io::register;
+
+    // PTHERM
+
+    register! {
+        pub(crate) NV_THERM_I2CS_SCRATCH(u32) @ 0x00ad00bc {
+            31:0    data;
+        }
+
+        // Alias to `NV_THERM_I2CS_SCRATCH` when used to check for FSP boot completion.
+        pub(crate) NV_THERM_I2CS_SCRATCH_FSP_BOOT_COMPLETE(u32) => NV_THERM_I2CS_SCRATCH {
+            31:0    fsp_boot_complete;
         }
     }
 }

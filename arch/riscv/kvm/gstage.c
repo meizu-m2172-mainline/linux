@@ -5,11 +5,13 @@
  */
 
 #include <linux/bitops.h>
+#include <linux/cpufeature.h>
 #include <linux/errno.h>
 #include <linux/kvm_host.h>
 #include <linux/module.h>
 #include <linux/pgtable.h>
 #include <asm/kvm_gstage.h>
+#include <asm/hwcap.h>
 
 #ifdef CONFIG_64BIT
 unsigned long kvm_riscv_gstage_max_pgd_levels __ro_after_init = 3;
@@ -123,6 +125,20 @@ static void gstage_tlb_flush(struct kvm_gstage *gstage, u32 level, gpa_t addr)
 					       gstage->vmid);
 }
 
+bool kvm_riscv_gstage_try_update_pte(struct kvm_gstage *gstage, u32 level,
+				     gpa_t addr, pte_t *ptep,
+				     pte_t old_pte, pte_t new_pte)
+{
+	if (cmpxchg(&ptep->pte, pte_val(old_pte), pte_val(new_pte)) !=
+	    pte_val(old_pte))
+		return false;
+
+	if (pte_val(old_pte) != pte_val(new_pte))
+		gstage_tlb_flush(gstage, level, addr);
+
+	return true;
+}
+
 int kvm_riscv_gstage_set_pte(struct kvm_gstage *gstage,
 			     struct kvm_mmu_memory_cache *pcache,
 			     const struct kvm_gstage_mapping *map)
@@ -157,8 +173,10 @@ int kvm_riscv_gstage_set_pte(struct kvm_gstage *gstage,
 	}
 
 	if (pte_val(*ptep) != pte_val(map->pte)) {
+		bool was_invalid = !pte_val(*ptep);
 		set_pte(ptep, map->pte);
-		if (gstage_pte_leaf(ptep))
+		if (gstage_pte_leaf(ptep) &&
+		    !(was_invalid && riscv_has_extension_unlikely(RISCV_ISA_EXT_SVVPTC)))
 			gstage_tlb_flush(gstage, current_level, map->addr);
 	}
 
@@ -168,17 +186,22 @@ int kvm_riscv_gstage_set_pte(struct kvm_gstage *gstage,
 static void kvm_riscv_gstage_update_pte_prot(struct kvm_gstage *gstage, u32 level,
 					     gpa_t addr, pte_t *ptep, pgprot_t prot)
 {
-	pte_t new_pte;
+	pte_t old_pte, new_pte;
 
-	if (pgprot_val(pte_pgprot(ptep_get(ptep))) == pgprot_val(prot))
-		return;
+	for (;;) {
+		old_pte = ptep_get(ptep);
+		if (pgprot_val(pte_pgprot(old_pte)) == pgprot_val(prot))
+			return;
 
-	new_pte = pfn_pte(pte_pfn(ptep_get(ptep)), prot);
-	new_pte = pte_mkdirty(new_pte);
+		new_pte = pfn_pte(pte_pfn(old_pte), prot);
+		new_pte = pte_mkdirty(new_pte);
 
-	set_pte(ptep, new_pte);
+		if (kvm_riscv_gstage_try_update_pte(gstage, level, addr, ptep,
+						    old_pte, new_pte))
+			return;
 
-	gstage_tlb_flush(gstage, level, addr);
+		cpu_relax();
+	}
 }
 
 int kvm_riscv_gstage_map_page(struct kvm_gstage *gstage,
@@ -284,19 +307,20 @@ static inline unsigned long make_child_pte(unsigned long huge_pte, int index,
 	return child_pte;
 }
 
-int kvm_riscv_gstage_split_huge(struct kvm_gstage *gstage,
-				struct kvm_mmu_memory_cache *pcache,
-				gpa_t addr, u32 target_level, bool flush)
+bool kvm_riscv_gstage_split_huge(struct kvm_gstage *gstage,
+				 struct kvm_mmu_memory_cache *pcache,
+				 gpa_t addr, u32 target_level, bool flush)
 {
 	u32 current_level = gstage->pgd_levels - 1;
 	pte_t *next_ptep = (pte_t *)gstage->pgd;
 	unsigned long huge_pte, child_pte;
 	unsigned long child_page_size;
+	bool need_flush = false;
 	pte_t *ptep;
 	int i, ret;
 
 	if (!pcache)
-		return -ENOMEM;
+		return false;
 
 	while(current_level > target_level) {
 		ptep = (pte_t *)&next_ptep[gstage_pte_index(gstage, addr, current_level)];
@@ -314,58 +338,67 @@ int kvm_riscv_gstage_split_huge(struct kvm_gstage *gstage,
 
 		ret = gstage_level_to_page_size(gstage, current_level - 1, &child_page_size);
 		if (ret)
-			return ret;
+			return need_flush;
 
 		next_ptep = kvm_mmu_memory_cache_alloc(pcache);
 		if (!next_ptep)
-			return -ENOMEM;
+			return need_flush;
 
 		for (i = 0; i < PTRS_PER_PTE; i++) {
 			child_pte = make_child_pte(huge_pte, i, child_page_size);
 			set_pte((pte_t *)&next_ptep[i], __pte(child_pte));
 		}
 
+		/*
+		 * Ensure the writes to the child PTEs are visible before
+		 * linking the new page table to the parent PTE.
+		 */
+		smp_wmb();
+
 		set_pte(ptep, pfn_pte(PFN_DOWN(__pa(next_ptep)),
 				__pgprot(_PAGE_TABLE)));
 
 		if (flush)
 			gstage_tlb_flush(gstage, current_level, addr);
+		else
+			need_flush = true;
 
 		current_level--;
 	}
 
-	return 0;
+	return need_flush;
 }
 
-void kvm_riscv_gstage_op_pte(struct kvm_gstage *gstage, gpa_t addr,
+bool kvm_riscv_gstage_op_pte(struct kvm_gstage *gstage, gpa_t addr,
 			     pte_t *ptep, u32 ptep_level, enum kvm_riscv_gstage_op op)
 {
 	int i, ret;
 	pte_t old_pte, *next_ptep;
 	u32 next_ptep_level;
 	unsigned long next_page_size, page_size;
+	bool flush = false;
 
 	ret = gstage_level_to_page_size(gstage, ptep_level, &page_size);
 	if (ret)
-		return;
+		return false;
 
 	WARN_ON(addr & (page_size - 1));
 
 	if (!pte_val(ptep_get(ptep)))
-		return;
+		return false;
 
 	if (ptep_level && !gstage_pte_leaf(ptep)) {
 		next_ptep = (pte_t *)gstage_pte_page_vaddr(ptep_get(ptep));
 		next_ptep_level = ptep_level - 1;
 		ret = gstage_level_to_page_size(gstage, next_ptep_level, &next_page_size);
 		if (ret)
-			return;
+			return false;
 
 		if (op == GSTAGE_OP_CLEAR)
 			set_pte(ptep, __pte(0));
 		for (i = 0; i < PTRS_PER_PTE; i++)
-			kvm_riscv_gstage_op_pte(gstage, addr + i * next_page_size,
-						&next_ptep[i], next_ptep_level, op);
+			flush |= kvm_riscv_gstage_op_pte(gstage, addr + i * next_page_size,
+							 &next_ptep[i], next_ptep_level, op);
 		if (op == GSTAGE_OP_CLEAR)
 			put_page(virt_to_page(next_ptep));
 	} else {
@@ -375,11 +408,13 @@ void kvm_riscv_gstage_op_pte(struct kvm_gstage *gstage, gpa_t addr,
 		else if (op == GSTAGE_OP_WP)
 			set_pte(ptep, __pte(pte_val(ptep_get(ptep)) & ~_PAGE_WRITE));
 		if (pte_val(*ptep) != pte_val(old_pte))
-			gstage_tlb_flush(gstage, ptep_level, addr);
+			flush = true;
 	}
+
+	return flush;
 }
 
-void kvm_riscv_gstage_unmap_range(struct kvm_gstage *gstage,
+bool kvm_riscv_gstage_unmap_range(struct kvm_gstage *gstage,
 				  gpa_t start, gpa_t size, bool may_block)
 {
 	int ret;
@@ -388,6 +423,7 @@ void kvm_riscv_gstage_unmap_range(struct kvm_gstage *gstage,
 	bool found_leaf;
 	unsigned long page_size;
 	gpa_t addr = start, end = start + size;
+	bool flush = false;
 
 	while (addr < end) {
 		found_leaf = kvm_riscv_gstage_get_leaf(gstage, addr, &ptep, &ptep_level);
@@ -395,26 +431,32 @@ void kvm_riscv_gstage_unmap_range(struct kvm_gstage *gstage,
 		if (ret)
 			break;
 
-		if (!found_leaf)
-			goto next;
+		if (!found_leaf) {
+			addr = ALIGN(addr + 1, page_size);
+		} else {
+			if (!(addr & (page_size - 1)) && ((end - addr) >= page_size))
+				flush |= kvm_riscv_gstage_op_pte(gstage, addr, ptep,
+								 ptep_level, GSTAGE_OP_CLEAR);
+			else {
+				WARN_ONCE(1, "Skip unmap range addr: %#llx, end: %#llx, page_size: %#lx\n",
+						addr, end, page_size);
+			}
 
-		if (!(addr & (page_size - 1)) && ((end - addr) >= page_size))
-			kvm_riscv_gstage_op_pte(gstage, addr, ptep,
-						ptep_level, GSTAGE_OP_CLEAR);
-
-next:
-		addr += page_size;
+			addr += page_size;
+		}
 
 		/*
 		 * If the range is too large, release the kvm->mmu_lock
 		 * to prevent starvation and lockup detector warnings.
 		 */
 		if (!(gstage->flags & KVM_GSTAGE_FLAGS_LOCAL) && may_block && addr < end)
-			cond_resched_lock(&gstage->kvm->mmu_lock);
+			cond_resched_rwlock_write(&gstage->kvm->mmu_lock);
 	}
+
+	return flush;
 }
 
-void kvm_riscv_gstage_wp_range(struct kvm_gstage *gstage, gpa_t start, gpa_t end)
+bool kvm_riscv_gstage_wp_range(struct kvm_gstage *gstage, gpa_t start, gpa_t end)
 {
 	int ret;
 	pte_t *ptep;
@@ -422,6 +464,7 @@ void kvm_riscv_gstage_wp_range(struct kvm_gstage *gstage, gpa_t start, gpa_t end
 	bool found_leaf;
 	gpa_t addr = start;
 	unsigned long page_size;
+	bool flush = false;
 
 	while (addr < end) {
 		found_leaf = kvm_riscv_gstage_get_leaf(gstage, addr, &ptep, &ptep_level);
@@ -429,15 +472,76 @@ void kvm_riscv_gstage_wp_range(struct kvm_gstage *gstage, gpa_t start, gpa_t end
 		if (ret)
 			break;
 
-		if (!found_leaf)
-			goto next;
-
-		addr = ALIGN_DOWN(addr, page_size);
-		kvm_riscv_gstage_op_pte(gstage, addr, ptep,
-					ptep_level, GSTAGE_OP_WP);
-next:
-		addr += page_size;
+		if (!found_leaf) {
+			addr = ALIGN(addr + 1, page_size);
+		} else {
+			addr = ALIGN_DOWN(addr, page_size);
+			flush |= kvm_riscv_gstage_op_pte(gstage, addr, ptep,
+							 ptep_level, GSTAGE_OP_WP);
+			addr += page_size;
+		}
 	}
+
+	return flush;
+}
+
+static inline void clear_huge_mask(unsigned long *mask, unsigned long page_size,
+				   gfn_t base_gfn, gpa_t addr)
+{
+	unsigned long start_index = 0;
+	unsigned long end_index = BITS_PER_LONG - 1;
+	unsigned long end_gfn = base_gfn + end_index;
+	unsigned long aligned_start_gfn = addr >> PAGE_SHIFT;
+	unsigned long aligned_end_gfn = aligned_start_gfn + (page_size >> PAGE_SHIFT) - 1;
+	unsigned int nbits = 0;
+
+	if (aligned_start_gfn > base_gfn)
+		start_index = aligned_start_gfn - base_gfn;
+
+	if (aligned_end_gfn < end_gfn)
+		end_index = aligned_end_gfn - base_gfn;
+
+	nbits = end_index - start_index + 1;
+	bitmap_clear(mask, start_index, nbits);
+}
+
+bool kvm_riscv_gstage_wp_pt_masked(struct kvm_gstage *gstage, gfn_t base_gfn,
+				   unsigned long mask)
+{
+	unsigned long page_size;
+	bool flush = false;
+	bool found_leaf;
+	u32 ptep_level;
+	pte_t *ptep;
+	gpa_t addr = 0;
+	int ret;
+
+	while (mask) {
+		addr = (base_gfn + __ffs(mask)) << PAGE_SHIFT;
+
+		found_leaf = kvm_riscv_gstage_get_leaf(gstage, addr, &ptep, &ptep_level);
+		ret = gstage_level_to_page_size(gstage, ptep_level, &page_size);
+		if (ret)
+			break;
+
+		if (found_leaf) {
+			if (ptep_level) {
+				addr = ALIGN_DOWN(addr, page_size);
+				clear_huge_mask(&mask, page_size, base_gfn, addr);
+			}
+
+			flush |= kvm_riscv_gstage_op_pte(gstage, addr, ptep,
+							 ptep_level, GSTAGE_OP_WP);
+
+			if (ptep_level)
+				continue;
+		}
+
+		/* clear the first set bit*/
+		mask &= mask - 1;
+	}
+
+	return flush;
 }
 
 void __init kvm_riscv_gstage_mode_detect(void)

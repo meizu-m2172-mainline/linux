@@ -100,6 +100,24 @@ struct duplicate_extents_to_file_ex {
 	__le32 Reserved;
 } __packed;
 
+/*
+ * compression state flags
+ * See MS-FSCC 2.3.18
+ *     MS-FSCC 2.3.67
+ *     MS-FSCC 2.4.9
+ */
+#define COMPRESSION_FORMAT_NONE	0x0000
+#define COMPRESSION_FORMAT_DEFAULT	0x0001
+#define COMPRESSION_FORMAT_LZNT1	0x0002
+
+/*
+ * See MS-FSCC 2.3.18
+ *     MS-FSCC 2.3.67
+ */
+struct compress_ioctl {
+	__le16 CompressionState;
+} __packed;
+
 /* See MS-FSCC 2.3.20 */
 struct fsctl_get_integrity_information_rsp {
 	__le16	ChecksumAlgorithm;
@@ -184,6 +202,21 @@ struct file_zero_data_information {
 	__le64	BeyondFinalZero;
 } __packed;
 
+struct file_level_trim_range {
+	__le64	Offset;
+	__le64	Length;
+} __packed;
+
+struct file_level_trim {
+	__le32	Key;
+	__le32	NumRanges;
+	struct file_level_trim_range Ranges[];
+} __packed;
+
+struct file_level_trim_output {
+	__le32	NumRangesProcessed;
+} __packed;
+
 /*
  * This level 18, although with struct with same name is different from cifs
  * level 0x107. Level 0x107 has an extra u64 between AccessFlags and
@@ -264,6 +297,11 @@ typedef struct {
 struct smb2_file_eof_info { /* encoding of request for level 10 */
 	__le64 EndOfFile; /* new end of file value */
 } __packed; /* level 20 Set */
+
+/* See MS-FSCC 2.4.4 */
+struct smb2_file_alloc_info { /* encoding of request for level 19 */
+	__le64 AllocationSize;
+} __packed;
 
 /* See MS-FSCC 2.4.15 */
 typedef struct {

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
 /*
- * Copyright (C) 2008-2014, 2018-2024 Intel Corporation
+ * Copyright (C) 2008-2014, 2018-2024, 2026 Intel Corporation
  * Copyright (C) 2013-2015 Intel Mobile Communications GmbH
  * Copyright (C) 2016-2017 Intel Deutschland GmbH
  */
@@ -111,6 +111,8 @@ enum iwl_ucode_tlv_type {
 	IWL_UCODE_TLV_FW_NUM_STATIONS		= IWL_UCODE_TLV_CONST_BASE + 0,
 	IWL_UCODE_TLV_FW_NUM_LINKS		= IWL_UCODE_TLV_CONST_BASE + 1,
 	IWL_UCODE_TLV_FW_NUM_BEACONS		= IWL_UCODE_TLV_CONST_BASE + 2,
+	IWL_UCODE_TLV_FW_NUM_MCAST_KEY_ENTRIES	= IWL_UCODE_TLV_CONST_BASE + 3,
+	IWL_UCODE_TLV_FW_NAN_MAX_CHAN_SWITCH_TIME = IWL_UCODE_TLV_CONST_BASE + 4,
 
 	IWL_UCODE_TLV_TYPE_DEBUG_INFO		= IWL_UCODE_TLV_DEBUG_BASE + 0,
 	IWL_UCODE_TLV_TYPE_BUFFER_ALLOCATION	= IWL_UCODE_TLV_DEBUG_BASE + 1,
@@ -446,8 +448,9 @@ typedef unsigned int __bitwise iwl_ucode_tlv_capa_t;
  * @IWL_UCODE_TLV_CAPA_EXT_FSEQ_IMAGE_SUPPORT: external FSEQ image support
  * @IWL_UCODE_TLV_CAPA_RESET_DURING_ASSERT: FW reset handshake is needed
  *	during assert handling even if the dump isn't split
- * @IWL_UCODE_TLV_CAPA_FW_ACCEPTS_RAW_DSM_TABLE: Firmware has capability of
- *	handling raw DSM table data.
+ * @IWL_UCODE_TLV_CAPA_FW_ACCEPTS_RAW_DSM_TABLE: Firmware can handle raw DSM
+ *	table data. For LARI_CONFIG_CHANGE command version 13 and above, this
+ *	capability is obsolete since raw DSM values are accepted by default.
  * @IWL_UCODE_TLV_CAPA_NAN_SYNC_SUPPORT: Supports NAN synchronization
  *
  * @NUM_IWL_UCODE_TLV_CAPA: number of bits used
@@ -1063,8 +1066,13 @@ struct iwl_fw_dump_exclude {
 	__le32 addr, size;
 };
 
-struct iwl_fw_fseq_bin_version {
+struct iwl_fw_fseq_bin_version_v1 {
 	__le32 major, minor;
+}; /* FW_TLV_FSEQ_BIN_VERSION_S */
+
+struct iwl_fw_fseq_bin_version {
+	/* rf_id is currently unused and always zero */
+	__le32 mac_id, rf_id, major, minor;
 }; /* FW_TLV_FSEQ_BIN_VERSION_S */
 
 static inline size_t _iwl_tlv_array_len(const struct iwl_ucode_tlv *tlv,

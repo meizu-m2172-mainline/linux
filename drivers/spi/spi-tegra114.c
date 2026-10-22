@@ -859,6 +859,13 @@ static u32 tegra_spi_setup_transfer_one(struct spi_device *spi,
 		command1 |= SPI_BIT_LENGTH(bits_per_word - 1);
 	}
 
+	/*
+	 * Re-assert the CS GPIO for every transfer: transfer_end() drops it
+	 * on cs_change, and the assert above only covers is_first_of_msg.
+	 */
+	if (spi_get_csgpiod(spi, 0))
+		gpiod_set_value(spi_get_csgpiod(spi, 0), 1);
+
 	return command1;
 }
 
@@ -1302,7 +1309,7 @@ static int tegra_spi_probe(struct platform_device *pdev)
 	int ret, spi_irq;
 	int bus_num;
 
-	host = spi_alloc_host(&pdev->dev, sizeof(*tspi));
+	host = devm_spi_alloc_host(&pdev->dev, sizeof(*tspi));
 	if (!host) {
 		dev_err(&pdev->dev, "host allocation failed\n");
 		return -ENOMEM;
@@ -1336,36 +1343,31 @@ static int tegra_spi_probe(struct platform_device *pdev)
 	tspi->soc_data = of_device_get_match_data(&pdev->dev);
 	if (!tspi->soc_data) {
 		dev_err(&pdev->dev, "unsupported tegra\n");
-		ret = -ENODEV;
-		goto exit_free_host;
+		return -ENODEV;
 	}
 
 	tspi->base = devm_platform_get_and_ioremap_resource(pdev, 0, &r);
-	if (IS_ERR(tspi->base)) {
-		ret = PTR_ERR(tspi->base);
-		goto exit_free_host;
-	}
+	if (IS_ERR(tspi->base))
+		return PTR_ERR(tspi->base);
+
 	tspi->phys = r->start;
 
 	spi_irq = platform_get_irq(pdev, 0);
-	if (spi_irq < 0) {
-		ret = spi_irq;
-		goto exit_free_host;
-	}
+	if (spi_irq < 0)
+		return spi_irq;
+
 	tspi->irq = spi_irq;
 
 	tspi->clk = devm_clk_get(&pdev->dev, "spi");
 	if (IS_ERR(tspi->clk)) {
 		dev_err(&pdev->dev, "can not get clock\n");
-		ret = PTR_ERR(tspi->clk);
-		goto exit_free_host;
+		return PTR_ERR(tspi->clk);
 	}
 
 	tspi->rst = devm_reset_control_get_exclusive(&pdev->dev, "spi");
 	if (IS_ERR(tspi->rst)) {
 		dev_err(&pdev->dev, "can not get reset\n");
-		ret = PTR_ERR(tspi->rst);
-		goto exit_free_host;
+		return PTR_ERR(tspi->rst);
 	}
 
 	tspi->max_buf_size = SPI_FIFO_DEPTH << 2;
@@ -1373,7 +1375,7 @@ static int tegra_spi_probe(struct platform_device *pdev)
 
 	ret = tegra_spi_init_dma_param(tspi, true);
 	if (ret < 0)
-		goto exit_free_host;
+		return ret;
 	ret = tegra_spi_init_dma_param(tspi, false);
 	if (ret < 0)
 		goto exit_rx_dma_free;
@@ -1431,8 +1433,7 @@ exit_pm_disable:
 	tegra_spi_deinit_dma_param(tspi, false);
 exit_rx_dma_free:
 	tegra_spi_deinit_dma_param(tspi, true);
-exit_free_host:
-	spi_controller_put(host);
+
 	return ret;
 }
 
@@ -1440,8 +1441,6 @@ static void tegra_spi_remove(struct platform_device *pdev)
 {
 	struct spi_controller *host = platform_get_drvdata(pdev);
 	struct tegra_spi_data	*tspi = spi_controller_get_devdata(host);
-
-	spi_controller_get(host);
 
 	spi_unregister_controller(host);
 
@@ -1456,11 +1455,8 @@ static void tegra_spi_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	if (!pm_runtime_status_suspended(&pdev->dev))
 		tegra_spi_runtime_suspend(&pdev->dev);
-
-	spi_controller_put(host);
 }
 
-#ifdef CONFIG_PM_SLEEP
 static int tegra_spi_suspend(struct device *dev)
 {
 	struct spi_controller *host = dev_get_drvdata(dev);
@@ -1486,7 +1482,6 @@ static int tegra_spi_resume(struct device *dev)
 
 	return spi_controller_resume(host);
 }
-#endif
 
 static int tegra_spi_runtime_suspend(struct device *dev)
 {
@@ -1515,14 +1510,14 @@ static int tegra_spi_runtime_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops tegra_spi_pm_ops = {
-	SET_RUNTIME_PM_OPS(tegra_spi_runtime_suspend,
-		tegra_spi_runtime_resume, NULL)
-	SET_SYSTEM_SLEEP_PM_OPS(tegra_spi_suspend, tegra_spi_resume)
+	RUNTIME_PM_OPS(tegra_spi_runtime_suspend,
+		       tegra_spi_runtime_resume, NULL)
+	SYSTEM_SLEEP_PM_OPS(tegra_spi_suspend, tegra_spi_resume)
 };
 static struct platform_driver tegra_spi_driver = {
 	.driver = {
 		.name		= "spi-tegra114",
-		.pm		= &tegra_spi_pm_ops,
+		.pm		= pm_ptr(&tegra_spi_pm_ops),
 		.of_match_table	= tegra_spi_of_match,
 	},
 	.probe =	tegra_spi_probe,

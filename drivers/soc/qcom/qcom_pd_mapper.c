@@ -7,7 +7,6 @@
 
 #include <linux/auxiliary_bus.h>
 #include <linux/kernel.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/refcount.h>
@@ -266,6 +265,12 @@ static const struct qcom_pdm_domain_data adsp_charger_pd = {
 	.services = { NULL },
 };
 
+static const struct qcom_pdm_domain_data adsp_ois_pd = {
+	.domain = "msm/adsp/ois_pd",
+	.instance_id = 74,
+	.services = { NULL, },
+};
+
 static const struct qcom_pdm_domain_data adsp_root_pd = {
 	.domain = "msm/adsp/root_pd",
 	.instance_id = 74,
@@ -302,6 +307,24 @@ static const struct qcom_pdm_domain_data msm8996_adsp_root_pd = {
 static const struct qcom_pdm_domain_data cdsp_root_pd = {
 	.domain = "msm/cdsp/root_pd",
 	.instance_id = 76,
+	.services = { NULL },
+};
+
+static const struct qcom_pdm_domain_data cdsp1_root_pd = {
+	.domain = "msm/cdsp1/root_pd",
+	.instance_id = 125,
+	.services = { NULL },
+};
+
+static const struct qcom_pdm_domain_data gpdsp_root_pd = {
+	.domain = "msm/gpdsp/root_pd",
+	.instance_id = 192,
+	.services = { NULL },
+};
+
+static const struct qcom_pdm_domain_data gpdsp1_root_pd = {
+	.domain = "msm/gpdsp1/root_pd",
+	.instance_id = 241,
 	.services = { NULL },
 };
 
@@ -370,6 +393,7 @@ static const struct qcom_pdm_domain_data *glymur_domains[] = {
 
 static const struct qcom_pdm_domain_data *kaanapali_domains[] = {
 	&adsp_audio_pd,
+	&adsp_ois_pd,
 	&adsp_root_pd,
 	&adsp_sensor_pd,
 	&cdsp_root_pd,
@@ -416,6 +440,24 @@ static const struct qcom_pdm_domain_data *qcs615_domains[] = {
 	&cdsp_root_pd,
 	&mpss_root_pd,
 	&mpss_wlan_pd,
+	NULL,
+};
+
+static const struct qcom_pdm_domain_data *qcs8300_domains[] = {
+	&adsp_audio_pd,
+	&adsp_root_pd,
+	&cdsp_root_pd,
+	&gpdsp_root_pd,
+	NULL,
+};
+
+static const struct qcom_pdm_domain_data *sa8775p_domains[] = {
+	&adsp_audio_pd,
+	&adsp_root_pd,
+	&cdsp_root_pd,
+	&cdsp1_root_pd,
+	&gpdsp_root_pd,
+	&gpdsp1_root_pd,
 	NULL,
 };
 
@@ -581,6 +623,7 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
 	{ .compatible = "qcom,eliza", .data = sm8550_domains, },
 	{ .compatible = "qcom,apq8096", .data = msm8996_domains, },
 	{ .compatible = "qcom,glymur", .data = glymur_domains, },
+	{ .compatible = "qcom,hawi", .data = kaanapali_domains, },
 	{ .compatible = "qcom,kaanapali", .data = kaanapali_domains, },
 	{ .compatible = "qcom,mahua", .data = glymur_domains, },
 	{ .compatible = "qcom,milos", .data = sm8550_domains, },
@@ -595,6 +638,8 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
 	{ .compatible = "qcom,qcm6490", .data = sc7280_domains, },
 	{ .compatible = "qcom,qcs404", .data = qcs404_domains, },
 	{ .compatible = "qcom,qcs615", .data = qcs615_domains, },
+	{ .compatible = "qcom,qcs8300", .data = qcs8300_domains, },
+	{ .compatible = "qcom,sa8775p", .data = sa8775p_domains, },
 	{ .compatible = "qcom,sc7180", .data = sc7180_domains, },
 	{ .compatible = "qcom,sc7280", .data = sc7280_domains, },
 	{ .compatible = "qcom,sc8180x", .data = sc8180x_domains, },

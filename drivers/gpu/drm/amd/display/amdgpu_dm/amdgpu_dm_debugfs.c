@@ -33,6 +33,7 @@
 #include "amdgpu_dm.h"
 #include "amdgpu_dm_debugfs.h"
 #include "amdgpu_dm_replay.h"
+#include "amdgpu_dm_psr.h"
 #include "dm_helpers.h"
 #include "dmub/dmub_srv.h"
 #include "resource.h"
@@ -195,7 +196,6 @@ static ssize_t dp_link_settings_read(struct file *f, char __user *buf,
 	char *rd_buf_ptr = NULL;
 	const uint32_t rd_buf_size = 100;
 	uint32_t result = 0;
-	uint8_t str_len = 0;
 	int r;
 
 	if (*pos & 3 || size & 3)
@@ -207,29 +207,26 @@ static ssize_t dp_link_settings_read(struct file *f, char __user *buf,
 
 	rd_buf_ptr = rd_buf;
 
-	str_len = strlen("Current:  %d  0x%x  %d  ");
-	snprintf(rd_buf_ptr, str_len, "Current:  %d  0x%x  %d  ",
+	rd_buf_ptr += scnprintf(rd_buf_ptr, rd_buf_size - (rd_buf_ptr - rd_buf),
+			"Current:  %d  0x%x  %d  ",
 			link->cur_link_settings.lane_count,
 			link->cur_link_settings.link_rate,
 			link->cur_link_settings.link_spread);
-	rd_buf_ptr += str_len;
 
-	str_len = strlen("Verified:  %d  0x%x  %d  ");
-	snprintf(rd_buf_ptr, str_len, "Verified:  %d  0x%x  %d  ",
+	rd_buf_ptr += scnprintf(rd_buf_ptr, rd_buf_size - (rd_buf_ptr - rd_buf),
+			"Verified:  %d  0x%x  %d  ",
 			link->verified_link_cap.lane_count,
 			link->verified_link_cap.link_rate,
 			link->verified_link_cap.link_spread);
-	rd_buf_ptr += str_len;
 
-	str_len = strlen("Reported:  %d  0x%x  %d  ");
-	snprintf(rd_buf_ptr, str_len, "Reported:  %d  0x%x  %d  ",
+	rd_buf_ptr += scnprintf(rd_buf_ptr, rd_buf_size - (rd_buf_ptr - rd_buf),
+			"Reported:  %d  0x%x  %d  ",
 			link->reported_link_cap.lane_count,
 			link->reported_link_cap.link_rate,
 			link->reported_link_cap.link_spread);
-	rd_buf_ptr += str_len;
 
-	str_len = strlen("Preferred:  %d  0x%x  %d  ");
-	snprintf(rd_buf_ptr, str_len, "Preferred:  %d  0x%x  %d\n",
+	rd_buf_ptr += scnprintf(rd_buf_ptr, rd_buf_size - (rd_buf_ptr - rd_buf),
+			"Preferred:  %d  0x%x  %d\n",
 			link->preferred_link_setting.lane_count,
 			link->preferred_link_setting.link_rate,
 			link->preferred_link_setting.link_spread);
@@ -605,7 +602,7 @@ static int dp_lttpr_status_show(struct seq_file *m, void *unused)
 		break;
 	}
 
-	seq_puts(m, "\n");
+	seq_putc(m, '\n');
 	return 0;
 }
 
@@ -1080,7 +1077,7 @@ static int psr_capability_show(struct seq_file *m, void *data)
 	seq_printf(m, "Driver support: %s", str_yes_no(link->psr_settings.psr_feature_enabled));
 	if (link->psr_settings.psr_version)
 		seq_printf(m, " [0x%02x]", link->psr_settings.psr_version);
-	seq_puts(m, "\n");
+	seq_putc(m, '\n');
 
 	return 0;
 }
@@ -1265,7 +1262,7 @@ static int hdcp_sink_capability_show(struct seq_file *m, void *data)
 	if (!hdcp_cap && !hdcp2_cap)
 		seq_printf(m, "%s ", "None");
 
-	seq_puts(m, "\n");
+	seq_putc(m, '\n');
 
 	return 0;
 }
@@ -2709,11 +2706,10 @@ static int ips_status_show(struct seq_file *m, void *unused)
 		rcg_count = ips_fw->rcg_exit_count;
 		ips1_count = ips_fw->ips1_exit_count;
 		ips2_count = ips_fw->ips2_exit_count;
-		seq_printf(m, "exit counts: rcg=%u ips1=%u ips2=%u",
+		seq_printf(m, "exit counts: rcg=%u ips1=%u ips2=%u\n",
 			   rcg_count,
 			   ips1_count,
 			   ips2_count);
-		seq_puts(m, "\n");
 	}
 	return 0;
 }
@@ -2970,7 +2966,7 @@ static ssize_t hdmi_cec_state_write(struct file *f, const char __user *buf,
 		ret = amdgpu_dm_initialize_hdmi_connector(aconnector);
 		if (ret)
 			return ret;
-		hdmi_cec_set_edid(aconnector);
+		amdgpu_dm_hdmi_cec_set_edid(aconnector);
 	} else {
 		if (!aconnector->notifier)
 			return -EINVAL;
@@ -2978,6 +2974,64 @@ static ssize_t hdmi_cec_state_write(struct file *f, const char __user *buf,
 		aconnector->notifier = NULL;
 	}
 
+	return size;
+}
+
+/**
+ * hdmi_automation_enable - Enable/Disable HDMI automation feature
+ * @f: file structure.
+ * @buf: userspace buffer. set to '1' to enable; '0' to disable automation feature.
+ * @size: size of buffer from userpsace.
+ * @pos: unused.
+ *
+ * Return size on success, error code on failure
+ */
+static ssize_t hdmi_automation_enable(struct file *f, const char __user *buf,
+	size_t size, loff_t *pos)
+{
+	struct amdgpu_dm_connector *aconnector = file_inode(f)->i_private;
+	char *wr_buf = NULL;
+	const uint32_t wr_buf_size = 40;
+	int max_param_num = 1;
+	uint8_t param_nums = 0;
+	long param[2];
+	bool hdmi_comp_auto;
+
+	if (size == 0)
+		return -EINVAL;
+
+	wr_buf = kcalloc(wr_buf_size, sizeof(char), GFP_KERNEL);
+	if (!wr_buf)
+		return -ENOSPC;
+
+	if (parse_write_buffer_into_params(wr_buf, wr_buf_size,
+					   (long *)param, buf,
+					   max_param_num,
+					   &param_nums)) {
+		kfree(wr_buf);
+		return -EINVAL;
+	}
+
+	if (param_nums <= 0) {
+		kfree(wr_buf);
+		DRM_DEBUG_DRIVER("user data not be read\n");
+		return -EINVAL;
+	}
+
+	switch (param[0]) {
+	case 0:
+		hdmi_comp_auto = false;
+		break;
+	case 1:
+	default:
+		hdmi_comp_auto = true;
+		break;
+	}
+
+	/* Persist setting across sink re-detection/hotplug. */
+	aconnector->hdmi_comp_auto = hdmi_comp_auto;
+
+	kfree(wr_buf);
 	return size;
 }
 
@@ -3098,6 +3152,12 @@ static const struct file_operations dp_mst_link_settings_debugfs_fops = {
 	.llseek = default_llseek
 };
 
+static const struct file_operations hdmi_automation_debugfs_fops = {
+	.owner = THIS_MODULE,
+	.write = hdmi_automation_enable,
+	.llseek = default_llseek
+};
+
 static const struct {
 	char *name;
 	const struct file_operations *fops;
@@ -3130,35 +3190,47 @@ static const struct {
 	const struct file_operations *fops;
 } hdmi_debugfs_entries[] = {
 		{"hdcp_sink_capability", &hdcp_sink_capability_fops},
-		{"hdmi_cec_state", &hdmi_cec_state_fops}
+		{"hdmi_cec_state", &hdmi_cec_state_fops},
+		{"hdmi_automation", &hdmi_automation_debugfs_fops}
 };
 
 /*
- * Force YUV420 output if available from the given mode
+ * Force a specific pixel encoding for the given connector, overriding the
+ * encoding that stream validation would otherwise pick. The value is an
+ * enum dc_pixel_encoding:
+ *
+ *   0 - PIXEL_ENCODING_UNDEFINED (no override, default)
+ *   1 - PIXEL_ENCODING_RGB
+ *   2 - PIXEL_ENCODING_YCBCR422
+ *   3 - PIXEL_ENCODING_YCBCR444
+ *   4 - PIXEL_ENCODING_YCBCR420
  */
-static int force_yuv420_output_set(void *data, u64 val)
+static int force_yuv_pixel_format_set(void *data, u64 val)
 {
 	struct amdgpu_dm_connector *connector = data;
 
-	connector->force_yuv420_output = (bool)val;
+	if (val >= PIXEL_ENCODING_COUNT)
+		return -EINVAL;
+
+	connector->force_yuv_pixel_format = (uint8_t)val;
 
 	return 0;
 }
 
 /*
- * Check if YUV420 is forced when available from the given mode
+ * Read back the pixel encoding currently forced on the given connector.
  */
-static int force_yuv420_output_get(void *data, u64 *val)
+static int force_yuv_pixel_format_get(void *data, u64 *val)
 {
 	struct amdgpu_dm_connector *connector = data;
 
-	*val = connector->force_yuv420_output;
+	*val = connector->force_yuv_pixel_format;
 
 	return 0;
 }
 
-DEFINE_DEBUGFS_ATTRIBUTE(force_yuv420_output_fops, force_yuv420_output_get,
-			 force_yuv420_output_set, "%llu\n");
+DEFINE_DEBUGFS_ATTRIBUTE(force_yuv_pixel_format_fops, force_yuv_pixel_format_get,
+			 force_yuv_pixel_format_set, "%llu\n");
 
 /*
  *  Read Replay state
@@ -3167,9 +3239,24 @@ static int replay_get_state(void *data, u64 *val)
 {
 	struct amdgpu_dm_connector *connector = data;
 	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
+	struct dc *dc = adev->dm.dc;
 	uint64_t state = REPLAY_STATE_INVALID;
+	bool reallow_idle = false;
+
+	mutex_lock(&adev->dm.dc_lock);
+
+	if (dc->idle_optimizations_allowed) {
+		dc_allow_idle_optimizations(dc, false);
+		reallow_idle = true;
+	}
 
 	dc_link_get_replay_state(link, &state);
+
+	if (reallow_idle)
+		dc_allow_idle_optimizations(dc, true);
+
+	mutex_unlock(&adev->dm.dc_lock);
 
 	*val = state;
 
@@ -3183,10 +3270,26 @@ static int replay_set_residency(void *data, u64 val)
 {
 	struct amdgpu_dm_connector *connector = data;
 	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
+	struct dc *dc = adev->dm.dc;
 	bool is_start = (val != 0);
 	u32 residency = 0;
+	bool reallow_idle = false;
+
+	mutex_lock(&adev->dm.dc_lock);
+
+	if (dc->idle_optimizations_allowed) {
+		dc_allow_idle_optimizations(dc, false);
+		reallow_idle = true;
+	}
 
 	link->dc->link_srv->edp_replay_residency(link, &residency, is_start, PR_RESIDENCY_MODE_PHY);
+
+	if (reallow_idle)
+		dc_allow_idle_optimizations(dc, true);
+
+	mutex_unlock(&adev->dm.dc_lock);
+
 	return 0;
 }
 
@@ -3197,9 +3300,25 @@ static int replay_get_residency(void *data, u64 *val)
 {
 	struct amdgpu_dm_connector *connector = data;
 	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
+	struct dc *dc = adev->dm.dc;
 	u32 residency = 0;
+	bool reallow_idle = false;
+
+	mutex_lock(&adev->dm.dc_lock);
+
+	if (dc->idle_optimizations_allowed) {
+		dc_allow_idle_optimizations(dc, false);
+		reallow_idle = true;
+	}
 
 	link->dc->link_srv->edp_replay_residency(link, &residency, false, PR_RESIDENCY_MODE_PHY);
+
+	if (reallow_idle)
+		dc_allow_idle_optimizations(dc, true);
+
+	mutex_unlock(&adev->dm.dc_lock);
+
 	*val = (u64)residency;
 
 	return 0;
@@ -3212,9 +3331,24 @@ static int psr_get(void *data, u64 *val)
 {
 	struct amdgpu_dm_connector *connector = data;
 	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
+	struct dc *dc = adev->dm.dc;
 	enum dc_psr_state state = PSR_STATE0;
+	bool reallow_idle = false;
+
+	mutex_lock(&adev->dm.dc_lock);
+
+	if (dc->idle_optimizations_allowed) {
+		dc_allow_idle_optimizations(dc, false);
+		reallow_idle = true;
+	}
 
 	dc_link_get_psr_state(link, &state);
+
+	if (reallow_idle)
+		dc_allow_idle_optimizations(dc, true);
+
+	mutex_unlock(&adev->dm.dc_lock);
 
 	*val = state;
 
@@ -3228,9 +3362,24 @@ static int psr_read_residency(void *data, u64 *val)
 {
 	struct amdgpu_dm_connector *connector = data;
 	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
+	struct dc *dc = adev->dm.dc;
 	u32 residency = 0;
+	bool reallow_idle = false;
+
+	mutex_lock(&adev->dm.dc_lock);
+
+	if (dc->idle_optimizations_allowed) {
+		dc_allow_idle_optimizations(dc, false);
+		reallow_idle = true;
+	}
 
 	link->dc->link_srv->edp_get_psr_residency(link, &residency, PSR_RESIDENCY_MODE_PHY);
+
+	if (reallow_idle)
+		dc_allow_idle_optimizations(dc, true);
+
+	mutex_unlock(&adev->dm.dc_lock);
 
 	*val = (u64)residency;
 
@@ -3305,10 +3454,25 @@ static int disallow_edp_enter_psr_get(void *data, u64 *val)
 static int disallow_edp_enter_psr_set(void *data, u64 val)
 {
 	struct amdgpu_dm_connector *aconnector = data;
+	struct dc_link *link = aconnector->dc_link;
 
-	aconnector->disallow_edp_enter_psr = val ? true : false;
+	aconnector->disallow_edp_enter_psr = (val != 0);
+
+	/* eDP PSR enable / disable is happened during mode change in power module.
+	 * Only psr_settings.psr_version is used to decide whether PSR is enabled or not.
+	 * So here we only update psr_version based on debugfs setting.
+	 * If disallow_edp_enter_psr is true, set psr_version to unsupported;
+	 * if disallow_edp_enter_psr is false, set psr_version based on sink capability.
+	 */
+	if (aconnector->disallow_edp_enter_psr)
+		link->psr_settings.psr_version = DC_PSR_VERSION_UNSUPPORTED;
+	else if (aconnector->psr_caps.psr_version == 1)
+		link->psr_settings.psr_version = DC_PSR_VERSION_1;
+	else if (aconnector->psr_caps.psr_version == 2)
+		link->psr_settings.psr_version = DC_PSR_VERSION_SU_1;
 	return 0;
 }
+
 
 /* check if kernel disallow eDP enter replay state
  * cat /sys/kernel/debug/dri/0/eDP-X/disallow_edp_enter_replay
@@ -3351,10 +3515,26 @@ static int disallow_edp_enter_replay_get(void *data, u64 *val)
 static int disallow_edp_enter_replay_set(void *data, u64 val)
 {
 	struct amdgpu_dm_connector *aconnector = data;
+	struct dc_link *link = aconnector->dc_link;
 
-	aconnector->disallow_edp_enter_replay = val ? true : false;
+	aconnector->disallow_edp_enter_replay = (val != 0);
+
+	/* eDP replay enable / disable is happened during mode change in power module.
+	 * Only replay_settings.config.replay_supported is used to decide whether
+	 * replay is enabled or not. So here we only update replay_supported based on
+	 * debugfs setting.
+	 * If disallow_edp_enter_replay is true, set replay_supported to false.
+	 * if disallow_edp_enter_replay is false, set replay_supported back based on
+	 * sink replay capability.
+	 */
+	if (aconnector->disallow_edp_enter_replay)
+		link->replay_settings.config.replay_supported = false;
+	else
+		link->replay_settings.config.replay_supported =
+			link->replay_settings.config.replay_cap_support;
 	return 0;
 }
+
 
 static int dmub_trace_mask_set(void *data, u64 val)
 {
@@ -3490,6 +3670,7 @@ DEFINE_DEBUGFS_ATTRIBUTE(disallow_edp_enter_replay_fops,
 
 DEFINE_DEBUGFS_ATTRIBUTE(ips_residency_cntl_fops, ips_residency_cntl_get,
 			   ips_residency_cntl_set, "%llu\n");
+
 DEFINE_SHOW_ATTRIBUTE(current_backlight);
 DEFINE_SHOW_ATTRIBUTE(target_backlight);
 DEFINE_SHOW_ATTRIBUTE(ips_status);
@@ -3499,7 +3680,7 @@ static const struct {
 	char *name;
 	const struct file_operations *fops;
 } connector_debugfs_entries[] = {
-		{"force_yuv420_output", &force_yuv420_output_fops},
+		{"force_yuv_pixel_format", &force_yuv_pixel_format_fops},
 		{"trigger_hotplug", &trigger_hotplug_debugfs_fops},
 		{"internal_display", &internal_display_fops},
 		{"odm_combine_segments", &odm_combine_segments_fops}
@@ -3860,28 +4041,35 @@ DEFINE_DEBUGFS_ATTRIBUTE(crc_win_y_end_fops, crc_win_y_end_get,
 static int crc_win_update_set(void *data, u64 val)
 {
 	struct drm_crtc *crtc = data;
-	struct amdgpu_crtc *acrtc;
+	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 	struct amdgpu_device *adev = drm_to_adev(crtc->dev);
 
 	if (val) {
-		acrtc = to_amdgpu_crtc(crtc);
 		mutex_lock(&adev->dm.dc_lock);
-		/* PSR may write to OTG CRC window control register,
-		 * so close it before starting secure_display.
+		/* PSR Replay may write to OTG CRC window control register,
+		 * so inactive it before starting secure_display by sending disable event.
 		 */
-		amdgpu_dm_psr_disable(acrtc->dm_irq_params.stream, true);
+		amdgpu_dm_psr_set_event(&adev->dm, acrtc->dm_irq_params.stream, true,
+			psr_event_crc_window_active, true);
+		amdgpu_dm_replay_set_event(&adev->dm, acrtc->dm_irq_params.stream, true,
+			replay_event_crc_window_active, true);
 
 		spin_lock_irq(&adev_to_drm(adev)->event_lock);
-
 		acrtc->dm_irq_params.window_param[0].enable = true;
 		acrtc->dm_irq_params.window_param[0].update_win = true;
 		acrtc->dm_irq_params.window_param[0].skip_frame_cnt = 0;
 		acrtc->dm_irq_params.crc_window_activated = true;
-
 		spin_unlock_irq(&adev_to_drm(adev)->event_lock);
 		mutex_unlock(&adev->dm.dc_lock);
+	} else {
+		/* Clear disable events to allow PSR/Replay to active */
+		mutex_lock(&adev->dm.dc_lock);
+		amdgpu_dm_psr_set_event(&adev->dm, acrtc->dm_irq_params.stream, false,
+			psr_event_crc_window_active, false);
+		amdgpu_dm_replay_set_event(&adev->dm, acrtc->dm_irq_params.stream, false,
+			replay_event_crc_window_active, false);
+		mutex_unlock(&adev->dm.dc_lock);
 	}
-
 	return 0;
 }
 

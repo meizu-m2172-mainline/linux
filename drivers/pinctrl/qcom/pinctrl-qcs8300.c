@@ -45,6 +45,7 @@
 		.intr_enable_bit = 0,		\
 		.intr_status_bit = 0,		\
 		.intr_target_bit = 5,		\
+		.intr_target_width = 4,		\
 		.intr_target_kpss_val = 3,	\
 		.intr_raw_status_bit = 4,	\
 		.intr_polarity_bit = 1,		\
@@ -98,12 +99,6 @@
 		.intr_polarity_bit = -1,		\
 		.intr_detection_bit = -1,		\
 		.intr_detection_width = -1,		\
-	}
-
-#define QUP_I3C(qup_mode, qup_offset)			\
-	{						\
-		.mode = qup_mode,			\
-		.offset = qup_offset,			\
 	}
 
 #define QUP_I3C_6_MODE_OFFSET	0xaf000

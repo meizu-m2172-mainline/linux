@@ -280,7 +280,7 @@ static void print_hwparams(struct snd_pcm_substream *substream,
 		snd_pcm_format_width(params_format(p)) / 8);
 }
 
-#define INVALID_FORMAT	(__force snd_pcm_format_t)(-1)
+#define INVALID_FORMAT	-1
 
 static const snd_pcm_format_t hpi_to_alsa_formats[] = {
 	INVALID_FORMAT,		/* INVALID */
@@ -2933,13 +2933,16 @@ static void snd_asihpi_remove(struct pci_dev *pci_dev)
 }
 
 static const struct pci_device_id asihpi_pci_tbl[] = {
-	{HPI_PCI_VENDOR_ID_TI, HPI_PCI_DEV_ID_DSP6205,
-		HPI_PCI_VENDOR_ID_AUDIOSCIENCE, PCI_ANY_ID, 0, 0,
-		(kernel_ulong_t)HPI_6205},
-	{HPI_PCI_VENDOR_ID_TI, HPI_PCI_DEV_ID_PCI2040,
-		HPI_PCI_VENDOR_ID_AUDIOSCIENCE, PCI_ANY_ID, 0, 0,
-		(kernel_ulong_t)HPI_6000},
-	{0,}
+	{
+		PCI_DEVICE_SUB(HPI_PCI_VENDOR_ID_TI, HPI_PCI_DEV_ID_DSP6205,
+			       HPI_PCI_VENDOR_ID_AUDIOSCIENCE, PCI_ANY_ID),
+		.driver_data = (kernel_ulong_t)HPI_6205,
+	}, {
+		PCI_DEVICE_SUB(HPI_PCI_VENDOR_ID_TI, HPI_PCI_DEV_ID_PCI2040,
+			       HPI_PCI_VENDOR_ID_AUDIOSCIENCE, PCI_ANY_ID),
+		.driver_data = (kernel_ulong_t)HPI_6000,
+	},
+	{}
 };
 MODULE_DEVICE_TABLE(pci, asihpi_pci_tbl);
 

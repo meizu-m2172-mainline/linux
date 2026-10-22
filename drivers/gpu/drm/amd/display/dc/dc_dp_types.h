@@ -1146,6 +1146,7 @@ struct edp_psr_info {
 	union edp_psr_dpcd_caps psr_dpcd_caps;
 	uint8_t psr2_su_y_granularity_cap;
 	uint8_t force_psrsu_cap;
+	uint8_t psr_active_vtotal_control_cap;
 };
 
 struct replay_info {
@@ -1363,7 +1364,10 @@ union replay_enable_and_configuration {
 		unsigned char FREESYNC_PANEL_REPLAY_MODE              :1;
 		unsigned char TIMING_DESYNC_ERROR_VERIFICATION        :1;
 		unsigned char STATE_TRANSITION_ERROR_DETECTION        :1;
-		unsigned char RESERVED                                :5;
+		unsigned char FSFT_ENABLED                            :1;
+		unsigned char FRAME_SKIPPING_ERROR_DETECTION          :1;
+		unsigned char FRAME_SKIPPING_ENABLE                   :1;
+		unsigned char RESERVED                                :2;
 	} bits;
 	unsigned char raw;
 };

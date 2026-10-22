@@ -424,7 +424,7 @@ static void tegra_dc_remove_shared_plane(struct tegra_dc *dc,
 }
 
 static int tegra_shared_plane_atomic_check(struct drm_plane *plane,
-					   struct drm_atomic_state *state)
+					   struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
 										 plane);
@@ -482,7 +482,7 @@ static int tegra_shared_plane_atomic_check(struct drm_plane *plane,
 }
 
 static void tegra_shared_plane_atomic_disable(struct drm_plane *plane,
-					      struct drm_atomic_state *state)
+					      struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state,
 									   plane);
@@ -532,7 +532,7 @@ static inline u32 compute_phase_incr(fixed20_12 in, unsigned int out)
 }
 
 static void tegra_shared_plane_atomic_update(struct drm_plane *plane,
-					     struct drm_atomic_state *state)
+					     struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
 									   plane);
@@ -759,6 +759,7 @@ struct drm_plane *tegra_shared_plane_create(struct drm_device *drm,
 					    unsigned int index,
 					    enum drm_plane_type type)
 {
+	unsigned int blend_caps = BIT(DRM_MODE_BLEND_COVERAGE);
 	struct tegra_drm *tegra = drm->dev_private;
 	struct tegra_display_hub *hub = tegra->hub;
 	struct tegra_shared_plane *plane;
@@ -797,6 +798,7 @@ struct drm_plane *tegra_shared_plane_create(struct drm_device *drm,
 	}
 
 	drm_plane_helper_add(p, &tegra_shared_plane_helper_funcs);
+	drm_plane_create_blend_mode_property(p, blend_caps);
 	drm_plane_create_zpos_property(p, 0, 0, 255);
 
 	return p;
@@ -847,7 +849,7 @@ static const struct drm_private_state_funcs tegra_display_hub_state_funcs = {
 
 static struct tegra_display_hub_state *
 tegra_display_hub_get_state(struct tegra_display_hub *hub,
-			    struct drm_atomic_state *state)
+			    struct drm_atomic_commit *state)
 {
 	struct drm_private_state *priv;
 
@@ -859,7 +861,7 @@ tegra_display_hub_get_state(struct tegra_display_hub *hub,
 }
 
 int tegra_display_hub_atomic_check(struct drm_device *drm,
-				   struct drm_atomic_state *state)
+				   struct drm_atomic_commit *state)
 {
 	struct tegra_drm *tegra = drm->dev_private;
 	struct tegra_display_hub_state *hub_state;
@@ -925,7 +927,7 @@ static void tegra_display_hub_update(struct tegra_dc *dc)
 }
 
 void tegra_display_hub_atomic_commit(struct drm_device *drm,
-				     struct drm_atomic_state *state)
+				     struct drm_atomic_commit *state)
 {
 	struct tegra_drm *tegra = drm->dev_private;
 	struct tegra_display_hub *hub = tegra->hub;

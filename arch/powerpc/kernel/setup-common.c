@@ -68,6 +68,7 @@
 #include <asm/kasan.h>
 #include <asm/mce.h>
 #include <asm/systemcfg.h>
+#include <linux/kmsg_dump.h>
 
 #include "setup.h"
 
@@ -303,6 +304,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 				break;
 			case 0x004e: /* POWER9 bits 12-15 give chip type */
 			case 0x0080: /* POWER10 bit 12 gives SMT8/4 */
+			case 0x0083: /* POWER12 bit 12 gives SMT8/4 */
 				maj = (pvr >> 8) & 0x0F;
 				min = pvr & 0xFF;
 				break;
@@ -323,7 +325,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	seq_putc(m, '\n');
 
 	/* If this is the last cpu, print the summary */
-	if (cpumask_next(cpu_id, cpu_online_mask) >= nr_cpu_ids)
+	if (cpu_id == cpumask_last(cpu_online_mask))
 		show_cpuinfo_summary(m);
 
 	return 0;
@@ -331,10 +333,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 static void *c_start(struct seq_file *m, loff_t *pos)
 {
-	if (*pos == 0)	/* just in case, cpu 0 is not the first */
-		*pos = cpumask_first(cpu_online_mask);
-	else
-		*pos = cpumask_next(*pos - 1, cpu_online_mask);
+	*pos = cpumask_next(*pos - 1, cpu_online_mask);
 	if ((*pos) < nr_cpu_ids)
 		return (void *)(unsigned long)(*pos + 1);
 	return NULL;
@@ -743,6 +742,13 @@ static int ppc_panic_fadump_handler(struct notifier_block *this,
 	 * want interrupts to be hard disabled.
 	 */
 	hard_irq_disable();
+
+	/*
+	 * Invoke kmsg_dump (e.g., pstore) before crash_fadump() as fadump
+	 * runs before panic()'s kmsg_dump_desc() call.
+	 */
+	if (should_fadump_crash())
+		kmsg_dump_desc(KMSG_DUMP_PANIC, (char *)ptr);
 
 	/*
 	 * If firmware-assisted dump has been registered then trigger

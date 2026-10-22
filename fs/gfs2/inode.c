@@ -738,6 +738,13 @@ static int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 	inode = gfs2_dir_search(dir, &dentry->d_name, !S_ISREG(mode) || excl);
 	error = PTR_ERR(inode);
 	if (!IS_ERR(inode)) {
+		if (file && (file->f_flags & __O_REGULAR) &&
+		    !S_ISREG(inode->i_mode)) {
+			iput(inode);
+			inode = NULL;
+			error = -EFTYPE;
+			goto fail_gunlock;
+		}
 		if (S_ISDIR(inode->i_mode)) {
 			iput(inode);
 			inode = NULL;
@@ -956,15 +963,14 @@ fail:
  * @dir: The directory in which to create the file
  * @dentry: The dentry of the new file
  * @mode: The mode of the new file
- * @excl: Force fail if inode exists
  *
  * Returns: errno
  */
 
 static int gfs2_create(struct mnt_idmap *idmap, struct inode *dir,
-		       struct dentry *dentry, umode_t mode, bool excl)
+		       struct dentry *dentry, umode_t mode)
 {
-	return gfs2_create_inode(dir, dentry, NULL, S_IFREG | mode, 0, NULL, 0, excl);
+	return gfs2_create_inode(dir, dentry, NULL, S_IFREG | mode, 0, NULL, 0, 1);
 }
 
 /**
@@ -987,12 +993,8 @@ static struct dentry *__gfs2_lookup(struct inode *dir, struct dentry *dentry,
 	int error;
 
 	inode = gfs2_lookupi(dir, &dentry->d_name, 0);
-	if (inode == NULL) {
-		d_add(dentry, NULL);
-		return NULL;
-	}
-	if (IS_ERR(inode))
-		return ERR_CAST(inode);
+	if (inode == NULL || IS_ERR(inode))
+		return d_splice_alias(inode, dentry);
 
 	gl = GFS2_I(inode)->i_gl;
 	error = gfs2_glock_nq_init(gl, LM_ST_SHARED, LM_FLAG_ANY, &gh);
@@ -1348,7 +1350,7 @@ static struct dentry *gfs2_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 {
 	unsigned dsize = gfs2_max_stuffed_size(GFS2_I(dir));
 
-	return ERR_PTR(gfs2_create_inode(dir, dentry, NULL, S_IFDIR | mode, 0, NULL, dsize, 0));
+	return ERR_PTR(gfs2_create_inode(dir, dentry, NULL, mode, 0, NULL, dsize, 0));
 }
 
 /**

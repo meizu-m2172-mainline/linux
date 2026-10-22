@@ -4,12 +4,12 @@
  */
 
 #include <drm/drm_print.h>
+#include <drm/intel/step.h>
 
 #include "intel_de.h"
 #include "intel_display_core.h"
 #include "intel_display_regs.h"
 #include "intel_display_wa.h"
-#include "intel_step.h"
 
 static void gen11_display_wa_apply(struct intel_display *display)
 {
@@ -112,6 +112,8 @@ bool __intel_display_wa(struct intel_display *display, enum intel_display_wa wa,
 			DISPLAY_VERx100(display) == 1401;
 	case INTEL_DISPLAY_WA_14025769978:
 		return DISPLAY_VER(display) == 35;
+	case INTEL_DISPLAY_WA_14026643300:
+		return DISPLAY_VER(display) == 35;
 	case INTEL_DISPLAY_WA_15013987218:
 		return DISPLAY_VER(display) == 20;
 	case INTEL_DISPLAY_WA_15018326506:
@@ -136,6 +138,10 @@ bool __intel_display_wa(struct intel_display *display, enum intel_display_wa wa,
 		return DISPLAY_VER(display) == 20 &&
 			IS_DISPLAY_VERx100_STEP(display, 3000,
 						STEP_A0, STEP_B0);
+	case INTEL_DISPLAY_WA_16029024088:
+		return DISPLAY_VER(display) >= 35;
+	case INTEL_DISPLAY_WA_16030862157:
+		return DISPLAY_VER(display) == 35;
 	case INTEL_DISPLAY_WA_18034343758:
 		return DISPLAY_VER(display) == 20 ||
 			(display->platform.pantherlake &&

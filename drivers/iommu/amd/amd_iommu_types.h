@@ -39,22 +39,6 @@
 #define MMIO_RANGE_OFFSET	0x0c
 #define MMIO_MISC_OFFSET	0x10
 
-/* Masks, shifts and macros to parse the device range capability */
-#define MMIO_RANGE_LD_MASK	0xff000000
-#define MMIO_RANGE_FD_MASK	0x00ff0000
-#define MMIO_RANGE_BUS_MASK	0x0000ff00
-#define MMIO_RANGE_LD_SHIFT	24
-#define MMIO_RANGE_FD_SHIFT	16
-#define MMIO_RANGE_BUS_SHIFT	8
-#define MMIO_GET_LD(x)  (((x) & MMIO_RANGE_LD_MASK) >> MMIO_RANGE_LD_SHIFT)
-#define MMIO_GET_FD(x)  (((x) & MMIO_RANGE_FD_MASK) >> MMIO_RANGE_FD_SHIFT)
-#define MMIO_GET_BUS(x) (((x) & MMIO_RANGE_BUS_MASK) >> MMIO_RANGE_BUS_SHIFT)
-#define MMIO_MSI_NUM(x)	((x) & 0x1f)
-
-/* Flag masks for the AMD IOMMU exclusion range */
-#define MMIO_EXCL_ENABLE_MASK 0x01ULL
-#define MMIO_EXCL_ALLOW_MASK  0x02ULL
-
 /* Used offsets into the MMIO space */
 #define MMIO_DEV_TABLE_OFFSET   0x0000
 #define MMIO_CMD_BUF_OFFSET     0x0008
@@ -117,6 +101,7 @@
 #define FEATURE_SNPAVICSUP_GAM(x) \
 	(FIELD_GET(FEATURE_SNPAVICSUP, x) == 0x1)
 #define FEATURE_HT_RANGE_IGNORE		BIT_ULL(11)
+#define FEATURE_SNP_PAGE_MODE0_SUP	BIT_ULL(13)
 
 #define FEATURE_NUM_INT_REMAP_SUP	GENMASK_ULL(9, 8)
 #define FEATURE_NUM_INT_REMAP_SUP_2K(x) \
@@ -163,6 +148,8 @@
 #define EVENT_FLAGS_SHIFT	0x10
 #define EVENT_FLAG_RW		0x020
 #define EVENT_FLAG_I		0x008
+#define EVENT_FLAG_PPR_RX	0x001
+#define EVENT_FLAG_PPR_GN	0x200
 
 /* feature control bits */
 #define CONTROL_IOMMU_EN	0
@@ -221,7 +208,7 @@
 #define PPR_STATUS_MASK			0xf
 #define PPR_STATUS_SHIFT		12
 
-#define CMD_INV_IOMMU_ALL_PAGES_ADDRESS	0x7fffffffffffffffULL
+#define CMD_INV_IOMMU_ALL_PAGES_ADDRESS	0x7ffffffffffff000ULL
 
 /* macros and definitions for device table entries */
 #define DEV_ENTRY_VALID         0x00
@@ -231,7 +218,6 @@
 #define DEV_ENTRY_IR            0x3d
 #define DEV_ENTRY_IW            0x3e
 #define DEV_ENTRY_NO_PAGE_FAULT	0x62
-#define DEV_ENTRY_EX            0x67
 #define DEV_ENTRY_SYSMGT1       0x68
 #define DEV_ENTRY_SYSMGT2       0x69
 #define DTE_DATA1_SYSMGT_MASK	GENMASK_ULL(41, 40)
@@ -249,7 +235,6 @@
 
 /* constants to configure the command buffer */
 #define CMD_BUFFER_SIZE    8192
-#define CMD_BUFFER_UNINITIALIZED 1
 #define CMD_BUFFER_ENTRIES 512
 #define MMIO_CMD_SIZE_SHIFT 56
 #define MMIO_CMD_SIZE_512 (0x9ULL << MMIO_CMD_SIZE_SHIFT)
@@ -285,7 +270,8 @@
 #define PPR_REQ_TYPE(x)		(((x) >> 60) & 0xfULL)
 #define PPR_FLAGS(x)		(((x) >> 48) & 0xfffULL)
 #define PPR_DEVID(x)		((x) & 0xffffULL)
-#define PPR_TAG(x)		(((x) >> 32) & 0x3ffULL)
+#define PPR_TAG(x)		(((x) >> 32) & 0x1ffULL)
+#define PPR_TAG_LAST_PAGE(x)	(((x) >> 32) & 0x200ULL)
 #define PPR_PASID1(x)		(((x) >> 16) & 0xffffULL)
 #define PPR_PASID2(x)		(((x) >> 42) & 0xfULL)
 #define PPR_PASID(x)		((PPR_PASID2(x) << 16) | PPR_PASID1(x))
@@ -304,9 +290,6 @@
 #define GA_REQ_TYPE(x)		(((x) >> 60) & 0xfULL)
 
 #define GA_GUEST_NR		0x1
-
-#define IOMMU_IN_ADDR_BIT_SIZE  52
-#define IOMMU_OUT_ADDR_BIT_SIZE 52
 
 /*
  * This bitmap is used to advertise the page sizes our hardware support
@@ -389,8 +372,6 @@
 #define IOMMU_PROT_IR 0x01
 #define IOMMU_PROT_IW 0x02
 
-#define IOMMU_UNITY_MAP_FLAG_EXCL_RANGE	(1 << 2)
-
 /* IOMMU capabilities */
 #define IOMMU_CAP_IOTLB   24
 #define IOMMU_CAP_NPCACHE 26
@@ -400,6 +381,7 @@
 #define IOMMU_IVINFO_OFFSET     36
 #define IOMMU_IVINFO_EFRSUP     BIT(0)
 #define IOMMU_IVINFO_DMA_REMAP  BIT(1)
+#define IOMMU_IVINFO_VASIZE	GENMASK_ULL(21, 15)
 
 /* IOMMU Feature Reporting Field (for IVHD type 10h */
 #define IOMMU_FEAT_GASUP_SHIFT	6
@@ -424,6 +406,9 @@ extern bool amd_iommu_dump;
 		if (amd_iommu_dump)				\
 			pr_info(format, ## arg);	\
 	} while(0);
+
+/* SNP page mode 0 support */
+extern bool amd_iommu_snp_mode0_sup;
 
 /* global flag if IOMMUs cache non-present entries */
 extern bool amd_iommu_np_cache;
@@ -685,11 +670,6 @@ struct amd_iommu {
 	/* pci domain of this IOMMU */
 	struct amd_iommu_pci_seg *pci_seg;
 
-	/* start of exclusion range of that IOMMU */
-	u64 exclusion_start;
-	/* length of exclusion range of that IOMMU */
-	u64 exclusion_length;
-
 	/* command buffer virtual address */
 	u8 *cmd_buf;
 	u32 cmd_buf_head;
@@ -948,12 +928,13 @@ static inline int get_hpet_devid(int id)
 }
 
 enum amd_iommu_intr_mode_type {
-	AMD_IOMMU_GUEST_IR_LEGACY,
-
-	/* This mode is not visible to users. It is used when
-	 * we cannot fully enable vAPIC and fallback to only support
-	 * legacy interrupt remapping via 128-bit IRTE.
+	/*
+	 * The legacy format mode is not visible to users to prevent the user
+	 * from crashing x2APIC systems, which for all intents and purposes
+	 * require 128-bit IRTEs.   The legacy format will be forced as needed
+	 * when hardware doesn't support 128-bit IRTEs.
 	 */
+	AMD_IOMMU_GUEST_IR_LEGACY,
 	AMD_IOMMU_GUEST_IR_LEGACY_GA,
 	AMD_IOMMU_GUEST_IR_VAPIC,
 };

@@ -335,7 +335,7 @@ static int acpi_osc_handshake(acpi_handle handle, const char *uuid_str,
 		.length = bufsize * sizeof(u32),
 	};
 	struct acpi_buffer output;
-	u32 *retbuf, test;
+	u32 *retbuf, test, errors;
 	guid_t guid;
 	int ret, i;
 
@@ -395,10 +395,18 @@ static int acpi_osc_handshake(acpi_handle handle, const char *uuid_str,
 	 * Clear the feature bits in capbuf[] that have not been acknowledged.
 	 * After that, capbuf[] contains the resultant feature mask.
 	 */
-	for (i = OSC_QUERY_DWORD + 1; i < bufsize; i++)
+	for (i = OSC_QUERY_DWORD + 1, test = 0; i < bufsize; i++) {
+		test |= capbuf[i] & ~retbuf[i];
 		capbuf[i] &= retbuf[i];
+	}
 
-	if (retbuf[OSC_QUERY_DWORD] & OSC_ERROR_MASK) {
+	errors = retbuf[OSC_QUERY_DWORD] & OSC_ERROR_MASK;
+	/*
+	 * Some platforms set OSC_CAPABILITIES_MASK_ERROR even though they
+	 * acknowledge all of the requested features, so avoid complaining in
+	 * those cases unless any other error bits are also set.
+	 */
+	if (errors && (test || errors != OSC_CAPABILITIES_MASK_ERROR)) {
 		/*
 		 * Complain about the unexpected errors and print diagnostic
 		 * information related to them.
@@ -620,41 +628,6 @@ static void acpi_bus_notify(acpi_handle handle, u32 type, void *data)
 	acpi_evaluate_ost(handle, type, ACPI_OST_SC_NON_SPECIFIC_FAILURE, NULL);
 }
 
-static void acpi_notify_device(acpi_handle handle, u32 event, void *data)
-{
-	struct acpi_device *device = data;
-	struct acpi_driver *acpi_drv = to_acpi_driver(device->dev.driver);
-
-	acpi_drv->ops.notify(device, event);
-}
-
-static int acpi_device_install_notify_handler(struct acpi_device *device,
-					      struct acpi_driver *acpi_drv)
-{
-	u32 type = acpi_drv->flags & ACPI_DRIVER_ALL_NOTIFY_EVENTS ?
-				ACPI_ALL_NOTIFY : ACPI_DEVICE_NOTIFY;
-	acpi_status status;
-
-	status = acpi_install_notify_handler(device->handle, type,
-					     acpi_notify_device, device);
-	if (ACPI_FAILURE(status))
-		return -EINVAL;
-
-	return 0;
-}
-
-static void acpi_device_remove_notify_handler(struct acpi_device *device,
-					      struct acpi_driver *acpi_drv)
-{
-	u32 type = acpi_drv->flags & ACPI_DRIVER_ALL_NOTIFY_EVENTS ?
-				ACPI_ALL_NOTIFY : ACPI_DEVICE_NOTIFY;
-
-	acpi_remove_notify_handler(device->handle, type,
-				   acpi_notify_device);
-
-	acpi_os_wait_events_complete();
-}
-
 int acpi_dev_install_notify_handler(struct acpi_device *adev,
 				    u32 handler_type,
 				    acpi_notify_handler handler, void *context)
@@ -678,6 +651,73 @@ void acpi_dev_remove_notify_handler(struct acpi_device *adev,
 	acpi_os_wait_events_complete();
 }
 EXPORT_SYMBOL_GPL(acpi_dev_remove_notify_handler);
+
+struct acpi_notify_handler_devres {
+	struct acpi_device *adev;
+	acpi_notify_handler handler;
+	u32 handler_type;
+};
+
+static void devm_acpi_notify_handler_release(struct device *dev, void *res)
+{
+	struct acpi_notify_handler_devres *dr = res;
+
+	acpi_dev_remove_notify_handler(dr->adev, dr->handler_type, dr->handler);
+}
+
+/**
+ * devm_acpi_install_notify_handler - Install an ACPI notify handler for a
+ *				      managed device
+ * @dev: Device to install a notify handler for
+ * @handler_type: Type of the notify handler
+ * @handler: Handler function to install
+ * @context: Data passed back to the handler function
+ *
+ * This function performs the same function as acpi_dev_install_notify_handler()
+ * called for the ACPI companion of @dev with the same @handler_type, @handler,
+ * and @context arguments, but the ACPI notify handler installed by it will be
+ * automatically removed on driver detach.
+ *
+ * Callers should ensure that all resources used by @handler have been allocated
+ * prior to invoking this function, in which case those resources should be
+ * devres-managed so that they won't be released before the notify handler
+ * removal.  Otherwise, special synchronization between @handler and the
+ * management of those resources is required.
+ *
+ * When the request fails, an error message is printed.  Don't add extra error
+ * messages at the call sites.
+ *
+ * Return: 0 on success or a negative error number.
+ */
+int devm_acpi_install_notify_handler(struct device *dev, u32 handler_type,
+				     acpi_notify_handler handler, void *context)
+{
+	struct acpi_notify_handler_devres *dr;
+	struct acpi_device *adev;
+	int ret;
+
+	adev = ACPI_COMPANION(dev);
+	if (!adev)
+		return dev_err_probe(dev, -ENODEV, "No ACPI companion\n");
+
+	dr = devres_alloc(devm_acpi_notify_handler_release, sizeof(*dr), GFP_KERNEL);
+	if (!dr)
+		return -ENOMEM;
+
+	ret = acpi_dev_install_notify_handler(adev, handler_type, handler, context);
+	if (ret) {
+		devres_free(dr);
+		return dev_err_probe(dev, ret, "Failed to install an ACPI notify handler\n");
+	}
+
+	dr->adev = adev;
+	dr->handler = handler;
+	dr->handler_type = handler_type;
+	devres_add(dev, dr);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(devm_acpi_install_notify_handler);
 
 /* Handle events targeting \_SB device (at present only graceful shutdown) */
 
@@ -734,30 +774,52 @@ static int __init acpi_setup_sb_notify_handler(void)
                              Device Matching
    -------------------------------------------------------------------------- */
 
+
+static struct device *primary_physical_device(struct acpi_device *adev)
+{
+	struct acpi_device_physical_node *pn;
+
+	pn = list_first_entry_or_null(&adev->physical_node_list,
+				      struct acpi_device_physical_node, node);
+	if (pn)
+		return pn->dev;
+
+	return NULL;
+}
+
 /**
- * acpi_get_first_physical_node - Get first physical node of an ACPI device
+ * acpi_bus_get_primary_device - Get first physical device for a given ACPI one
+ * @adev: ACPI device to get the first physical device for.
+ *
+ * Find the first physical device for which @adev is the ACPI companion and
+ * reference count it if present.
+ *
+ * Return: Pointer to the first physical counterpart of @adev or NULL if there
+ * are none.  Callers are responsible for invoking put_device() on the returned
+ * device.
+ */
+struct device *acpi_bus_get_primary_device(struct acpi_device *adev)
+{
+	if (!adev)
+		return NULL;
+
+	guard(mutex)(&adev->physical_node_lock);
+
+	return get_device(primary_physical_device(adev));
+}
+EXPORT_SYMBOL_GPL(acpi_bus_get_primary_device);
+
+/**
+ * acpi_get_first_physical_node - Find first physical node of an ACPI device
  * @adev:	ACPI device in question
  *
  * Return: First physical node of ACPI device @adev
  */
 struct device *acpi_get_first_physical_node(struct acpi_device *adev)
 {
-	struct mutex *physical_node_lock = &adev->physical_node_lock;
-	struct device *phys_dev;
+	guard(mutex)(&adev->physical_node_lock);
 
-	mutex_lock(physical_node_lock);
-	if (list_empty(&adev->physical_node_list)) {
-		phys_dev = NULL;
-	} else {
-		const struct acpi_device_physical_node *node;
-
-		node = list_first_entry(&adev->physical_node_list,
-					struct acpi_device_physical_node, node);
-
-		phys_dev = node->dev;
-	}
-	mutex_unlock(physical_node_lock);
-	return phys_dev;
+	return primary_physical_device(adev);
 }
 EXPORT_SYMBOL_GPL(acpi_get_first_physical_node);
 
@@ -1055,56 +1117,12 @@ bool acpi_driver_match_device(struct device *dev,
 EXPORT_SYMBOL_GPL(acpi_driver_match_device);
 
 /* --------------------------------------------------------------------------
-                              ACPI Driver Management
-   -------------------------------------------------------------------------- */
-
-/**
- * __acpi_bus_register_driver - register a driver with the ACPI bus
- * @driver: driver being registered
- * @owner: owning module/driver
- *
- * Registers a driver with the ACPI bus.  Searches the namespace for all
- * devices that match the driver's criteria and binds.  Returns zero for
- * success or a negative error status for failure.
- */
-int __acpi_bus_register_driver(struct acpi_driver *driver, struct module *owner)
-{
-	if (acpi_disabled)
-		return -ENODEV;
-	driver->drv.name = driver->name;
-	driver->drv.bus = &acpi_bus_type;
-	driver->drv.owner = owner;
-
-	return driver_register(&driver->drv);
-}
-
-EXPORT_SYMBOL(__acpi_bus_register_driver);
-
-/**
- * acpi_bus_unregister_driver - unregisters a driver with the ACPI bus
- * @driver: driver to unregister
- *
- * Unregisters a driver with the ACPI bus.  Searches the namespace for all
- * devices that match the driver's criteria and unbinds.
- */
-void acpi_bus_unregister_driver(struct acpi_driver *driver)
-{
-	driver_unregister(&driver->drv);
-}
-
-EXPORT_SYMBOL(acpi_bus_unregister_driver);
-
-/* --------------------------------------------------------------------------
                               ACPI Bus operations
    -------------------------------------------------------------------------- */
 
 static int acpi_bus_match(struct device *dev, const struct device_driver *drv)
 {
-	struct acpi_device *acpi_dev = to_acpi_device(dev);
-	const struct acpi_driver *acpi_drv = to_acpi_driver(drv);
-
-	return acpi_dev->flags.match_driver
-		&& !acpi_match_device_ids(acpi_dev, acpi_drv->ids);
+	return 0;
 }
 
 static int acpi_device_uevent(const struct device *dev, struct kobj_uevent_env *env)
@@ -1112,66 +1130,9 @@ static int acpi_device_uevent(const struct device *dev, struct kobj_uevent_env *
 	return __acpi_device_uevent_modalias(to_acpi_device(dev), env);
 }
 
-static int acpi_device_probe(struct device *dev)
-{
-	struct acpi_device *acpi_dev = to_acpi_device(dev);
-	struct acpi_driver *acpi_drv = to_acpi_driver(dev->driver);
-	int ret;
-
-	if (acpi_dev->handler && !acpi_is_pnp_device(acpi_dev))
-		return -EINVAL;
-
-	if (!acpi_drv->ops.add)
-		return -ENOSYS;
-
-	ret = acpi_drv->ops.add(acpi_dev);
-	if (ret) {
-		acpi_dev->driver_data = NULL;
-		return ret;
-	}
-
-	pr_debug("Driver [%s] successfully bound to device [%s]\n",
-		 acpi_drv->name, acpi_dev->pnp.bus_id);
-
-	if (acpi_drv->ops.notify) {
-		ret = acpi_device_install_notify_handler(acpi_dev, acpi_drv);
-		if (ret) {
-			if (acpi_drv->ops.remove)
-				acpi_drv->ops.remove(acpi_dev);
-
-			acpi_dev->driver_data = NULL;
-			return ret;
-		}
-	}
-
-	pr_debug("Found driver [%s] for device [%s]\n", acpi_drv->name,
-		 acpi_dev->pnp.bus_id);
-
-	get_device(dev);
-	return 0;
-}
-
-static void acpi_device_remove(struct device *dev)
-{
-	struct acpi_device *acpi_dev = to_acpi_device(dev);
-	struct acpi_driver *acpi_drv = to_acpi_driver(dev->driver);
-
-	if (acpi_drv->ops.notify)
-		acpi_device_remove_notify_handler(acpi_dev, acpi_drv);
-
-	if (acpi_drv->ops.remove)
-		acpi_drv->ops.remove(acpi_dev);
-
-	acpi_dev->driver_data = NULL;
-
-	put_device(dev);
-}
-
 const struct bus_type acpi_bus_type = {
 	.name		= "acpi",
 	.match		= acpi_bus_match,
-	.probe		= acpi_device_probe,
-	.remove		= acpi_device_remove,
 	.uevent		= acpi_device_uevent,
 };
 
@@ -1180,6 +1141,21 @@ int acpi_bus_for_each_dev(int (*fn)(struct device *, void *), void *data)
 	return bus_for_each_dev(&acpi_bus_type, NULL, data, fn);
 }
 EXPORT_SYMBOL_GPL(acpi_bus_for_each_dev);
+
+/**
+ * acpi_bus_find_device_by_name() - Locate an ACPI device by its name
+ * @name: Name of the device to match
+ *
+ * The caller is responsible for calling put_device() on the returned object.
+ *
+ * Returns:
+ * New reference to the matched device or NULL if the device can't be found.
+ */
+struct device *acpi_bus_find_device_by_name(const char *name)
+{
+	return bus_find_device_by_name(&acpi_bus_type, NULL, name);
+}
+EXPORT_SYMBOL_GPL(acpi_bus_find_device_by_name);
 
 struct acpi_dev_walk_context {
 	int (*fn)(struct acpi_device *, void *);

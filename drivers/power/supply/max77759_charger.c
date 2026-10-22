@@ -14,7 +14,6 @@
 #include <linux/linear_range.h>
 #include <linux/mfd/max77759.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -533,9 +532,7 @@ static int max77759_init_irqhandler(struct max77759_charger *chg)
 		ret = devm_request_threaded_irq(dev, chg->irqs[i], NULL,
 						thread_fn, 0, name, chg);
 		if (ret)
-			return dev_err_probe(dev, ret,
-					     "Unable to register irq handler for %s\n",
-					     chgr_irqs_str[i]);
+			return ret;
 	}
 
 	return 0;
@@ -754,7 +751,7 @@ static int max77759_charger_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id max77759_charger_id[] = {
-	{ .name = "max77759-charger", },
+	{ .name = "max77759-charger" },
 	{ }
 };
 MODULE_DEVICE_TABLE(platform, max77759_charger_id);

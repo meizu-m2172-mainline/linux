@@ -2,7 +2,10 @@
 
 use kernel::{
     drm,
-    drm::{gem, gem::BaseObject},
+    drm::{
+        gem,
+        gem::BaseObject, //
+    },
     page,
     prelude::*,
     sync::aref::ARef,
@@ -34,7 +37,7 @@ impl NovaObject {
         }
         let aligned_size = page::page_align(size).ok_or(EINVAL)?;
 
-        gem::Object::new(dev, aligned_size, ())
+        gem::Object::<Self>::new(dev, aligned_size, ())
     }
 
     /// Look up a GEM object handle for a `File` and return an `ObjectRef` for it.

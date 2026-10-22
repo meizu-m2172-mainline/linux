@@ -2,6 +2,7 @@
 #include "io_uring.h"
 #include "wait.h"
 #include "loop.h"
+#include "tctx.h"
 
 static inline int io_loop_nr_cqes(const struct io_ring_ctx *ctx,
 				  const struct iou_loop_params *lp)
@@ -49,7 +50,7 @@ static int __io_run_loop(struct io_ring_ctx *ctx)
 		if (unlikely(!ctx->loop_step))
 			return -EFAULT;
 
-		step_res = ctx->loop_step(ctx, &lp);
+		step_res = ctx->loop_step(io_loop_mangle_ctx(ctx), &lp);
 		if (step_res == IOU_LOOP_STOP)
 			break;
 		if (step_res != IOU_LOOP_CONTINUE)
@@ -80,6 +81,10 @@ static int __io_run_loop(struct io_ring_ctx *ctx)
 int io_run_loop(struct io_ring_ctx *ctx)
 {
 	int ret;
+
+	ret = io_uring_add_tctx_node(ctx);
+	if (unlikely(ret))
+		return ret;
 
 	if (!io_allowed_run_tw(ctx))
 		return -EEXIST;

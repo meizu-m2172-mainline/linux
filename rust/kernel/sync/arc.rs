@@ -154,7 +154,7 @@ impl<T: ?Sized> ArcInner<T> {
     ///
     /// # Safety
     ///
-    /// `ptr` must have been returned by a previous call to [`Arc::into_raw`], and the `Arc` must
+    /// `ptr` must have been returned by a previous call to [`Arc::into_raw`], and the [`Arc`] must
     /// not yet have been destroyed.
     unsafe fn container_of(ptr: *const T) -> NonNull<ArcInner<T>> {
         let refcount_layout = Layout::new::<Refcount>();
@@ -253,7 +253,7 @@ impl<T: ?Sized> Arc<T> {
 
     /// Convert the [`Arc`] into a raw pointer.
     ///
-    /// The raw pointer has ownership of the refcount that this Arc object owned.
+    /// The raw pointer has ownership of the refcount that this [`Arc`] object owned.
     pub fn into_raw(self) -> *const T {
         let ptr = self.ptr.as_ptr();
         core::mem::forget(self);
@@ -261,7 +261,7 @@ impl<T: ?Sized> Arc<T> {
         unsafe { core::ptr::addr_of!((*ptr).data) }
     }
 
-    /// Return a raw pointer to the data in this arc.
+    /// Return a raw pointer to the data in this [`Arc`].
     pub fn as_ptr(this: &Self) -> *const T {
         let ptr = this.ptr.as_ptr();
 
@@ -305,7 +305,7 @@ impl<T: ?Sized> Arc<T> {
 
     /// Converts this [`Arc`] into a [`UniqueArc`], or destroys it if it is not unique.
     ///
-    /// When this destroys the `Arc`, it does so while properly avoiding races. This means that
+    /// When this destroys the [`Arc`], it does so while properly avoiding races. This means that
     /// this method will never call the destructor of the value.
     ///
     /// # Examples
@@ -345,11 +345,11 @@ impl<T: ?Sized> Arc<T> {
 
         // If the refcount reaches a non-zero value, then we have destroyed this `Arc` and will
         // return without further touching the `Arc`. If the refcount reaches zero, then there are
-        // no other arcs, and we can create a `UniqueArc`.
+        // no other `Arc`s, and we can create a `UniqueArc`.
         if refcount.dec_and_test() {
             refcount.set(1);
 
-            // INVARIANT: We own the only refcount to this arc, so we may create a `UniqueArc`. We
+            // INVARIANT: We own the only refcount to this `Arc`, so we may create a `UniqueArc`. We
             // must pin the `UniqueArc` because the values was previously in an `Arc`, and they pin
             // their values.
             Some(Pin::from(UniqueArc {
@@ -712,20 +712,22 @@ impl<T> InPlaceInit<T> for UniqueArc<T> {
 impl<T> InPlaceWrite<T> for UniqueArc<MaybeUninit<T>> {
     type Initialized = UniqueArc<T>;
 
+    #[inline]
     fn write_init<E>(mut self, init: impl Init<T, E>) -> Result<Self::Initialized, E> {
         let slot = self.as_mut_ptr();
         // SAFETY: When init errors/panics, slot will get deallocated but not dropped,
         // slot is valid.
-        unsafe { init.__init(slot)? };
+        unsafe { pin_init::raw_try_init(slot, init)? };
         // SAFETY: All fields have been initialized.
         Ok(unsafe { self.assume_init() })
     }
 
+    #[inline]
     fn write_pin_init<E>(mut self, init: impl PinInit<T, E>) -> Result<Pin<Self::Initialized>, E> {
         let slot = self.as_mut_ptr();
         // SAFETY: When init errors/panics, slot will get deallocated but not dropped,
         // slot is valid and will not be moved, because we pin it later.
-        unsafe { init.__pinned_init(slot)? };
+        unsafe { pin_init::raw_try_init(slot, init)? };
         // SAFETY: All fields have been initialized.
         Ok(unsafe { self.assume_init() }.into())
     }
@@ -758,6 +760,14 @@ impl<T> UniqueArc<T> {
     }
 }
 
+impl<T: ?Sized> UniqueArc<T> {
+    /// Return a raw pointer to the data in this [`UniqueArc`].
+    #[inline]
+    pub fn as_ptr(this: &Self) -> *const T {
+        Arc::as_ptr(&this.inner)
+    }
+}
+
 impl<T> UniqueArc<MaybeUninit<T>> {
     /// Converts a `UniqueArc<MaybeUninit<T>>` into a `UniqueArc<T>` by writing a value into it.
     pub fn write(mut self, value: T) -> UniqueArc<T> {
@@ -782,9 +792,10 @@ impl<T> UniqueArc<MaybeUninit<T>> {
     }
 
     /// Initialize `self` using the given initializer.
+    #[inline]
     pub fn init_with<E>(mut self, init: impl Init<T, E>) -> core::result::Result<UniqueArc<T>, E> {
         // SAFETY: The supplied pointer is valid for initialization.
-        match unsafe { init.__init(self.as_mut_ptr()) } {
+        match unsafe { pin_init::raw_try_init(self.as_mut_ptr(), init) } {
             // SAFETY: Initialization completed successfully.
             Ok(()) => Ok(unsafe { self.assume_init() }),
             Err(err) => Err(err),
@@ -792,13 +803,14 @@ impl<T> UniqueArc<MaybeUninit<T>> {
     }
 
     /// Pin-initialize `self` using the given pin-initializer.
+    #[inline]
     pub fn pin_init_with<E>(
         mut self,
         init: impl PinInit<T, E>,
     ) -> core::result::Result<Pin<UniqueArc<T>>, E> {
         // SAFETY: The supplied pointer is valid for initialization and we will later pin the value
         // to ensure it does not move.
-        match unsafe { init.__pinned_init(self.as_mut_ptr()) } {
+        match unsafe { pin_init::raw_try_init(self.as_mut_ptr(), init) } {
             // SAFETY: Initialization completed successfully.
             Ok(()) => Ok(unsafe { self.assume_init() }.into()),
             Err(err) => Err(err),

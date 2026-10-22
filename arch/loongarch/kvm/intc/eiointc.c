@@ -17,7 +17,8 @@ static void eiointc_set_sw_coreisr(struct loongarch_eiointc *s)
 		if (!(s->status & BIT(EIOINTC_ENABLE_INT_ENCODE))) {
 			ipnum = count_trailing_zeros(ipnum);
 			ipnum = ipnum < 4 ? ipnum : 0;
-		}
+		} else
+			ipnum = ipnum < LOONGSON_IP_NUM ? ipnum : 0;
 
 		cpuid = ((u8 *)s->coremap)[irq];
 		vcpu = kvm_get_vcpu_by_cpuid(s->kvm, cpuid);
@@ -36,18 +37,18 @@ static void eiointc_update_irq(struct loongarch_eiointc *s, int irq, int level)
 {
 	int ipnum, cpu, found;
 	struct kvm_vcpu *vcpu;
-	struct kvm_interrupt vcpu_irq;
 
 	ipnum = (s->ipmap >> (irq / 32 * 8)) & 0xff;
 	if (!(s->status & BIT(EIOINTC_ENABLE_INT_ENCODE))) {
 		ipnum = count_trailing_zeros(ipnum);
 		ipnum = ipnum < 4 ? ipnum : 0;
-	}
+	} else
+		ipnum = ipnum < LOONGSON_IP_NUM ? ipnum : 0;
 
 	cpu = s->sw_coremap[irq];
 	vcpu = kvm_get_vcpu_by_id(s->kvm, cpu);
 	if (unlikely(vcpu == NULL)) {
-		kvm_err("%s: invalid target cpu: %d\n", __func__, cpu);
+		kvm_pr_unimpl("%s: invalid target cpu: %d\n", __func__, cpu);
 		return;
 	}
 
@@ -67,8 +68,11 @@ static void eiointc_update_irq(struct loongarch_eiointc *s, int irq, int level)
 	if (found < EIOINTC_IRQS)
 		return; /* other irq is handling, needn't update parent irq */
 
-	vcpu_irq.irq = level ? (INT_HWI0 + ipnum) : -(INT_HWI0 + ipnum);
-	kvm_vcpu_ioctl_interrupt(vcpu, &vcpu_irq);
+	if (level)
+		kvm_queue_irq(vcpu, INT_HWI0 + ipnum);
+	else
+		kvm_dequeue_irq(vcpu, INT_HWI0 + ipnum);
+	kvm_vcpu_kick(vcpu);
 }
 
 static inline void eiointc_update_sw_coremap(struct loongarch_eiointc *s,
@@ -165,12 +169,12 @@ static int kvm_eiointc_read(struct kvm_vcpu *vcpu,
 	struct loongarch_eiointc *eiointc = vcpu->kvm->arch.eiointc;
 
 	if (!eiointc) {
-		kvm_err("%s: eiointc irqchip not valid!\n", __func__);
+		kvm_pr_unimpl("%s: eiointc irqchip not valid!\n", __func__);
 		return 0;
 	}
 
 	if (addr & (len - 1)) {
-		kvm_err("%s: eiointc not aligned addr %llx len %d\n", __func__, addr, len);
+		kvm_pr_unimpl("%s: eiointc not aligned addr %llx len %d\n", __func__, addr, len);
 		return 0;
 	}
 
@@ -297,12 +301,12 @@ static int kvm_eiointc_write(struct kvm_vcpu *vcpu,
 	struct loongarch_eiointc *eiointc = vcpu->kvm->arch.eiointc;
 
 	if (!eiointc) {
-		kvm_err("%s: eiointc irqchip not valid!\n", __func__);
+		kvm_pr_unimpl("%s: eiointc irqchip not valid!\n", __func__);
 		return 0;
 	}
 
 	if (addr & (len - 1)) {
-		kvm_err("%s: eiointc not aligned addr %llx len %d\n", __func__, addr, len);
+		kvm_pr_unimpl("%s: eiointc not aligned addr %llx len %d\n", __func__, addr, len);
 		return 0;
 	}
 
@@ -345,7 +349,7 @@ static int kvm_eiointc_virt_read(struct kvm_vcpu *vcpu,
 	struct loongarch_eiointc *eiointc = vcpu->kvm->arch.eiointc;
 
 	if (!eiointc) {
-		kvm_err("%s: eiointc irqchip not valid!\n", __func__);
+		kvm_pr_unimpl("%s: eiointc irqchip not valid!\n", __func__);
 		return 0;
 	}
 
@@ -375,7 +379,7 @@ static int kvm_eiointc_virt_write(struct kvm_vcpu *vcpu,
 	struct loongarch_eiointc *eiointc = vcpu->kvm->arch.eiointc;
 
 	if (!eiointc) {
-		kvm_err("%s: eiointc irqchip not valid!\n", __func__);
+		kvm_pr_unimpl("%s: eiointc irqchip not valid!\n", __func__);
 		return 0;
 	}
 
@@ -502,7 +506,7 @@ static int kvm_eiointc_regs_access(struct kvm_device *dev,
 		p = (void *)s->coremap + offset * 4;
 		break;
 	default:
-		kvm_err("%s: unknown eiointc register, addr = %d\n", __func__, addr);
+		kvm_pr_unimpl("%s: unknown eiointc register, addr = %d\n", __func__, addr);
 		return -EINVAL;
 	}
 
@@ -546,7 +550,7 @@ static int kvm_eiointc_sw_status_access(struct kvm_device *dev,
 		p = &s->status;
 		break;
 	default:
-		kvm_err("%s: unknown eiointc register, addr = %d\n", __func__, addr);
+		kvm_pr_unimpl("%s: unknown eiointc register, addr = %d\n", __func__, addr);
 		return -EINVAL;
 	}
 	spin_lock_irqsave(&s->lock, flags);
@@ -645,10 +649,14 @@ static int kvm_eiointc_create(struct kvm_device *dev, u32 type)
 
 	device = &s->device_vext;
 	kvm_iodevice_init(device, &kvm_eiointc_virt_ops);
+	mutex_lock(&kvm->slots_lock);
 	ret = kvm_io_bus_register_dev(kvm, KVM_IOCSR_BUS,
 			EIOINTC_VIRT_BASE, EIOINTC_VIRT_SIZE, device);
+	mutex_unlock(&kvm->slots_lock);
 	if (ret < 0) {
+		mutex_lock(&kvm->slots_lock);
 		kvm_io_bus_unregister_dev(kvm, KVM_IOCSR_BUS, &s->device);
+		mutex_unlock(&kvm->slots_lock);
 		kfree(s);
 		return ret;
 	}
@@ -667,8 +675,10 @@ static void kvm_eiointc_destroy(struct kvm_device *dev)
 
 	kvm = dev->kvm;
 	eiointc = kvm->arch.eiointc;
+	mutex_lock(&kvm->slots_lock);
 	kvm_io_bus_unregister_dev(kvm, KVM_IOCSR_BUS, &eiointc->device);
 	kvm_io_bus_unregister_dev(kvm, KVM_IOCSR_BUS, &eiointc->device_vext);
+	mutex_unlock(&kvm->slots_lock);
 	kfree(eiointc);
 	kfree(dev);
 }
@@ -684,4 +694,9 @@ static struct kvm_device_ops kvm_eiointc_dev_ops = {
 int kvm_loongarch_register_eiointc_device(void)
 {
 	return kvm_register_device_ops(&kvm_eiointc_dev_ops, KVM_DEV_TYPE_LOONGARCH_EIOINTC);
+}
+
+void kvm_loongarch_unregister_eiointc_device(void)
+{
+	kvm_unregister_device_ops(KVM_DEV_TYPE_LOONGARCH_EIOINTC);
 }

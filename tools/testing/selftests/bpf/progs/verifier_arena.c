@@ -8,19 +8,21 @@
 #include <bpf/bpf_tracing.h>
 #include "bpf_misc.h"
 #include "bpf_experimental.h"
-#include "bpf_arena_common.h"
+#include <bpf_arena_common.h>
 
 #define private(name) SEC(".bss." #name) __hidden __attribute__((aligned(8)))
+
+#ifdef __TARGET_ARCH_arm64
+#define ARENA_VM_START ((1ull << 32) | (~0u - __PAGE_SIZE * 2 + 1))
+#else
+#define ARENA_VM_START ((1ull << 44) | (~0u - __PAGE_SIZE * 2 + 1))
+#endif
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARENA);
 	__uint(map_flags, BPF_F_MMAPABLE);
 	__uint(max_entries, 2); /* arena of two pages close to 32-bit boundary*/
-#ifdef __TARGET_ARCH_arm64
-        __ulong(map_extra, (1ull << 32) | (~0u - __PAGE_SIZE * 2 + 1)); /* start of mmap() region */
-#else
-        __ulong(map_extra, (1ull << 44) | (~0u - __PAGE_SIZE * 2 + 1)); /* start of mmap() region */
-#endif
+	__ulong(map_extra, ARENA_VM_START); /* start of mmap() region */
 } arena SEC(".maps");
 
 SEC("socket")
@@ -90,6 +92,34 @@ int basic_alloc1(void *ctx)
 	if (*page1 != 1)
 		return 10;
 #endif
+	return 0;
+}
+
+SEC("syscall")
+__success __retval(0)
+int free_scalar_below_arena(void *ctx)
+{
+	void __arena *page1, *page2, *page3;
+	__u64 bad_addr = ARENA_VM_START - __PAGE_SIZE;
+
+	page1 = bpf_arena_alloc_pages(&arena, NULL, 1, NUMA_NO_NODE, 0);
+	if (!page1)
+		return 1;
+
+	page2 = bpf_arena_alloc_pages(&arena, NULL, 1, NUMA_NO_NODE, 0);
+	if (!page2)
+		return 2;
+
+	page3 = bpf_arena_alloc_pages(&arena, NULL, 1, NUMA_NO_NODE, 0);
+	if (page3)
+		return 3;
+
+	bpf_arena_free_pages(&arena, (void __arena *)bad_addr, 1);
+
+	page3 = bpf_arena_alloc_pages(&arena, NULL, 1, NUMA_NO_NODE, 0);
+	if (page3)
+		return 4;
+
 	return 0;
 }
 
@@ -532,6 +562,55 @@ int arena_ptr_add_arena_ptr(void *ctx)
 }
 
 SEC("syscall")
+__failure __msg("same insn cannot be used with and without arena pointer")
+int mixed_arena_scalar_alu64_scalar_first(void *ctx)
+{
+	volatile register __u64 reg asm("r3");
+	__u32 pick_arena = bpf_get_prandom_u32();
+
+	reg = 1ULL << 32;
+
+	if (pick_arena) {
+		asm volatile (
+			"r9 = %[arena] ll;"
+			"%[reg] = 0;"
+			"%[reg] = addr_space_cast(%[reg], 0x0, 0x1);"
+			: [reg] "=r"(reg)
+			: __imm_addr(arena)
+			: "r9"
+		);
+	}
+
+	reg += 1;
+
+	return 0;
+}
+
+SEC("syscall")
+__failure __msg("same insn cannot be used with and without arena pointer")
+int mixed_arena_scalar_alu64_arena_first(void *ctx)
+{
+	volatile register __u64 reg asm("r3");
+	__u32 pick_scalar = bpf_get_prandom_u32();
+
+	asm volatile (
+		"r9 = %[arena] ll;"
+		"%[reg] = 0;"
+		"%[reg] = addr_space_cast(%[reg], 0x0, 0x1);"
+		: [reg] "=r"(reg)
+		: __imm_addr(arena)
+		: "r9"
+	);
+
+	if (pick_scalar)
+		reg = 1ULL << 32;
+
+	reg += 1;
+
+	return 0;
+}
+
+SEC("syscall")
 __success __retval(0)
 int scalar_xor_arena_ptr(void *ctx)
 {
@@ -605,6 +684,103 @@ int non_arena_ptr_add_to_arena_ptr(void *ctx)
 	return 0;
 }
 
-#endif
+SEC("socket")
+__description("arena and stack atomic at the same instruction")
+__failure __msg("same insn cannot be used with different pointers")
+__arch_x86_64
+__load_if_JITed()
+__naked void mixed_arena_stack_atomic(void)
+{
+	asm volatile ("					\
+	r1 = %[arena] ll;				\
+	r6 = r10;					\
+	r6 += -8;					\
+	r9 = 0;						\
+	*(u64 *)(r6 + 0) = r9;				\
+	r7 = 8192;					\
+	r7 = addr_space_cast(r7, 0, 1);			\
+	call %[bpf_get_prandom_u32];			\
+	if w0 != 0 goto 1f;				\
+	r8 = r6;					\
+	goto 2f;					\
+1:	r8 = r7;					\
+2:	r9 = 1;						\
+	lock *(u64 *)(r8 + 0) += r9;			\
+	r0 = 0;						\
+	exit;						\
+"	:
+	: __imm_addr(arena),
+	  __imm(bpf_get_prandom_u32)
+	: __clobber_all);
+}
+
+#endif /* defined(__BPF_FEATURE_ADDR_SPACE_CAST) */
+
+static __noinline
+u32 __arena *check_arena_arg_nonglobal(u32 __arena *arg)
+{
+	volatile u32 val = *arg;
+
+	*arg = val + 1;
+
+	return arg;
+}
+
+__weak
+u32 __arena *check_arena_arg_global(u32 __arena *arg)
+{
+	volatile u32 val = *arg;
+
+	*arg = val + 1;
+
+	return arg;
+}
+
+__weak
+u32 volatile __arena *check_arena_arg_quals1(u32 volatile __arena *arg1, u32 __arena volatile *arg2)
+{
+	*arg1 = *arg1 + 1;
+	*arg2 = *arg1 + 1;
+
+	return arg2;
+}
+
+__weak
+u32 __arena volatile *check_arena_arg_quals2(u32 volatile __arena *arg1, u32 __arena volatile *arg2)
+{
+	*arg1 = *arg1 + 1;
+	*arg2 = *arg2 + 1;
+
+	return arg2;
+}
+
+SEC("syscall")
+__success __retval(0)
+int check_arena_arg_ret(void *ctx)
+{
+	u32 __arena *page = bpf_arena_alloc_pages(&arena, NULL, 1, NUMA_NO_NODE, 0);
+	u32 __arena *arg = page;
+	u32 __arena volatile *arg1;
+	u32 __arena volatile *ret1;
+	u32 volatile __arena *arg2;
+	u32 volatile __arena *ret2;
+
+	if (!arg)
+		return 1;
+
+	/* Make sure we use {arg, ret}{1, 2}. */
+
+	arg = check_arena_arg_nonglobal(page);
+	arg = check_arena_arg_global(arg);
+
+	arg1 = arg2 = page;
+	ret1 = check_arena_arg_quals1(arg1, arg2);
+	ret2 = check_arena_arg_quals2(arg1, arg2);
+
+	if (!(*ret1 ||*ret2))
+		return -EINVAL;
+
+	return 0;
+}
 
 char _license[] SEC("license") = "GPL";

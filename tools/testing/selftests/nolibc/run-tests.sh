@@ -21,6 +21,7 @@ all_archs=(
 	i386 x86_64 x32
 	arm64 arm armthumb
 	mips32le mips32be mipsn32le mipsn32be mips64le mips64be
+	openrisc
 	ppc ppc64 ppc64le
 	riscv32 riscv64
 	s390x
@@ -28,6 +29,8 @@ all_archs=(
 	sparc32 sparc64
 	m68k
 	sh4
+	parisc32
+	alpha
 )
 archs="${all_archs[@]}"
 
@@ -107,6 +110,7 @@ crosstool_arch() {
 	case "$1" in
 	arm64) echo aarch64;;
 	armthumb) echo arm;;
+	openrisc) echo or1k;;
 	ppc) echo powerpc;;
 	ppc64) echo powerpc64;;
 	ppc64le) echo powerpc64;;
@@ -116,6 +120,7 @@ crosstool_arch() {
 	s390*) echo s390;;
 	sparc*) echo sparc64;;
 	x32*) echo x86_64;;
+	parisc32) echo hppa;;
 	*) echo "$1";;
 	esac
 }
@@ -173,6 +178,10 @@ test_arch() {
 	fi
 	MAKE=(make -f Makefile.nolibc -j"${nproc}" XARCH="${arch}" CROSS_COMPILE="${cross_compile}" LLVM="${llvm}" O="${build_dir}")
 
+	if [ "$arch" = "parisc32" ]; then
+		MAKE+=("CROSS32CC=${cross_compile}gcc")
+	fi
+
 	case "$test_mode" in
 		'system')
 			test_target=run
@@ -185,7 +194,7 @@ test_arch() {
 			exit 1
 	esac
 	printf '%-15s' "$arch:"
-	if [ "$arch" = "m68k" -o "$arch" = "sh4" ] && [ "$llvm" = "1" ]; then
+	if [ "$arch" = "m68k" -o "$arch" = "sh4" -o "$arch" = "openrisc" -o "$arch" = "parisc32" -o "$arch" = "alpha" ] && [ "$llvm" = "1" ]; then
 		echo "Unsupported configuration"
 		return
 	fi

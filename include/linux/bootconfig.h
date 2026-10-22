@@ -265,6 +265,9 @@ static inline struct xbc_node * __init xbc_node_get_subkey(struct xbc_node *node
 int __init xbc_node_compose_key_after(struct xbc_node *root,
 			struct xbc_node *node, char *buf, size_t size);
 
+/* Render key/value pairs under @root as a flat cmdline string */
+int __init xbc_snprint_cmdline(char *buf, size_t size, struct xbc_node *root);
+
 /**
  * xbc_node_compose_key() - Compose full key string of the XBC node
  * @node: An XBC node.
@@ -303,6 +306,20 @@ static inline const char *xbc_get_embedded_bootconfig(size_t *size)
 {
 	return NULL;
 }
+#endif
+
+/* Bootconfig opt-in detection, shared by setup_arch() and setup_boot_config() */
+#ifdef CONFIG_BOOT_CONFIG
+bool __init bootconfig_cmdline_requested(const char *boot_cmdline, int *end_offset);
+#endif
+
+/* Build-time-rendered bootconfig cmdline prepended in setup_arch() */
+#ifdef CONFIG_CMDLINE_FROM_BOOTCONFIG
+void __init xbc_prepend_embedded_cmdline(char *dst, size_t size);
+bool __init xbc_embedded_cmdline_applied(void);
+#else
+static inline void xbc_prepend_embedded_cmdline(char *dst, size_t size) { }
+static inline bool xbc_embedded_cmdline_applied(void) { return false; }
 #endif
 
 #endif

@@ -13,7 +13,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
@@ -989,10 +988,8 @@ static int bma180_probe(struct i2c_client *client)
 				       iio_trigger_generic_data_rdy_poll,
 				       IRQF_TRIGGER_RISING | IRQF_NO_THREAD,
 				       "bma180_event", data->trig);
-		if (ret) {
-			dev_err(dev, "unable to request IRQ\n");
+		if (ret)
 			goto err_trigger_free;
-		}
 
 		data->trig->ops = &bma180_trigger_ops;
 		iio_trigger_set_drvdata(data->trig, indio_dev);
@@ -1083,11 +1080,11 @@ static int bma180_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(bma180_pm_ops, bma180_suspend, bma180_resume);
 
 static const struct i2c_device_id bma180_ids[] = {
-	{ "bma023", (kernel_ulong_t)&bma180_part_info[BMA023] },
-	{ "bma150", (kernel_ulong_t)&bma180_part_info[BMA150] },
-	{ "bma180", (kernel_ulong_t)&bma180_part_info[BMA180] },
-	{ "bma250", (kernel_ulong_t)&bma180_part_info[BMA250] },
-	{ "smb380", (kernel_ulong_t)&bma180_part_info[BMA150] },
+	{ .name = "bma023", .driver_data = (kernel_ulong_t)&bma180_part_info[BMA023] },
+	{ .name = "bma150", .driver_data = (kernel_ulong_t)&bma180_part_info[BMA150] },
+	{ .name = "bma180", .driver_data = (kernel_ulong_t)&bma180_part_info[BMA180] },
+	{ .name = "bma250", .driver_data = (kernel_ulong_t)&bma180_part_info[BMA250] },
+	{ .name = "smb380", .driver_data = (kernel_ulong_t)&bma180_part_info[BMA150] },
 	{ }
 };
 

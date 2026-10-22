@@ -218,10 +218,9 @@ struct smb2_transform_hdr {
  * These are simplified versions from the spec, as we don't need a fully fledged
  * form of both unchained and chained structs.
  *
- * Moreover, even in chained compressed payloads, the initial compression header
- * has the form of the unchained one -- i.e. it never has the
- * OriginalPayloadSize field and ::Offset field always represent an offset
- * (instead of a length, as it is in the chained header).
+ * For chained payloads, only the first 8 bytes belong to the transform header.
+ * CompressionAlgorithm, Flags and Offset below overlay the first chained
+ * payload header, where Offset represents Length.
  *
  * See MS-SMB2 2.2.42 for more details.
  */
@@ -371,7 +370,8 @@ struct smb2_tree_connect_req {
 #define SMB2_SHAREFLAG_FORCE_LEVELII_OPLOCK		0x00001000
 #define SMB2_SHAREFLAG_ENABLE_HASH_V1			0x00002000
 #define SMB2_SHAREFLAG_ENABLE_HASH_V2			0x00004000
-#define SHI1005_FLAGS_ENCRYPT_DATA			0x00008000
+#define SMB2_SHAREFLAG_ENCRYPT_DATA			0x00008000
+#define SHI1005_FLAGS_ENCRYPT_DATA			SMB2_SHAREFLAG_ENCRYPT_DATA
 #define SMB2_SHAREFLAG_IDENTITY_REMOTING		0x00040000 /* 3.1.1 */
 #define SMB2_SHAREFLAG_COMPRESS_DATA			0x00100000 /* 3.1.1 */
 #define SMB2_SHAREFLAG_ISOLATED_TRANSPORT		0x00200000
@@ -524,9 +524,7 @@ struct smb2_compression_capabilities_context {
 	__le16	CompressionAlgorithmCount;
 	__le16	Padding;
 	__le32	Flags;
-	__le16	CompressionAlgorithms[3];
-	__u16	Pad;  /* Some servers require pad to DataLen multiple of 8 */
-	/* Check if pad needed */
+	__le16	CompressionAlgorithms[4];
 } __packed;
 
 /*
@@ -745,6 +743,28 @@ struct smb2_close_rsp {
 #define SMB2_CHANNEL_RDMA_V1_INVALIDATE cpu_to_le32(0x00000002)
 #define SMB2_CHANNEL_RDMA_TRANSFORM     cpu_to_le32(0x00000003)
 
+/* See MS-SMB2 2.2.43. */
+struct smb2_rdma_transform {
+	__le16 RdmaDescriptorOffset;
+	__le16 RdmaDescriptorLength;
+	__le32 Channel;
+	__le16 TransformCount;
+	__le16 Reserved1;
+	__le32 Reserved2;
+} __packed;
+
+#define SMB2_RDMA_TRANSFORM_TYPE_ENCRYPTION	0x0001
+#define SMB2_RDMA_TRANSFORM_TYPE_SIGNING	0x0002
+
+struct smb2_rdma_crypto_transform {
+	__le16 TransformType;
+	__le16 SignatureLength;
+	__le16 NonceLength;
+	__le16 Reserved;
+	__u8 Signature[];
+	/* Followed by Nonce[] and optional alignment padding. */
+} __packed;
+
 /* SMB2 read request without RFC1001 length at the beginning */
 struct smb2_read_req {
 	struct smb2_hdr hdr;
@@ -850,8 +870,8 @@ struct smb2_lock_req {
 	__le16 StructureSize; /* Must be 48 */
 	__le16 LockCount;
 	/*
-	 * The least significant four bits are the index, the other 28 bits are
-	 * the lock sequence number (0 to 64). See MS-SMB2 2.2.26
+	 * The least significant four bits are the lock sequence number. The
+	 * other 28 bits are the index (0 to 64). See MS-SMB2 2.2.26.
 	 */
 	__le32 LockSequenceNumber;
 	__u64  PersistentFileId;
@@ -1247,6 +1267,38 @@ struct create_mxac_req {
 } __packed;
 
 /*
+ * AAPL flags. See Samba libcli/smb/smb2_create_ctx.h
+ */
+
+/* "AAPL" Context Command Codes */
+#define SMB2_CRTCTX_AAPL_SERVER_QUERY 1
+#define SMB2_CRTCTX_AAPL_RESOLVE_ID   2
+
+/* "AAPL" Server Query request/response bitmap */
+#define SMB2_CRTCTX_AAPL_SERVER_CAPS 1
+#define SMB2_CRTCTX_AAPL_VOLUME_CAPS 2
+#define SMB2_CRTCTX_AAPL_MODEL_INFO  4
+
+/* "AAPL" Client/Server Capabilities bitmap */
+#define SMB2_CRTCTX_AAPL_SUPPORTS_READ_DIR_ATTR 1
+#define SMB2_CRTCTX_AAPL_SUPPORTS_OSX_COPYFILE  2
+#define SMB2_CRTCTX_AAPL_UNIX_BASED             4
+#define SMB2_CRTCTX_AAPL_SUPPORTS_NFS_ACE       8
+/*
+ * V2 extends the same inline-FinderInfo mechanism as
+ * SMB2_CRTCTX_AAPL_SUPPORTS_READ_DIR_ATTR with an added flags field,
+ * confirmed byte-identical to V1 otherwise against AAPL's actual
+ * public client behavior.  Mutually exclusive with the V1 bit on
+ * the wire, not both set together.
+ */
+#define SMB2_CRTCTX_AAPL_SUPPORTS_READ_DIR_ATTR_V2 16
+
+/* "AAPL" Volume Capabilities bitmap */
+#define SMB2_CRTCTX_AAPL_SUPPORT_RESOLVE_ID 1
+#define SMB2_CRTCTX_AAPL_CASE_SENSITIVE     2
+#define SMB2_CRTCTX_AAPL_FULL_SYNC          4
+
+/*
  * Flags
  * See MS-SMB2 2.2.13.2.11
  *     MS-SMB2 2.2.13.2.12
@@ -1431,7 +1483,7 @@ struct resume_key_ioctl_rsp {
 		__u64 ResumeKeyU64[3];
 	};
 	__le32	ContextLength;	/* MBZ */
-	char	Context[];	/* ignored, Windows sets to 4 bytes of zero */
+	char	Context[4];	/* ignored, Windows sets to 4 bytes of zero */
 } __packed;
 
 struct smb2_ioctl_rsp {

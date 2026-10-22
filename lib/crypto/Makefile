@@ -63,9 +63,6 @@ clean-files += powerpc/aesp8-ppc.S
 obj-$(CONFIG_CRYPTO_LIB_AESCFB)			+= libaescfb.o
 libaescfb-y					:= aescfb.o
 
-obj-$(CONFIG_CRYPTO_LIB_AESGCM)			+= libaesgcm.o
-libaesgcm-y					:= aesgcm.o
-
 obj-$(CONFIG_CRYPTO_LIB_ARC4)			+= libarc4.o
 libarc4-y					:= arc4.o
 
@@ -187,10 +184,6 @@ clean-files += powerpc/ghashp8-ppc.S
 
 obj-$(CONFIG_CRYPTO_LIB_MD5) += libmd5.o
 libmd5-y := md5.o
-ifeq ($(CONFIG_CRYPTO_LIB_MD5_ARCH),y)
-CFLAGS_md5.o += -I$(src)/$(SRCARCH)
-libmd5-$(CONFIG_PPC) += powerpc/md5-asm.o
-endif # CONFIG_CRYPTO_LIB_MD5_ARCH
 
 ################################################################################
 

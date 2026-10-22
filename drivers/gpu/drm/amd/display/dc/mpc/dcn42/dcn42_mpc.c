@@ -659,6 +659,24 @@ void mpc42_set_fl_config(
 	REG_UPDATE(MPC_RMCM_CNTL[mpcc_id], MPC_RMCM_CNTL, cfg->enabled ? 0 : 0xF);
 }
 
+void mpc42_get_rmcm_3dlut_mode(
+	struct mpc *mpc,
+	int mpcc_id,
+	bool *enable,
+	bool *lut_bank_a)
+{
+	struct dcn42_mpc *mpc42 = TO_DCN42_MPC(mpc);
+	uint32_t mode_current   = 0;
+
+	REG_GET(MPC_RMCM_3DLUT_MODE[mpcc_id], MPC_RMCM_3DLUT_MODE_CURRENT, &mode_current);
+
+	/* MPC_RMCM_3DLUT_MODE encoding:
+	 *   0 -> disabled, 1 -> bank A, 2 -> bank B
+	 */
+	*enable     = mode_current != 0;
+	*lut_bank_a = mode_current != 2;
+}
+
 void mpc42_read_mpcc_state(
 		struct mpc *mpc,
 		int mpcc_inst,
@@ -767,6 +785,7 @@ static const struct mpc_funcs dcn42_mpc_funcs = {
 		.power_on_shaper_3dlut = mpc42_power_on_rmcm_shaper_3dlut,
 		.populate_lut = mpc42_populate_rmcm_lut,
 		.fl_3dlut_configure = mpc42_set_fl_config,
+		.get_3dlut_mode = mpc42_get_rmcm_3dlut_mode,
 	},
 };
 

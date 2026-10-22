@@ -68,6 +68,9 @@ amdgpu_eviction_fence_suspend_worker(struct work_struct *work)
 
 	mutex_lock(&uq_mgr->userq_mutex);
 
+	/* Fence waits are not allowed in a fence signalling critical section. */
+	amdgpu_userq_wait_for_signal(uq_mgr);
+
 	/*
 	 * This is intentionally after taking the userq_mutex since we do
 	 * allocate memory while holding this lock, but only after ensuring that
@@ -121,7 +124,6 @@ int amdgpu_evf_mgr_rearm(struct amdgpu_eviction_fence_mgr *evf_mgr,
 {
 	struct amdgpu_eviction_fence *ev_fence;
 	struct drm_gem_object *obj;
-	unsigned long index;
 
 	/* Create and initialize a new eviction fence */
 	ev_fence = kzalloc_obj(*ev_fence);
@@ -140,7 +142,7 @@ int amdgpu_evf_mgr_rearm(struct amdgpu_eviction_fence_mgr *evf_mgr,
 	evf_mgr->ev_fence = &ev_fence->base;
 
 	/* And add it to all existing BOs */
-	drm_exec_for_each_locked_object(exec, index, obj) {
+	drm_exec_for_each_locked_object(exec, obj) {
 		struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 
 		amdgpu_evf_mgr_attach_fence(evf_mgr, bo);

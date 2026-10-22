@@ -24,6 +24,7 @@
 #include "hda_local.h"
 #include "hda_auto_parser.h"
 #include "hda_jack.h"
+#include "generic.h"
 
 #include "ca0132_regs.h"
 
@@ -1060,6 +1061,8 @@ enum dsp_download_state {
  */
 
 struct ca0132_spec {
+	struct hda_gen_spec gen;
+
 	const struct snd_kcontrol_new *mixers[5];
 	unsigned int num_mixers;
 	const struct hda_verb *base_init_verbs;
@@ -1174,6 +1177,7 @@ enum {
 	QUIRK_R3D,
 	QUIRK_AE5,
 	QUIRK_AE7,
+	QUIRK_GENERIC,
 	QUIRK_NONE = HDA_FIXUP_ID_NOT_SET,
 };
 
@@ -1292,6 +1296,20 @@ static const struct hda_pintbl ae7_pincfgs[] = {
 	{}
 };
 
+static const struct hda_pintbl ca0132_generic_pincfgs[] = {
+	{ 0x0b, 0x41014111 },
+	{ 0x0c, 0x414520f0 }, /* SPDIF out */
+	{ 0x0d, 0x01014010 }, /* lineout */
+	{ 0x0e, 0x41c501f0 },
+	{ 0x0f, 0x411111f0 }, /* disabled */
+	{ 0x10, 0x411111f0 }, /* disabled */
+	{ 0x11, 0x41012014 },
+	{ 0x12, 0x37a790f0 }, /* mic */
+	{ 0x13, 0x77a701f0 },
+	{ 0x18, 0x500000f0 },
+	{}
+};
+
 static const struct hda_quirk ca0132_quirks[] = {
 	SND_PCI_QUIRK(0x1028, 0x057b, "Alienware M17x R4", QUIRK_ALIENWARE_M17XR4),
 	SND_PCI_QUIRK(0x1028, 0x0685, "Alienware 15 2015", QUIRK_ALIENWARE),
@@ -1304,6 +1322,7 @@ static const struct hda_quirk ca0132_quirks[] = {
 	SND_PCI_QUIRK(0x1458, 0xA016, "Recon3Di", QUIRK_R3DI),
 	SND_PCI_QUIRK(0x1458, 0xA026, "Gigabyte G1.Sniper Z97", QUIRK_R3DI),
 	SND_PCI_QUIRK(0x1458, 0xA036, "Gigabyte GA-Z170X-Gaming 7", QUIRK_R3DI),
+	SND_PCI_QUIRK(0x1458, 0xA046, "Gigabyte GA-Z170X-Gaming G1", QUIRK_GENERIC),
 	SND_PCI_QUIRK(0x3842, 0x1038, "EVGA X99 Classified", QUIRK_R3DI),
 	SND_PCI_QUIRK(0x3842, 0x104b, "EVGA X299 Dark", QUIRK_R3DI),
 	SND_PCI_QUIRK(0x3842, 0x1055, "EVGA Z390 DARK", QUIRK_R3DI),
@@ -1325,6 +1344,7 @@ static const struct hda_model_fixup ca0132_quirk_models[] = {
 	{ .id = QUIRK_R3D, .name = "r3d" },
 	{ .id = QUIRK_AE5, .name = "ae5" },
 	{ .id = QUIRK_AE7, .name = "ae7" },
+	{ .id = QUIRK_GENERIC, .name = "generic" },
 	{}
 };
 
@@ -5768,7 +5788,8 @@ static int ca0132_alt_mic_boost_info(struct snd_kcontrol *kcontrol,
 	uinfo->value.enumerated.items = MIC_BOOST_NUM_OF_STEPS;
 	if (uinfo->value.enumerated.item >= MIC_BOOST_NUM_OF_STEPS)
 		uinfo->value.enumerated.item = MIC_BOOST_NUM_OF_STEPS - 1;
-	sprintf(namestr, "%d %s", (uinfo->value.enumerated.item * 10), sfx);
+	snprintf(namestr, sizeof(namestr), "%d %s",
+		 (uinfo->value.enumerated.item * 10), sfx);
 	strscpy(uinfo->value.enumerated.name, namestr);
 	return 0;
 }
@@ -5820,9 +5841,9 @@ static int ae5_headphone_gain_info(struct snd_kcontrol *kcontrol,
 	uinfo->value.enumerated.items = AE5_HEADPHONE_GAIN_MAX;
 	if (uinfo->value.enumerated.item >= AE5_HEADPHONE_GAIN_MAX)
 		uinfo->value.enumerated.item = AE5_HEADPHONE_GAIN_MAX - 1;
-	sprintf(namestr, "%s %s",
-		ae5_headphone_gain_presets[uinfo->value.enumerated.item].name,
-		sfx);
+	snprintf(namestr, sizeof(namestr), "%s %s",
+		 ae5_headphone_gain_presets[uinfo->value.enumerated.item].name,
+		 sfx);
 	strscpy(uinfo->value.enumerated.name, namestr);
 	return 0;
 }
@@ -5874,8 +5895,8 @@ static int ae5_sound_filter_info(struct snd_kcontrol *kcontrol,
 	uinfo->value.enumerated.items = AE5_SOUND_FILTER_MAX;
 	if (uinfo->value.enumerated.item >= AE5_SOUND_FILTER_MAX)
 		uinfo->value.enumerated.item = AE5_SOUND_FILTER_MAX - 1;
-	sprintf(namestr, "%s",
-			ae5_filter_presets[uinfo->value.enumerated.item].name);
+	snprintf(namestr, sizeof(namestr), "%s",
+		 ae5_filter_presets[uinfo->value.enumerated.item].name);
 	strscpy(uinfo->value.enumerated.name, namestr);
 	return 0;
 }
@@ -6612,7 +6633,7 @@ static int ca0132_alt_add_effect_slider(struct hda_codec *codec, hda_nid_t nid,
 	struct snd_kcontrol_new knew =
 		HDA_CODEC_VOLUME_MONO(namestr, nid, 1, 0, type);
 
-	sprintf(namestr, "FX: %s %s Volume", pfx, dirstr[dir]);
+	snprintf(namestr, sizeof(namestr), "FX: %s %s Volume", pfx, dirstr[dir]);
 
 	knew.tlv.c = NULL;
 
@@ -6651,9 +6672,9 @@ static int add_fx_switch(struct hda_codec *codec, hda_nid_t nid,
 	 * prefix to OutFX or InFX enable controls.
 	 */
 	if (ca0132_use_alt_controls(spec) && (nid <= IN_EFFECT_END_NID))
-		sprintf(namestr, "FX: %s %s Switch", pfx, dirstr[dir]);
+		snprintf(namestr, sizeof(namestr), "FX: %s %s Switch", pfx, dirstr[dir]);
 	else
-		sprintf(namestr, "%s %s Switch", pfx, dirstr[dir]);
+		snprintf(namestr, sizeof(namestr), "%s %s Switch", pfx, dirstr[dir]);
 
 	return snd_hda_ctl_add(codec, nid, snd_ctl_new1(&knew, codec));
 }
@@ -8510,10 +8531,9 @@ static void ca0132_set_dsp_msr(struct hda_codec *codec, bool is96k)
 
 static bool ca0132_download_dsp_images(struct hda_codec *codec)
 {
-	bool dsp_loaded = false;
 	struct ca0132_spec *spec = codec->spec;
 	const struct dsp_image_seg *dsp_os_image;
-	const struct firmware *fw_entry = NULL;
+	const struct firmware *fw_entry __free(firmware) = NULL;
 	/*
 	 * Alternate firmwares for different variants. The Recon3Di apparently
 	 * can use the default firmware, but I'll leave the option in case
@@ -8553,15 +8573,10 @@ static bool ca0132_download_dsp_images(struct hda_codec *codec)
 	dsp_os_image = (struct dsp_image_seg *)(fw_entry->data);
 	if (dspload_image(codec, dsp_os_image, 0, 0, true, 0)) {
 		codec_err(codec, "ca0132 DSP load image failed\n");
-		goto exit_download;
+		return false;
 	}
 
-	dsp_loaded = dspload_wait_loaded(codec);
-
-exit_download:
-	release_firmware(fw_entry);
-
-	return dsp_loaded;
+	return dspload_wait_loaded(codec);
 }
 
 static void ca0132_download_dsp(struct hda_codec *codec)
@@ -9614,6 +9629,7 @@ static void ca0132_free(struct hda_codec *codec)
 #endif
 	kfree(spec->spec_init_verbs);
 	kfree(codec->spec);
+	codec->spec = NULL;
 }
 
 static void dbpro_free(struct hda_codec *codec)
@@ -9624,6 +9640,7 @@ static void dbpro_free(struct hda_codec *codec)
 
 	kfree(spec->spec_init_verbs);
 	kfree(codec->spec);
+	codec->spec = NULL;
 }
 
 static void ca0132_config(struct hda_codec *codec)
@@ -9897,14 +9914,57 @@ static void sbz_detect_quirk(struct hda_codec *codec)
 	}
 }
 
+static void ca0132_generic_init_hook(struct hda_codec *codec)
+{
+	struct ca0132_spec *spec = codec->spec;
+
+	snd_hda_sequence_write(codec, spec->spec_init_verbs);
+}
+
+static int ca0132_generic_probe(struct hda_codec *codec)
+{
+	struct ca0132_spec *spec = codec->spec;
+	struct auto_pin_cfg *cfg = &spec->gen.autocfg;
+	int err;
+
+	snd_hda_gen_spec_init(&spec->gen);
+
+	snd_hda_apply_pincfgs(codec, ca0132_generic_pincfgs);
+
+	ca0132_init_chip(codec);
+
+	err = ca0132_prepare_verbs(codec);
+	if (err < 0)
+		return err;
+
+	err = snd_hda_parse_pin_def_config(codec, cfg, NULL);
+	if (err < 0)
+		return err;
+	err = snd_hda_gen_parse_auto_config(codec, cfg);
+	if (err < 0)
+		return err;
+
+	spec->gen.init_hook = ca0132_generic_init_hook;
+	spec->gen.automute_speaker = 0;
+	spec->gen.automute_lo = 0;
+
+	snd_hda_sequence_write(codec, spec->spec_init_verbs);
+	return 0;
+}
+
 static void ca0132_codec_remove(struct hda_codec *codec)
 {
 	struct ca0132_spec *spec = codec->spec;
 
-	if (ca0132_quirk(spec) == QUIRK_ZXR_DBPRO)
+	switch (ca0132_quirk(spec)) {
+	case QUIRK_GENERIC:
+		snd_hda_gen_remove(codec);
+		return;
+	case QUIRK_ZXR_DBPRO:
 		return dbpro_free(codec);
-	else
+	default:
 		return ca0132_free(codec);
+	}
 }
 
 static int ca0132_codec_probe(struct hda_codec *codec,
@@ -9921,14 +9981,21 @@ static int ca0132_codec_probe(struct hda_codec *codec,
 	codec->spec = spec;
 	spec->codec = codec;
 
-	/* Detect codec quirk */
-	snd_hda_pick_fixup(codec, ca0132_quirk_models, ca0132_quirks, NULL);
-	if (ca0132_quirk(spec) == QUIRK_SBZ)
-		sbz_detect_quirk(codec);
-
+	/* These must be set before any path is taken */
 	codec->pcm_format_first = 1;
 	codec->no_sticky_stream = 1;
 
+	/* Detect codec quirk */
+	snd_hda_pick_fixup(codec, ca0132_quirk_models, ca0132_quirks, NULL);
+	switch (ca0132_quirk(spec)) {
+	case QUIRK_SBZ:
+		sbz_detect_quirk(codec);
+		break;
+	case QUIRK_GENERIC:
+		return ca0132_generic_probe(codec);
+	default:
+		break;
+	}
 
 	spec->dsp_state = DSP_DOWNLOAD_INIT;
 	spec->num_mixers = 1;
@@ -10029,35 +10096,50 @@ static int ca0132_codec_build_controls(struct hda_codec *codec)
 {
 	struct ca0132_spec *spec = codec->spec;
 
-	if (ca0132_quirk(spec) == QUIRK_ZXR_DBPRO)
+	switch (ca0132_quirk(spec)) {
+	case QUIRK_GENERIC:
+		return snd_hda_gen_build_controls(codec);
+	case QUIRK_ZXR_DBPRO:
 		return dbpro_build_controls(codec);
-	else
+	default:
 		return ca0132_build_controls(codec);
+	}
 }
 
 static int ca0132_codec_build_pcms(struct hda_codec *codec)
 {
 	struct ca0132_spec *spec = codec->spec;
 
-	if (ca0132_quirk(spec) == QUIRK_ZXR_DBPRO)
+	switch (ca0132_quirk(spec)) {
+	case QUIRK_GENERIC:
+		return snd_hda_gen_build_pcms(codec);
+	case QUIRK_ZXR_DBPRO:
 		return dbpro_build_pcms(codec);
-	else
+	default:
 		return ca0132_build_pcms(codec);
+	}
 }
 
 static int ca0132_codec_init(struct hda_codec *codec)
 {
 	struct ca0132_spec *spec = codec->spec;
 
-	if (ca0132_quirk(spec) == QUIRK_ZXR_DBPRO)
+	switch (ca0132_quirk(spec)) {
+	case QUIRK_GENERIC:
+		return snd_hda_gen_init(codec);
+	case QUIRK_ZXR_DBPRO:
 		return dbpro_init(codec);
-	else
+	default:
 		return ca0132_init(codec);
+	}
 }
 
 static int ca0132_codec_suspend(struct hda_codec *codec)
 {
 	struct ca0132_spec *spec = codec->spec;
+
+	if (ca0132_quirk(spec) == QUIRK_GENERIC)
+		return 0;
 
 	cancel_delayed_work_sync(&spec->unsol_hp_work);
 	return 0;

@@ -16,10 +16,6 @@ config ARCH_CLOCKSOURCE_INIT
 config ARCH_WANTS_CLOCKSOURCE_READ_INLINE
 	bool
 
-# Timekeeping vsyscall support
-config GENERIC_TIME_VSYSCALL
-	bool
-
 # The generic clock events infrastructure
 config GENERIC_CLOCKEVENTS
 	def_bool !LEGACY_TIMER_TICK
@@ -137,7 +133,6 @@ config NO_HZ_FULL
 	depends on HAVE_VIRT_CPU_ACCOUNTING_GEN
 	select NO_HZ_COMMON
 	select RCU_NOCB_CPU
-	select VIRT_CPU_ACCOUNTING_GEN
 	select IRQ_WORK
 	select CPU_ISOLATION
 	help

@@ -42,6 +42,7 @@ config HIBERNATION
 	select CRC32
 	select CRYPTO
 	select CRYPTO_LZO
+	select CRYPTO_LZ4
 	help
 	  Enable the suspend to disk (STD) functionality, which is usually
 	  called "hibernation" in user interfaces.  STD checkpoints the
@@ -266,6 +267,16 @@ config DPM_WATCHDOG
 	  A detected lockup causes system panic with message
 	  captured in pstore device for inspection in subsequent
 	  boot session.
+
+config DPM_WATCHDOG_ENABLED
+	bool "Enable DPM watchdog by default"
+	depends on DPM_WATCHDOG
+	default y
+	help
+	  If you say Y here, the DPM watchdog will be enabled by default.
+	  If you say N, it will be compiled in but disabled.  It can be
+	  enabled at boot time via the "pm.dpm_watchdog_enabled" kernel
+	  parameter or at runtime via sysfs.
 
 config DPM_WATCHDOG_TIMEOUT
 	int "Watchdog timeout to panic in seconds"

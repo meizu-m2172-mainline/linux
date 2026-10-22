@@ -23,6 +23,13 @@
 __le16 I30[5] = { cpu_to_le16('$'), cpu_to_le16('I'),
 		cpu_to_le16('3'),	cpu_to_le16('0'), 0 };
 
+static inline u64 ntfs_check_mref(u64 mref)
+{
+	if (IS_ERR_MREF(mref))
+		return ERR_MREF(-EIO);
+	return mref;
+}
+
 /*
  * ntfs_lookup_inode_by_name - find an inode in a directory given its name
  * @dir_ni:	ntfs inode of the directory in which to search for the name
@@ -135,10 +142,6 @@ u64 ntfs_lookup_inode_by_name(struct ntfs_inode *dir_ni, const __le16 *uname,
 		/* Key length should not be zero if it is not last entry. */
 		if (!ie->key_length)
 			goto dir_err_out;
-		/* Check the consistency of an index entry */
-		if (ntfs_index_entry_inconsistent(NULL, vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no))
-			goto dir_err_out;
 		/*
 		 * We perform a case sensitive comparison and if that matches
 		 * we are done and return the mft reference of the inode (i.e.
@@ -163,8 +166,8 @@ found_it:
 			 */
 			if (ie->key.file_name.file_name_type == FILE_NAME_DOS) {
 				if (!name) {
-					name = kmalloc(sizeof(struct ntfs_name),
-							GFP_NOFS);
+					name = kmalloc_obj(struct ntfs_name,
+							   GFP_NOFS);
 					if (!name) {
 						err = -ENOMEM;
 						goto err_out;
@@ -182,7 +185,7 @@ found_it:
 			mref = le64_to_cpu(ie->data.dir.indexed_file);
 			ntfs_attr_put_search_ctx(ctx);
 			unmap_mft_record(dir_ni);
-			return mref;
+			return ntfs_check_mref(mref);
 		}
 		/*
 		 * For a case insensitive mount, we also perform a case
@@ -277,7 +280,7 @@ found_it:
 		if (name) {
 			ntfs_attr_put_search_ctx(ctx);
 			unmap_mft_record(dir_ni);
-			return name->mref;
+			return ntfs_check_mref(name->mref);
 		}
 		ntfs_debug("Entry not found.");
 		err = -ENOENT;
@@ -342,43 +345,20 @@ fast_descend_into_child_node:
 			dir_ni->mft_no);
 		goto unm_err_out;
 	}
-	/* Catch multi sector transfer fixup errors. */
-	if (unlikely(!ntfs_is_indx_record(ia->magic))) {
-		ntfs_error(sb,
-			"Directory index record with vcn 0x%llx is corrupt.  Corrupt inode 0x%llx.  Run chkdsk.",
-			vcn, dir_ni->mft_no);
-		goto unm_err_out;
-	}
-	if (le64_to_cpu(ia->index_block_vcn) != vcn) {
-		ntfs_error(sb,
-			"Actual VCN (0x%llx) of index buffer is different from expected VCN (0x%llx). Directory inode 0x%llx is corrupt or driver bug.",
-			le64_to_cpu(ia->index_block_vcn),
-			vcn, dir_ni->mft_no);
-		goto unm_err_out;
-	}
-	if (le32_to_cpu(ia->index.allocated_size) + 0x18 !=
-			dir_ni->itype.index.block_size) {
-		ntfs_error(sb,
-			"Index buffer (VCN 0x%llx) of directory inode 0x%llx has a size (%u) differing from the directory specified size (%u). Directory inode is corrupt or driver bug.",
-			vcn, dir_ni->mft_no,
-			le32_to_cpu(ia->index.allocated_size) + 0x18,
-			dir_ni->itype.index.block_size);
-		goto unm_err_out;
-	}
 	index_end = (u8 *)ia + dir_ni->itype.index.block_size;
 	if (index_end > kaddr + PAGE_SIZE) {
 		ntfs_error(sb,
-			"Index buffer (VCN 0x%llx) of directory inode 0x%llx crosses page boundary. Impossible! Cannot access! This is probably a bug in the driver.",
-			vcn, dir_ni->mft_no);
+			   "Index buffer (VCN 0x%llx) of directory inode 0x%llx crosses page boundary. Impossible! Cannot access! This is probably a bug in the driver.",
+			   vcn, dir_ni->mft_no);
 		goto unm_err_out;
 	}
+	err = ntfs_index_block_inconsistent(vol, ia,
+					    dir_ni->itype.index.block_size,
+					    vcn, COLLATION_FILE_NAME,
+					    dir_ni->mft_no);
+	if (err)
+		goto unm_err_out;
 	index_end = (u8 *)&ia->index + le32_to_cpu(ia->index.index_length);
-	if (index_end > (u8 *)ia + dir_ni->itype.index.block_size) {
-		ntfs_error(sb,
-			"Size of index buffer (VCN 0x%llx) of directory inode 0x%llx exceeds maximum size.",
-			vcn, dir_ni->mft_no);
-		goto unm_err_out;
-	}
 	/* The first index entry. */
 	ie = (struct index_entry *)((u8 *)&ia->index +
 			le32_to_cpu(ia->index.entries_offset));
@@ -388,15 +368,6 @@ fast_descend_into_child_node:
 	 * reach the last entry.
 	 */
 	for (;; ie = (struct index_entry *)((u8 *)ie + le16_to_cpu(ie->length))) {
-		/* Bounds checks. */
-		if ((u8 *)ie < (u8 *)ia ||
-		    (u8 *)ie + sizeof(struct index_entry_header) > index_end ||
-		    (u8 *)ie + sizeof(struct index_entry_header) + le16_to_cpu(ie->key_length) >
-				index_end || (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
-			ntfs_error(sb, "Index entry out of bounds in directory inode 0x%llx.",
-					dir_ni->mft_no);
-			goto unm_err_out;
-		}
 		/*
 		 * The last entry cannot contain a name. It can however contain
 		 * a pointer to a child node in the B+tree so we just break out.
@@ -405,10 +376,6 @@ fast_descend_into_child_node:
 			break;
 		/* Key length should not be zero if it is not last entry. */
 		if (!ie->key_length)
-			goto unm_err_out;
-		/* Check the consistency of an index entry */
-		if (ntfs_index_entry_inconsistent(NULL, vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no))
 			goto unm_err_out;
 		/*
 		 * We perform a case sensitive comparison and if that matches
@@ -434,8 +401,8 @@ found_it2:
 			 */
 			if (ie->key.file_name.file_name_type == FILE_NAME_DOS) {
 				if (!name) {
-					name = kmalloc(sizeof(struct ntfs_name),
-							GFP_NOFS);
+					name = kmalloc_obj(struct ntfs_name,
+							   GFP_NOFS);
 					if (!name) {
 						err = -ENOMEM;
 						goto unm_err_out;
@@ -453,7 +420,7 @@ found_it2:
 			mref = le64_to_cpu(ie->data.dir.indexed_file);
 			kfree(kaddr);
 			iput(ia_vi);
-			return mref;
+			return ntfs_check_mref(mref);
 		}
 		/*
 		 * For a case insensitive mount, we also perform a case
@@ -578,7 +545,7 @@ found_it2:
 	if (name) {
 		kfree(kaddr);
 		iput(ia_vi);
-		return name->mref;
+		return ntfs_check_mref(name->mref);
 	}
 	ntfs_debug("Entry not found.");
 	err = -ENOENT;
@@ -733,7 +700,7 @@ static int ntfs_ia_blocks_readahead(struct ntfs_inode *ia_ni, loff_t pos)
 	if (dir_start_index >= dir_end_index)
 		return 0;
 
-	dir_ra = kzalloc(sizeof(*dir_ra), GFP_NOFS);
+	dir_ra = kzalloc_obj(*dir_ra, GFP_NOFS);
 	if (!dir_ra)
 		return -ENOMEM;
 
@@ -810,7 +777,7 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 		return -ENOMEM;
 	}
 
-	ra = kzalloc(sizeof(struct file_ra_state), GFP_NOFS);
+	ra = kzalloc_obj(struct file_ra_state, GFP_NOFS);
 	if (!ra) {
 		kfree(name);
 		ntfs_index_ctx_put(ictx);
@@ -846,7 +813,7 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 			goto out;
 		}
 	} else if (!private) {
-		private = kzalloc(sizeof(struct ntfs_file_private), GFP_KERNEL);
+		private = kzalloc_obj(struct ntfs_file_private);
 		if (!private) {
 			err = -ENOMEM;
 			goto out;
@@ -892,6 +859,7 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 		ictx->vcn_size_bits = vol->cluster_size_bits;
 	else
 		ictx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+	ictx->cr = ir->collation_rule;
 
 	/* The first index entry. */
 	next = (struct index_entry *)((u8 *)&ir->index +
@@ -929,13 +897,6 @@ static int ntfs_readdir(struct file *file, struct dir_context *actor)
 		if (!next)
 			break;
 nextdir:
-		/* Check the consistency of an index entry */
-		if (ntfs_index_entry_inconsistent(ictx, vol, next, COLLATION_FILE_NAME,
-					ndir->mft_no)) {
-			err = -EIO;
-			goto out;
-		}
-
 		if (ie_pos < actor->pos) {
 			ie_pos += le16_to_cpu(next->length);
 			continue;
@@ -988,7 +949,7 @@ nextdir:
 		}
 
 		if (!nir) {
-			nir = kzalloc(sizeof(struct ntfs_index_ra), GFP_KERNEL);
+			nir = kzalloc_obj(struct ntfs_index_ra);
 			if (nir) {
 				nir->start_index = index;
 				nir->count = 1;
@@ -1005,13 +966,14 @@ filldir:
 			 */
 			private = file->private_data;
 			kfree(private->key);
-			private->key = kmalloc(le16_to_cpu(next->key_length), GFP_KERNEL);
+			private->key = kmemdup(&next->key.file_name,
+					le16_to_cpu(next->key_length),
+					GFP_KERNEL);
 			if (!private->key) {
 				err = -ENOMEM;
 				goto out;
 			}
 
-			memcpy(private->key, &next->key.file_name, le16_to_cpu(next->key_length));
 			private->key_length = next->key_length;
 			break;
 		}

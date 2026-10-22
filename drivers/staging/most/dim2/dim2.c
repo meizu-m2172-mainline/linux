@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * dim2.c - MediaLB DIM2 Hardware Dependent Module
+ * MediaLB DIM2 Hardware Dependent Module
  *
  * Copyright (C) 2015-2016, Microchip Technology Germany II GmbH & Co. KG
  */
@@ -165,7 +165,7 @@ static int try_start_dim_transfer(struct hdm_channel *hdm_ch)
 	unsigned long flags;
 	struct dim_ch_state st;
 
-	if (!hdm_ch || !hdm_ch->is_initialized)
+	if (!hdm_ch->is_initialized)
 		return -EINVAL;
 
 	spin_lock_irqsave(&dim_lock, flags);
@@ -271,7 +271,7 @@ static void service_done_flag(struct dim2_hdm *dev, int ch_idx)
 	unsigned long flags;
 	u8 *data;
 
-	if (!hdm_ch || !hdm_ch->is_initialized)
+	if (!hdm_ch->is_initialized)
 		return;
 
 	spin_lock_irqsave(&dim_lock, flags);
@@ -974,10 +974,9 @@ static int rcar_gen2_enable(struct platform_device *pdev)
 	int ret;
 
 	dev->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(dev->clk)) {
-		dev_err(&pdev->dev, "cannot get clock\n");
-		return PTR_ERR(dev->clk);
-	}
+	if (IS_ERR(dev->clk))
+		return dev_err_probe(&pdev->dev, PTR_ERR(dev->clk),
+				     "cannot get clock\n");
 
 	ret = clk_prepare_enable(dev->clk);
 	if (ret) {
@@ -1019,10 +1018,9 @@ static int rcar_gen3_enable(struct platform_device *pdev)
 	int ret;
 
 	dev->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(dev->clk)) {
-		dev_err(&pdev->dev, "cannot get clock\n");
-		return PTR_ERR(dev->clk);
-	}
+	if (IS_ERR(dev->clk))
+		return dev_err_probe(&pdev->dev, PTR_ERR(dev->clk),
+				     "cannot get clock\n");
 
 	ret = clk_prepare_enable(dev->clk);
 	if (ret) {

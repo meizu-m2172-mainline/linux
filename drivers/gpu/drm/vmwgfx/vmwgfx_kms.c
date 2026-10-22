@@ -20,10 +20,18 @@
 #include <drm/drm_rect.h>
 #include <drm/drm_sysfs.h>
 #include <drm/drm_edid.h>
+#include <drm/drm_blend.h>
 
 void vmw_du_init(struct vmw_display_unit *du)
 {
 	vmw_vkms_crtc_init(&du->crtc);
+	drm_plane_create_blend_mode_property(&du->primary,
+					     BIT(DRM_MODE_BLEND_PIXEL_NONE) |
+					     BIT(DRM_MODE_BLEND_PREMULTI));
+	// Check that the cursor plane was actually initialized
+	if (du->crtc.cursor == &du->cursor.base)
+		drm_plane_create_blend_mode_property(&du->cursor.base,
+						     BIT(DRM_MODE_BLEND_PREMULTI));
 }
 
 void vmw_du_cleanup(struct vmw_display_unit *du)
@@ -101,7 +109,7 @@ vmw_du_plane_cleanup_fb(struct drm_plane *plane,
  * Returns 0 on success
  */
 int vmw_du_primary_plane_atomic_check(struct drm_plane *plane,
-				      struct drm_atomic_state *state)
+				      struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
 									   plane);
@@ -132,7 +140,7 @@ int vmw_du_primary_plane_atomic_check(struct drm_plane *plane,
 }
 
 int vmw_du_crtc_atomic_check(struct drm_crtc *crtc,
-			     struct drm_atomic_state *state)
+			     struct drm_atomic_commit *state)
 {
 	struct vmw_private *vmw = vmw_priv(crtc->dev);
 	struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state,
@@ -169,7 +177,7 @@ int vmw_du_crtc_atomic_check(struct drm_crtc *crtc,
 
 
 void vmw_du_crtc_atomic_begin(struct drm_crtc *crtc,
-			      struct drm_atomic_state *state)
+			      struct drm_atomic_commit *state)
 {
 	vmw_vkms_crtc_atomic_begin(crtc, state);
 }
@@ -864,7 +872,7 @@ static int vmw_kms_check_display_memory(struct drm_device *dev,
  * pointer error, in particular -EDEADLK if locking needs to be rerun.
  */
 static struct drm_crtc_state *
-vmw_crtc_state_and_lock(struct drm_atomic_state *state, struct drm_crtc *crtc)
+vmw_crtc_state_and_lock(struct drm_atomic_commit *state, struct drm_crtc *crtc)
 {
 	struct drm_crtc_state *crtc_state;
 
@@ -895,7 +903,7 @@ vmw_crtc_state_and_lock(struct drm_atomic_state *state, struct drm_crtc *crtc)
  *   -EDEADLK if modeset locking needs to be rerun.
  */
 static int vmw_kms_check_implicit(struct drm_device *dev,
-				  struct drm_atomic_state *state)
+				  struct drm_atomic_commit *state)
 {
 	struct drm_framebuffer *implicit_fb = NULL;
 	struct drm_crtc *crtc;
@@ -933,7 +941,7 @@ static int vmw_kms_check_implicit(struct drm_device *dev,
 }
 
 /**
- * vmw_kms_check_topology - Validates topology in drm_atomic_state
+ * vmw_kms_check_topology - Validates topology in drm_atomic_commit
  * @dev: DRM device
  * @state: the driver state object
  *
@@ -941,7 +949,7 @@ static int vmw_kms_check_implicit(struct drm_device *dev,
  * 0 on success otherwise negative error code
  */
 static int vmw_kms_check_topology(struct drm_device *dev,
-				  struct drm_atomic_state *state)
+				  struct drm_atomic_commit *state)
 {
 	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
 	struct drm_rect *rects;
@@ -1035,7 +1043,7 @@ clean:
  */
 static int
 vmw_kms_atomic_check_modeset(struct drm_device *dev,
-			     struct drm_atomic_state *state)
+			     struct drm_atomic_commit *state)
 {
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *crtc_state;
@@ -1133,7 +1141,7 @@ vmw_kms_create_hotplug_mode_update_property(struct vmw_private *dev_priv)
 }
 
 static void
-vmw_atomic_commit_tail(struct drm_atomic_state *old_state)
+vmw_atomic_commit_tail(struct drm_atomic_commit *old_state)
 {
 	struct vmw_private *vmw = vmw_priv(old_state->dev);
 	struct drm_crtc *crtc;

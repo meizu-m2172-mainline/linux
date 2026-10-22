@@ -115,9 +115,32 @@ static void ionic_get_link_ext_stats(struct net_device *netdev,
 				     struct ethtool_link_ext_stats *stats)
 {
 	struct ionic_lif *lif = netdev_priv(netdev);
+	struct ionic *ionic = lif->ionic;
+	u64 link_down_count_total;
+	u16 link_down_count_fw;
 
-	if (lif->ionic->pdev->is_physfn)
-		stats->link_down_events = lif->link_down_count;
+	if (ionic->pdev->is_virtfn)
+		return;
+
+	if (!ionic->idev.port_info) {
+		netdev_err_once(netdev, "port_info not initialized\n");
+		return;
+	}
+
+	link_down_count_fw =
+	    le16_to_cpu(ionic->idev.port_info->status.link_down_count);
+	link_down_count_total = ionic->idev.link_down_count_total +
+				link_down_count_fw -
+				ionic->idev.link_down_count_last;
+
+	/* The firmware counter is only 16 bits and can wraparound */
+	if (link_down_count_fw < ionic->idev.link_down_count_last)
+		link_down_count_total += BIT(16);
+
+	ionic->idev.link_down_count_last = link_down_count_fw;
+	ionic->idev.link_down_count_total = link_down_count_total;
+
+	stats->link_down_events = link_down_count_total;
 }
 
 static int ionic_get_link_ksettings(struct net_device *netdev,
@@ -1018,10 +1041,14 @@ static int ionic_get_ts_info(struct net_device *netdev,
 
 	info->phc_index = ptp_clock_index(lif->phc->ptp);
 
-	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
-				SOF_TIMESTAMPING_TX_HARDWARE |
-				SOF_TIMESTAMPING_RX_HARDWARE |
-				SOF_TIMESTAMPING_RAW_HARDWARE;
+	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE;
+
+	if (!(lif->hw_features & IONIC_ETH_HW_TIMESTAMP))
+		return 0;
+
+	info->so_timestamping |= SOF_TIMESTAMPING_TX_HARDWARE |
+				 SOF_TIMESTAMPING_RX_HARDWARE |
+				 SOF_TIMESTAMPING_RAW_HARDWARE;
 
 	/* tx modes */
 

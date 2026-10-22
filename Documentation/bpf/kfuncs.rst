@@ -207,8 +207,26 @@ Here, the buffer may be NULL. If the buffer is not NULL, it must be at least
 buffer__szk bytes in size. The kfunc is responsible for checking if the buffer
 is NULL before using it.
 
-2.3.5 __str Annotation
-----------------------------
+2.3.5 __nonown_allowed Annotation
+---------------------------------
+
+This annotation is used to indicate that the parameter may be a non-owning reference.
+
+An example is given below::
+
+        __bpf_kfunc int bpf_list_add(..., struct bpf_list_node
+                                     *prev__nonown_allowed, ...)
+        {
+                ...
+        }
+
+For the ``prev__nonown_allowed`` parameter (resolved as ``KF_ARG_PTR_TO_LIST_NODE``),
+suffix ``__nonown_allowed`` retains the usual owning-pointer rules and also
+permits a non-owning reference with no ref_obj_id (e.g. the return value of
+bpf_list_front() / bpf_list_back()).
+
+2.3.6 __str Annotation
+----------------------
 This annotation is used to indicate that the argument is a constant string.
 
 An example is given below::
@@ -231,6 +249,71 @@ Or::
                 bpf_get_file_xattr(..., name, ...);
                 ...
         }
+
+2.3.7 __const_map and __map Annotations
+---------------------------------------
+
+These annotations are used for ``struct bpf_map *`` arguments and distinguish a
+verifier-known map from an opaque one.
+
+``__const_map`` indicates a map must be known at the verification time, i.e. a
+concrete map fd the BPF program references directly.
+
+An example is given below::
+
+        __bpf_kfunc int bpf_wq_init(struct bpf_wq *wq, void *p__const_map,
+                                    unsigned int flags)
+        {
+                ...
+        }
+
+``__map`` indicates an opaque ``struct bpf_map *`` that may be resolved
+at run time. The argument may take either a map fd or a ``PTR_TO_BTF_ID``
+``struct bpf_map`` pointer.
+
+An example is given below::
+
+        __bpf_kfunc void *bpf_arena_alloc_pages(void *p__map, ...)
+        {
+                ...
+        }
+
+2.3.8 __arena and __arena__nullable Annotations
+-----------------------------------------------
+
+Both annotations indicate that the pointer argument points into the
+calling program's arena. The JIT rebases the value at the call site so
+the kfunc receives a directly dereferenceable kernel address, subject to
+the access rules described in :ref:`BPF_kfunc_arena_access` (at most
+``GUARD_SZ / 2``, 32 KiB, past the pointer in a single unchecked access).
+
+With ``__arena`` the rebase is unconditional and the argument is never
+NULL: a value whose lower 32 bits are zero arrives as the arena base
+address (arena offset 0). The kfunc must not check the argument for NULL.
+With ``__arena__nullable`` such a value arrives as NULL instead and the
+kfunc must check before dereferencing.
+
+An example is given below::
+
+        __bpf_kfunc int bpf_process_item(struct item *item__arena)
+        {
+        ...
+        }
+
+Calling such a kfunc requires the program to use an arena map and a JIT with
+arena argument support (currently x86-64 and arm64); verification fails
+otherwise. The program can pass any value without compromising the kernel. A
+value that does not point into the arena is a program bug.
+
+The suffixes have the same meaning on the arguments of struct_ops stub
+functions, with the conversion running in the opposite direction. The
+kernel caller passes the kernel arena address and the trampoline converts
+it while saving the arguments, so the callback receives an arena pointer
+it can dereference directly. With ``__arena`` the kernel caller must not
+pass NULL. With ``__arena__nullable`` a NULL kernel pointer arrives as NULL.
+However, there is no obligation to prove to the verifier that such a pointer is
+non-NULL before use, in-line with existing semantics of arena pointers used in
+a program (or obtained from any other source).
 
 .. _BPF_kfunc_nodef:
 
@@ -255,21 +338,28 @@ flags on a set of kfuncs as follows::
         BTF_KFUNCS_END(bpf_task_set)
 
 This set encodes the BTF ID of each kfunc listed above, and encodes the flags
-along with it. Ofcourse, it is also allowed to specify no flags.
+along with it. It is also allowed to specify no flags.
 
 kfunc definitions should also always be annotated with the ``__bpf_kfunc``
-macro. This prevents issues such as the compiler inlining the kfunc if it's a
-static kernel function, or the function being elided in an LTO build as it's
-not used in the rest of the kernel. Developers should not manually add
-annotations to their kfunc to prevent these issues. If an annotation is
-required to prevent such an issue with your kfunc, it is a bug and should be
-added to the definition of the macro so that other kfuncs are similarly
-protected. An example is given below::
+macro. This prevents issues such as the compiler inlining the kfunc, or the
+function being elided in an LTO build as it's not used in the rest of the
+kernel. Developers should not manually add annotations to their kfunc to prevent
+these issues. If an annotation is required to prevent such an issue with your
+kfunc, it is a bug and should be added to the definition of the macro so that
+other kfuncs are similarly protected. An example is given below::
 
         __bpf_kfunc struct task_struct *bpf_get_task_pid(s32 pid)
         {
         ...
         }
+
+Note that kfuncs must not be declared ``static``. A kfunc can be called from a
+BPF program ``*.c`` file outside the compilation unit that defines it, so its
+externally visible name must remain available for BTF ID lookup. ``static``
+linkage allows the compiler to rename the function, which can break this
+BTF-based kfunc resolution. Further note that sparse may warn that an otherwise
+unreferenced kfunc should be static. Such warnings should be ignored for kfunc
+definitions.
 
 2.5.1 KF_ACQUIRE flag
 ---------------------
@@ -386,7 +476,7 @@ Example declaration:
 .. code-block:: c
 
 	__bpf_kfunc int bpf_task_work_schedule_signal(struct task_struct *task, struct bpf_task_work *tw,
-						      void *map__map, bpf_task_work_callback_t callback,
+						      void *map__const_map, bpf_task_work_callback_t callback,
 						      struct bpf_prog_aux *aux) { ... }
 
 Example usage in BPF program:
@@ -395,6 +485,16 @@ Example usage in BPF program:
 
 	/* note that the last argument is omitted */
         bpf_task_work_schedule_signal(task, &work->tw, &arrmap, task_work_callback);
+
+2.5.10 KF_PERFMON flag
+----------------------
+
+The KF_PERFMON flag is used for kfuncs that can expose kernel memory or kernel
+addresses to the BPF program, for example by reading through a pointer that the
+verifier does not check. Calling such a kfunc requires CAP_PERFMON, or
+CAP_SYS_ADMIN, in the same way that the equivalent BPF helpers are gated in
+bpf_base_func_proto(). A program loaded with CAP_BPF alone is rejected at load
+time.
 
 2.6 Registering the kfuncs
 --------------------------
@@ -418,6 +518,13 @@ type. An example is shown below::
                 return register_btf_kfunc_id_set(BPF_PROG_TYPE_TRACING, &bpf_task_kfunc_set);
         }
         late_initcall(init_subsystem);
+
+At kernel build time the ``resolve_btfids`` tool finds all kfuncs declared with
+``BTF_KFUNCS_START()`` and emits their BTF annotations into the kernel's BTF.
+For each kfunc it emits a ``bpf_kfunc`` BTF decl tag, a ``bpf_fastcall`` decl
+tag when the kfunc is flagged ``KF_FASTCALL``, and the ``address_space(1)`` type
+attribute on the return value and/or arguments that use arena pointers (see
+sections 2.3.8 and 2.8).
 
 2.7  Specifying no-cast aliases with ___init
 --------------------------------------------
@@ -461,6 +568,22 @@ nf_conn *`` (e.g. ``bpf_ct_change_timeout()``).
 In order to accommodate such requirements, the verifier will enforce strict
 PTR_TO_BTF_ID type matching if two types have the exact same name, with one
 being suffixed with ``___init``.
+
+.. _BPF_kfunc_arena_access:
+
+2.8 Accessing arena memory through kfunc arguments
+--------------------------------------------------
+
+A read or write at any address inside an arena does not oops the kernel.
+Unallocated arena pages are lazily backed by a scratch page and the
+access is reported through the program's BPF stream as an error. Only
+the BPF program's correctness is affected; the kernel itself remains
+intact.
+
+The arena is followed by a ``GUARD_SZ / 2`` (32 KiB) guard region that
+is also covered by this recovery. A kfunc handed an arena pointer may
+therefore access up to ``GUARD_SZ / 2`` past it without bounds-checking
+against the arena. Larger accesses must verify the range explicitly.
 
 .. _BPF_kfunc_lifecycle_expectations:
 

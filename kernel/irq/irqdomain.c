@@ -20,6 +20,8 @@
 #include <linux/smp.h>
 #include <linux/fs.h>
 
+#include "proc.h"
+
 static LIST_HEAD(irq_domain_list);
 static DEFINE_MUTEX(irq_domain_mutex);
 
@@ -1532,6 +1534,7 @@ int irq_domain_set_hwirq_and_chip(struct irq_domain *domain, unsigned int virq,
 	irq_data->chip = (struct irq_chip *)(chip ? chip : &no_irq_chip);
 	irq_data->chip_data = chip_data;
 
+	irq_proc_update_chip(chip);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(irq_domain_set_hwirq_and_chip);
@@ -1655,7 +1658,7 @@ static int irq_domain_alloc_irqs_locked(struct irq_domain *domain, int irq_base,
 	for (i = 0; i < nr_irqs; i++) {
 		ret = irq_domain_trim_hierarchy(virq + i);
 		if (ret)
-			goto out_free_irq_data;
+			goto out_free_irqs;
 	}
 
 	for (i = 0; i < nr_irqs; i++)
@@ -1663,6 +1666,8 @@ static int irq_domain_alloc_irqs_locked(struct irq_domain *domain, int irq_base,
 
 	return virq;
 
+out_free_irqs:
+	irq_domain_free_irqs_hierarchy(domain, virq, nr_irqs);
 out_free_irq_data:
 	irq_domain_free_irq_data(virq, nr_irqs);
 out_free_desc:
@@ -1960,7 +1965,7 @@ EXPORT_SYMBOL_GPL(irq_domain_free_irqs_parent);
 
 static void __irq_domain_deactivate_irq(struct irq_data *irq_data)
 {
-	if (irq_data && irq_data->domain) {
+	if (irq_data->domain) {
 		struct irq_domain *domain = irq_data->domain;
 
 		if (domain->ops->deactivate)
@@ -1974,7 +1979,7 @@ static int __irq_domain_activate_irq(struct irq_data *irqd, bool reserve)
 {
 	int ret = 0;
 
-	if (irqd && irqd->domain) {
+	if (irqd->domain) {
 		struct irq_domain *domain = irqd->domain;
 
 		if (irqd->parent_data)
@@ -2081,7 +2086,7 @@ static void irq_domain_free_one_irq(struct irq_domain *domain, unsigned int virq
 #endif	/* CONFIG_IRQ_DOMAIN_HIERARCHY */
 
 #ifdef CONFIG_GENERIC_IRQ_DEBUGFS
-#include "internals.h"
+#include "debugfs.h"
 
 static struct dentry *domain_dir;
 

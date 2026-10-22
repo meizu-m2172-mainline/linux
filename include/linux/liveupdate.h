@@ -12,6 +12,7 @@
 #include <linux/kho/abi/luo.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/refcount.h>
 #include <linux/rwsem.h>
 #include <linux/types.h>
 #include <uapi/linux/liveupdate.h>
@@ -172,15 +173,17 @@ struct liveupdate_flb_ops {
  * @lock:      A mutex that protects all fields within this structure, providing
  *             the synchronization service for the FLB's ops.
  * @finished:  True once the FLB's finish() callback has run.
- * @retrieved: True once the FLB's retrieve() callback has run.
+ * @retrieve_status: Status code indicating whether retrieve() has been
+ *                   attempted. 0 means not attempted, 1 means successful,
+ *                   and negative value means it failed with that error code.
  */
 struct luo_flb_private_state {
-	long count;
+	refcount_t count;
 	u64 data;
 	void *obj;
 	struct mutex lock;
 	bool finished;
-	bool retrieved;
+	int retrieve_status;
 };
 
 /*
@@ -239,7 +242,10 @@ void liveupdate_unregister_flb(struct liveupdate_file_handler *fh,
 			       struct liveupdate_flb *flb);
 
 int liveupdate_flb_get_incoming(struct liveupdate_flb *flb, void **objp);
+void liveupdate_flb_put_incoming(struct liveupdate_flb *flb);
+
 int liveupdate_flb_get_outgoing(struct liveupdate_flb *flb, void **objp);
+void liveupdate_flb_put_outgoing(struct liveupdate_flb *flb);
 
 #else /* CONFIG_LIVEUPDATE */
 
@@ -279,10 +285,18 @@ static inline int liveupdate_flb_get_incoming(struct liveupdate_flb *flb,
 	return -EOPNOTSUPP;
 }
 
+static inline void liveupdate_flb_put_incoming(struct liveupdate_flb *flb)
+{
+}
+
 static inline int liveupdate_flb_get_outgoing(struct liveupdate_flb *flb,
 					      void **objp)
 {
 	return -EOPNOTSUPP;
+}
+
+static inline void liveupdate_flb_put_outgoing(struct liveupdate_flb *flb)
+{
 }
 
 #endif /* CONFIG_LIVEUPDATE */

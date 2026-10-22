@@ -1349,11 +1349,10 @@ static int ad9467_probe(struct spi_device *spi)
 		return ret;
 
 	id = ad9467_spi_read(st, AN877_ADC_REG_CHIP_ID);
-	if (id != st->info->id) {
-		dev_err(dev, "Mismatch CHIP_ID, got 0x%X, expected 0x%X\n",
-			id, st->info->id);
-		return -ENODEV;
-	}
+	if (id != st->info->id)
+		return dev_err_probe(dev, -ENODEV,
+				     "Mismatch CHIP_ID, got 0x%X, expected 0x%X\n",
+				     id, st->info->id);
 
 	if (st->info->num_scales > 1)
 		indio_dev->info = &ad9467_info;
@@ -1407,13 +1406,13 @@ static const struct of_device_id ad9467_of_match[] = {
 MODULE_DEVICE_TABLE(of, ad9467_of_match);
 
 static const struct spi_device_id ad9467_ids[] = {
-	{ "ad9211", (kernel_ulong_t)&ad9211_chip_tbl },
-	{ "ad9265", (kernel_ulong_t)&ad9265_chip_tbl },
-	{ "ad9434", (kernel_ulong_t)&ad9434_chip_tbl },
-	{ "ad9467", (kernel_ulong_t)&ad9467_chip_tbl },
-	{ "ad9643", (kernel_ulong_t)&ad9643_chip_tbl },
-	{ "ad9649", (kernel_ulong_t)&ad9649_chip_tbl, },
-	{ "ad9652", (kernel_ulong_t)&ad9652_chip_tbl, },
+	{ .name = "ad9211", .driver_data = (kernel_ulong_t)&ad9211_chip_tbl },
+	{ .name = "ad9265", .driver_data = (kernel_ulong_t)&ad9265_chip_tbl },
+	{ .name = "ad9434", .driver_data = (kernel_ulong_t)&ad9434_chip_tbl },
+	{ .name = "ad9467", .driver_data = (kernel_ulong_t)&ad9467_chip_tbl },
+	{ .name = "ad9643", .driver_data = (kernel_ulong_t)&ad9643_chip_tbl },
+	{ .name = "ad9649", .driver_data = (kernel_ulong_t)&ad9649_chip_tbl },
+	{ .name = "ad9652", .driver_data = (kernel_ulong_t)&ad9652_chip_tbl },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ad9467_ids);

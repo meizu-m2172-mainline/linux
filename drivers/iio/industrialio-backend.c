@@ -156,7 +156,7 @@ static ssize_t iio_backend_debugfs_write_reg(struct file *file,
 	ssize_t rc;
 	int ret;
 
-	if (count >= sizeof(buf))
+	if (*ppos != 0 || count >= sizeof(buf))
 		return -ENOSPC;
 
 	rc = simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, userbuf, count);
@@ -649,7 +649,7 @@ EXPORT_SYMBOL_NS_GPL(iio_backend_ext_info_get, "IIO_BACKEND");
  * @len: Buffer length
  *
  * This helper is intended to be used by backends that extend an IIO channel
- * (trough iio_backend_extend_chan_spec()) with extended info. In that case,
+ * (through iio_backend_extend_chan_spec()) with extended info. In that case,
  * backends are not supposed to give their own callbacks (as they would not have
  * a way to get the backend from indio_dev). This is the setter.
  *
@@ -851,7 +851,7 @@ EXPORT_SYMBOL_NS_GPL(iio_backend_filter_type_set, "IIO_BACKEND");
  * @back: Backend device
  * @timeout_us: Timeout value in us.
  *
- * When activated, it initates a proccess that aligns the sample's most
+ * When activated, it initiates a process that aligns the sample's most
  * significant bit (MSB) based solely on the captured data, without
  * considering any other external signals.
  *
@@ -964,22 +964,12 @@ int iio_backend_data_transfer_addr(struct iio_backend *back, u32 address)
 }
 EXPORT_SYMBOL_NS_GPL(iio_backend_data_transfer_addr, "IIO_BACKEND");
 
-static struct iio_backend *__devm_iio_backend_fwnode_get(struct device *dev, const char *name,
-							 struct fwnode_handle *fwnode)
+static struct iio_backend *__devm_iio_backend_fwnode_get_by_index(struct device *dev,
+								  struct fwnode_handle *fwnode,
+								  unsigned int index)
 {
 	struct iio_backend *back;
-	unsigned int index;
 	int ret;
-
-	if (name) {
-		ret = device_property_match_string(dev, "io-backend-names",
-						   name);
-		if (ret < 0)
-			return ERR_PTR(ret);
-		index = ret;
-	} else {
-		index = 0;
-	}
 
 	struct fwnode_handle *fwnode_back __free(fwnode_handle) =
 		fwnode_find_reference(fwnode, "io-backends", index);
@@ -996,8 +986,7 @@ static struct iio_backend *__devm_iio_backend_fwnode_get(struct device *dev, con
 		if (ret)
 			return ERR_PTR(ret);
 
-		if (name)
-			back->idx = index;
+		back->idx = index;
 
 		return back;
 	}
@@ -1005,12 +994,30 @@ static struct iio_backend *__devm_iio_backend_fwnode_get(struct device *dev, con
 	return ERR_PTR(-EPROBE_DEFER);
 }
 
+static struct iio_backend *__devm_iio_backend_fwnode_get(struct device *dev, const char *name,
+							 struct fwnode_handle *fwnode)
+{
+	unsigned int index;
+	int ret;
+
+	if (name) {
+		ret = device_property_match_string(dev, "io-backend-names", name);
+		if (ret < 0)
+			return ERR_PTR(ret);
+		index = ret;
+	} else {
+		index = 0;
+	}
+
+	return __devm_iio_backend_fwnode_get_by_index(dev, fwnode, index);
+}
+
 /**
  * devm_iio_backend_get - Device managed backend device get
  * @dev: Consumer device for the backend
  * @name: Backend name
  *
- * Get's the backend associated with @dev.
+ * Gets the backend associated with @dev.
  *
  * RETURNS:
  * A backend pointer, negative error pointer otherwise.
@@ -1022,12 +1029,28 @@ struct iio_backend *devm_iio_backend_get(struct device *dev, const char *name)
 EXPORT_SYMBOL_NS_GPL(devm_iio_backend_get, "IIO_BACKEND");
 
 /**
+ * devm_iio_backend_get_by_index - Device managed backend device get by index
+ * @dev: Consumer device for the backend
+ * @index: Index of the backend in the io-backends property
+ *
+ * Gets the backend at @index associated with @dev.
+ *
+ * RETURNS:
+ * A backend pointer, negative error pointer otherwise.
+ */
+struct iio_backend *devm_iio_backend_get_by_index(struct device *dev, unsigned int index)
+{
+	return __devm_iio_backend_fwnode_get_by_index(dev, dev_fwnode(dev), index);
+}
+EXPORT_SYMBOL_NS_GPL(devm_iio_backend_get_by_index, "IIO_BACKEND");
+
+/**
  * devm_iio_backend_fwnode_get - Device managed backend firmware node get
  * @dev: Consumer device for the backend
  * @name: Backend name
  * @fwnode: Firmware node of the backend consumer
  *
- * Get's the backend associated with a firmware node.
+ * Gets the backend associated with a firmware node.
  *
  * RETURNS:
  * A backend pointer, negative error pointer otherwise.

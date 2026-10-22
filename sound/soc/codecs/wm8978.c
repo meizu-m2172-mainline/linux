@@ -255,9 +255,9 @@ static const struct snd_kcontrol_new wm8978_snd_controls[] = {
 
 	/* DAC / ADC oversampling */
 	SOC_SINGLE("DAC 128x Oversampling Switch", WM8978_DAC_CONTROL,
-		   5, 1, 0),
+		   3, 1, 0),
 	SOC_SINGLE("ADC 128x Oversampling Switch", WM8978_ADC_CONTROL,
-		   5, 1, 0),
+		   3, 1, 0),
 };
 
 /* Mixer #1: Output (OUT1, OUT2) Mixer: mix AUX, Input mixer output and DAC */
@@ -1059,7 +1059,7 @@ static int wm8978_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id wm8978_i2c_id[] = {
-	{ "wm8978" },
+	{ .name = "wm8978" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm8978_i2c_id);

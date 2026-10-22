@@ -43,6 +43,7 @@ algorithms work.
    caching/index
 
    porting
+   adding-new-filesystems
 
 Filesystem support layers
 =========================
@@ -90,6 +91,7 @@ Documentation for filesystem implementations.
    ext3
    ext4/index
    f2fs
+   failfs
    gfs2/index
    hfs
    hfsplus

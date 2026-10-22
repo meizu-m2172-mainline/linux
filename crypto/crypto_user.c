@@ -11,6 +11,7 @@
 #include <linux/cryptouser.h>
 #include <linux/sched.h>
 #include <linux/security.h>
+#include <linux/string.h>
 #include <net/netlink.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
@@ -70,11 +71,9 @@ static struct crypto_alg *crypto_alg_match(struct crypto_user_alg *p, int exact)
 
 static int crypto_report_cipher(struct sk_buff *skb, struct crypto_alg *alg)
 {
-	struct crypto_report_cipher rcipher;
-
-	memset(&rcipher, 0, sizeof(rcipher));
-
-	strscpy(rcipher.type, "cipher", sizeof(rcipher.type));
+	struct crypto_report_cipher rcipher = {
+		.type = "cipher",
+	};
 
 	rcipher.blocksize = alg->cra_blocksize;
 	rcipher.min_keysize = alg->cra_cipher.cia_min_keysize;
@@ -89,11 +88,9 @@ static int crypto_report_one(struct crypto_alg *alg,
 {
 	memset(ualg, 0, sizeof(*ualg));
 
-	strscpy(ualg->cru_name, alg->cra_name, sizeof(ualg->cru_name));
-	strscpy(ualg->cru_driver_name, alg->cra_driver_name,
-		sizeof(ualg->cru_driver_name));
-	strscpy(ualg->cru_module_name, module_name(alg->cra_module),
-		sizeof(ualg->cru_module_name));
+	strscpy(ualg->cru_name, alg->cra_name);
+	strscpy(ualg->cru_driver_name, alg->cra_driver_name);
+	strscpy(ualg->cru_module_name, module_name(alg->cra_module));
 
 	ualg->cru_type = 0;
 	ualg->cru_mask = 0;
@@ -103,10 +100,10 @@ static int crypto_report_one(struct crypto_alg *alg,
 	if (nla_put_u32(skb, CRYPTOCFGA_PRIORITY_VAL, alg->cra_priority))
 		goto nla_put_failure;
 	if (alg->cra_flags & CRYPTO_ALG_LARVAL) {
-		struct crypto_report_larval rl;
+		struct crypto_report_larval rl = {
+			.type = "larval",
+		};
 
-		memset(&rl, 0, sizeof(rl));
-		strscpy(rl.type, "larval", sizeof(rl.type));
 		if (nla_put(skb, CRYPTOCFGA_REPORT_LARVAL, sizeof(rl), &rl))
 			goto nla_put_failure;
 		goto out;

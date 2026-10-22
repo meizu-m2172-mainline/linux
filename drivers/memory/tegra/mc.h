@@ -8,6 +8,7 @@
 
 #include <linux/bits.h>
 #include <linux/io.h>
+#include <linux/numa.h>
 #include <linux/types.h>
 
 #include <soc/tegra/mc.h>
@@ -167,6 +168,42 @@ icc_provider_to_tegra_mc(struct icc_provider *provider)
 	return container_of(provider, struct tegra_mc, provider);
 }
 
+/*
+ * Compose a globally-unique ICC node ID. On single-socket
+ * systems (NUMA_NO_NODE), the SoC client ID is returned unchanged.
+ * On multi-socket systems, the NUMA node ID is encoded in the
+ * upper bits of the returned ID.
+ *
+ * The client ID field is sized to keep composed IDs below
+ * ICC_DYN_ID_START (the start of the ICC core's dynamic-ID range).
+ */
+#define TEGRA_MC_CLIENT_ID_BITS	12
+#define TEGRA_MC_CLIENT_ID_MASK	((1U << TEGRA_MC_CLIENT_ID_BITS) - 1)
+
+static inline u32 tegra_mc_get_client_id(int node_id, int id)
+{
+	if (node_id == NUMA_NO_NODE)
+		return id;
+
+	return ((node_id + 1) << TEGRA_MC_CLIENT_ID_BITS) | id;
+}
+
+static inline struct icc_node *tegra_mc_icc_node_create(int node_id, int id)
+{
+	return icc_node_create(tegra_mc_get_client_id(node_id, id));
+}
+
+static inline int tegra_mc_icc_link_create(struct icc_node *node, int node_id, int id)
+{
+	return icc_link_create(node, tegra_mc_get_client_id(node_id, id));
+}
+
+/* Return the SoC client ID encoded in an ICC node ID. */
+static inline u32 tegra_mc_client_id_from_node(const struct icc_node *node)
+{
+	return node->id & TEGRA_MC_CLIENT_ID_MASK;
+}
+
 static inline u32 mc_ch_readl(const struct tegra_mc *mc, int ch,
 			      unsigned long offset)
 {
@@ -240,6 +277,14 @@ extern const struct tegra_mc_soc tegra194_mc_soc;
 extern const struct tegra_mc_soc tegra234_mc_soc;
 #endif
 
+#if defined(CONFIG_ARCH_TEGRA_234_SOC) || defined(CONFIG_ARCH_TEGRA_238_SOC)
+extern const struct tegra_mc_icc_ops tegra234_mc_icc_ops;
+#endif
+
+#ifdef CONFIG_ARCH_TEGRA_238_SOC
+extern const struct tegra_mc_soc tegra238_mc_soc;
+#endif
+
 #ifdef CONFIG_ARCH_TEGRA_264_SOC
 extern const struct tegra_mc_soc tegra264_mc_soc;
 #endif
@@ -256,6 +301,7 @@ extern const struct tegra_mc_ops tegra30_mc_ops;
 #if defined(CONFIG_ARCH_TEGRA_186_SOC) || \
     defined(CONFIG_ARCH_TEGRA_194_SOC) || \
     defined(CONFIG_ARCH_TEGRA_234_SOC) || \
+    defined(CONFIG_ARCH_TEGRA_238_SOC) || \
     defined(CONFIG_ARCH_TEGRA_264_SOC)
 extern const struct tegra_mc_ops tegra186_mc_ops;
 #endif

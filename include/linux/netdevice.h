@@ -300,9 +300,11 @@ struct hh_cache {
  * We could use other alignment values, but we must maintain the
  * relationship HH alignment <= LL alignment.
  */
-#define LL_RESERVED_SPACE(dev) \
-	((((dev)->hard_header_len + READ_ONCE((dev)->needed_headroom)) \
+#define LL_RESERVED_SPACE_EX(dev, hlen) \
+	((((hlen) + READ_ONCE((dev)->needed_headroom)) \
 	  & ~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
+#define LL_RESERVED_SPACE(dev) \
+	LL_RESERVED_SPACE_EX(dev, (dev)->hard_header_len)
 #define LL_RESERVED_SPACE_EXTRA(dev,extra) \
 	((((dev)->hard_header_len + READ_ONCE((dev)->needed_headroom) + (extra)) \
 	  & ~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
@@ -830,8 +832,13 @@ struct xps_dev_maps {
 #define TC_BITMASK	15
 /* HW offloaded queuing disciplines txq count and offset maps */
 struct netdev_tc_txq {
-	u16 count;
-	u16 offset;
+	union {
+		struct {
+			u16 count;
+			u16 offset;
+		};
+		u32 combined;
+	};
 };
 
 #if defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE)
@@ -880,6 +887,7 @@ enum net_device_path_type {
 	DEV_PATH_DSA,
 	DEV_PATH_MTK_WDMA,
 	DEV_PATH_TUN,
+	DEV_PATH_IEEE80211,
 };
 
 struct net_device_path {
@@ -892,6 +900,7 @@ struct net_device_path {
 			u8		h_dest[ETH_ALEN];
 		} encap;
 		struct {
+			struct dst_entry *dst;
 			union {
 				struct in_addr	src_v4;
 				struct in6_addr	src_v6;
@@ -901,7 +910,7 @@ struct net_device_path {
 				struct in6_addr	dst_v6;
 			};
 
-			u8	l3_proto;
+			u8	inner_proto;
 		} tun;
 		struct {
 			enum {
@@ -938,12 +947,15 @@ struct net_device_path_stack {
 struct net_device_path_ctx {
 	const struct net_device *dev;
 	u8			daddr[ETH_ALEN];
+	__be16			ether_type;
 
 	int			num_vlans;
 	struct {
 		u16		id;
 		__be16		proto;
 	} vlan[NET_DEVICE_PATH_VLAN_MAX];
+
+	bool			ieee80211;
 };
 
 enum tc_setup_type {
@@ -1122,13 +1134,17 @@ struct netdev_net_notifier {
  *	Cannot sleep, called with netif_addr_lock_bh held.
  *	Deprecated in favor of ndo_set_rx_mode_async.
  *
- * void (*ndo_set_rx_mode_async)(struct net_device *dev,
- *				 struct netdev_hw_addr_list *uc,
- *				 struct netdev_hw_addr_list *mc);
+ * int (*ndo_set_rx_mode_async)(struct net_device *dev,
+ *				struct netdev_hw_addr_list *uc,
+ *				struct netdev_hw_addr_list *mc);
  *	Async version of ndo_set_rx_mode which runs in process context
  *	with rtnl_lock and netdev_lock_ops(dev) held. The uc/mc parameters
  *	are snapshots of the address lists - iterate with
- *	netdev_hw_addr_list_for_each(ha, uc).
+ *	netdev_hw_addr_list_for_each(ha, uc). Return 0 on success or a
+ *	negative errno to request a retry via the core backoff.
+ *
+ * void (*ndo_work)(struct net_device *dev, unsigned long events);
+ *	Run deferred work scheduled with netdev_work_sched(@events).
  *
  * int (*ndo_set_mac_address)(struct net_device *dev, void *addr);
  *	This function  is called when the Media Access Control address
@@ -1149,8 +1165,8 @@ struct netdev_net_notifier {
  *	SIOCBONDSLAVEINFOQUERY, and SIOCBONDINFOQUERY
  *
  * * int (*ndo_eth_ioctl)(struct net_device *dev, struct ifreq *ifr, int cmd);
- *	Called for ethernet specific ioctls: SIOCGMIIPHY, SIOCGMIIREG,
- *	SIOCSMIIREG, SIOCSHWTSTAMP and SIOCGHWTSTAMP.
+ *	Called for ethernet specific ioctls: SIOCGMIIPHY, SIOCGMIIREG and
+ *	SIOCSMIIREG.
  *
  * int (*ndo_set_config)(struct net_device *dev, struct ifmap *map);
  *	Used to set network devices bus interface parameters. This interface
@@ -1222,6 +1238,12 @@ struct netdev_net_notifier {
  *	This is always called from the stack with the rtnl lock held and netif
  *	tx queues stopped. This allows the netdevice to perform queue
  *	management safely.
+ *
+ *	NB: Returning -EOPNOTSUPP for whatever commands means "this qdisc
+ *	is not offloaded (anymore, offloading may have silently stopped)",
+ *	and the offloading flag is cleared. Notably, this is also true for
+ *	dump queries (e.g. TC_*_STATS commands). If the underlying device does
+ *	not report any statistics but is still offloading, return 0 instead.
  *
  *	Fiber Channel over Ethernet (FCoE) offload functions.
  * int (*ndo_fcoe_enable)(struct net_device *dev);
@@ -1449,10 +1471,12 @@ struct net_device_ops {
 	void			(*ndo_change_rx_flags)(struct net_device *dev,
 						       int flags);
 	void			(*ndo_set_rx_mode)(struct net_device *dev);
-	void			(*ndo_set_rx_mode_async)(
+	int			(*ndo_set_rx_mode_async)(
 					struct net_device *dev,
 					struct netdev_hw_addr_list *uc,
 					struct netdev_hw_addr_list *mc);
+	void			(*ndo_work)(struct net_device *dev,
+					    unsigned long events);
 	int			(*ndo_set_mac_address)(struct net_device *dev,
 						       void *addr);
 	int			(*ndo_validate_addr)(struct net_device *dev);
@@ -1788,6 +1812,12 @@ enum netdev_stat_type {
 	NETDEV_PCPU_STAT_DSTATS, /* struct pcpu_dstats */
 };
 
+enum netmem_tx_mode {
+	NETMEM_TX_NONE,		/* no netmem TX support */
+	NETMEM_TX_DMA,		/* DMA-capable netmem TX (real HW) */
+	NETMEM_TX_NO_DMA,	/* no DMA, e.g. passthrough for virtual devs */
+};
+
 enum netdev_reg_state {
 	NETREG_UNINITIALIZED = 0,
 	NETREG_REGISTERED,	/* completed register_netdevice */
@@ -1809,7 +1839,7 @@ enum netdev_reg_state {
  *	@lltx:		device supports lockless Tx. Deprecated for real HW
  *			drivers. Mainly used by logical interfaces, such as
  *			bonding and tunnels
- *	@netmem_tx:	device support netmem_tx.
+ *	@netmem_tx:	device netmem TX mode
  *
  *	@name:	This is the first field of the "visible" part of this structure
  *		(i.e. as seen by users in the "Space.c" file).  It is the name
@@ -1827,6 +1857,8 @@ enum netdev_reg_state {
  *	@napi_list:	List entry used for polling NAPI devices
  *	@unreg_list:	List entry  when we are unregistering the
  *			device; see the function unregister_netdev
+ *	@unreg_list_net:List entry when we are unregistering the cross-netns
+ *			device; see the function unregister_netdevice_queue_net()
  *	@close_list:	List entry used when we are closing the device
  *	@ptype_all:     Device-specific packet handlers for all protocols
  *	@ptype_specific: Device-specific, protocol-specific packet handlers
@@ -1917,9 +1949,14 @@ enum netdev_reg_state {
  *				has been enabled due to the need to listen to
  *				additional unicast addresses in a device that
  *				does not implement ndo_set_rx_mode()
- *	@rx_mode_node:		List entry for rx_mode work processing
- *	@rx_mode_tracker:	Refcount tracker for rx_mode work
+ *	@work_node:		List entry for async netdev_work processing
+ *	@work_tracker:		Refcount tracker for async netdev_work
+ *	@work_pending:		Driver-defined pending netdev_work, passed to
+ *				ndo_work() (see netdev_work_sched())
+ *	@work_core_pending:	Core-defined pending netdev_work (NETDEV_WORK_*)
  *	@rx_mode_addr_cache:	Recycled snapshot entries for rx_mode work
+ *	@rx_mode_retry_timer:	Timer that re-queues rx_mode work after failure
+ *	@rx_mode_retry_count:	Number of consecutive retries already scheduled
  *	@uc:			unicast mac addresses
  *	@mc:			multicast mac addresses
  *	@dev_addrs:		list of device hw addresses
@@ -1932,10 +1969,8 @@ enum netdev_reg_state {
  *	@vlan_info:	VLAN info
  *	@dsa_ptr:	dsa specific data
  *	@tipc_ptr:	TIPC specific data
- *	@atalk_ptr:	AppleTalk link
  *	@ip_ptr:	IPv4 specific data
  *	@ip6_ptr:	IPv6 specific data
- *	@ax25_ptr:	AX.25 specific data
  *	@ieee80211_ptr:	IEEE 802.11 specific data, assign before registering
  *	@ieee802154_ptr: IEEE 802.15.4 low-rate Wireless Personal Area Network
  *			 device struct
@@ -1980,6 +2015,8 @@ enum netdev_reg_state {
  *	@qdisc_hash:		qdisc hash table
  *	@watchdog_timeo:	Represents the timeout that is used by
  *				the watchdog (see dev_watchdog())
+ *	@watchdog_lock:		protect watchdog_ref_held
+ *	@watchdog_ref_held:	True if the watchdog device ref is taken.
  *	@watchdog_timer:	List of timers
  *
  *	@proto_down_reason:	reason a netdev interface is held down
@@ -2132,7 +2169,7 @@ struct net_device {
 	struct_group(priv_flags_fast,
 		unsigned long		priv_flags:32;
 		unsigned long		lltx:1;
-		unsigned long		netmem_tx:1;
+		unsigned long		netmem_tx:2;
 	);
 	const struct net_device_ops *netdev_ops;
 	const struct header_ops *header_ops;
@@ -2218,6 +2255,9 @@ struct net_device {
 	struct list_head	dev_list;
 	struct list_head	napi_list;
 	struct list_head	unreg_list;
+#ifdef CONFIG_DEBUG_NET_SMALL_RTNL
+	struct list_head	unreg_list_net;
+#endif
 	struct list_head	close_list;
 	struct list_head	ptype_all;
 
@@ -2311,9 +2351,13 @@ struct net_device {
 	unsigned int		promiscuity;
 	unsigned int		allmulti;
 	bool			uc_promisc;
-	struct list_head	rx_mode_node;
-	netdevice_tracker	rx_mode_tracker;
+	struct list_head	work_node;
+	netdevice_tracker	work_tracker;
+	unsigned long		work_pending;
+	unsigned long		work_core_pending;
 	struct netdev_hw_addr_list	rx_mode_addr_cache;
+	struct timer_list	rx_mode_retry_timer;
+	unsigned int		rx_mode_retry_count;
 #ifdef CONFIG_LOCKDEP
 	unsigned char		nested_level;
 #endif
@@ -2332,9 +2376,6 @@ struct net_device {
 #endif
 #if IS_ENABLED(CONFIG_TIPC)
 	struct tipc_bearer __rcu *tipc_ptr;
-#endif
-#if IS_ENABLED(CONFIG_ATALK)
-	void 			*atalk_ptr;
 #endif
 #if IS_ENABLED(CONFIG_CFG80211)
 	struct wireless_dev	*ieee80211_ptr;
@@ -2392,6 +2433,8 @@ struct net_device {
 	/* These may be needed for future network-power-down code. */
 	struct timer_list	watchdog_timer;
 	int			watchdog_timeo;
+	spinlock_t		watchdog_lock;
+	bool			watchdog_ref_held;
 
 	u32                     proto_down_reason;
 
@@ -2572,6 +2615,9 @@ struct net_device {
 	 * Double protects:
 	 *	@up, @moving_ns, @nd_net, @xdp_features
 	 *
+	 * Ops protects:
+	 *	@cfg, @cfg_pending, @ethtool, @hwprov
+	 *
 	 * Double ops protects:
 	 *	@real_num_rx_queues, @real_num_tx_queues
 	 *
@@ -2629,16 +2675,16 @@ static inline bool netif_elide_gro(const struct net_device *dev)
 static inline
 int netdev_get_prio_tc_map(const struct net_device *dev, u32 prio)
 {
-	return dev->prio_tc_map[prio & TC_BITMASK];
+	return READ_ONCE(dev->prio_tc_map[prio & TC_BITMASK]);
 }
 
 static inline
 int netdev_set_prio_tc_map(struct net_device *dev, u8 prio, u8 tc)
 {
-	if (tc >= dev->num_tc)
+	if (tc >= READ_ONCE(dev->num_tc))
 		return -EINVAL;
 
-	dev->prio_tc_map[prio & TC_BITMASK] = tc & TC_BITMASK;
+	WRITE_ONCE(dev->prio_tc_map[prio & TC_BITMASK], tc & TC_BITMASK);
 	return 0;
 }
 
@@ -2648,9 +2694,9 @@ int netdev_set_tc_queue(struct net_device *dev, u8 tc, u16 count, u16 offset);
 int netdev_set_num_tc(struct net_device *dev, u8 num_tc);
 
 static inline
-int netdev_get_num_tc(struct net_device *dev)
+int netdev_get_num_tc(const struct net_device *dev)
 {
-	return dev->num_tc;
+	return READ_ONCE(dev->num_tc);
 }
 
 static inline void net_prefetch(void *p)
@@ -2677,7 +2723,7 @@ int netdev_bind_sb_channel_queue(struct net_device *dev,
 int netdev_set_sb_channel(struct net_device *dev, u16 channel);
 static inline int netdev_get_sb_channel(struct net_device *dev)
 {
-	return max_t(int, -dev->num_tc, 0);
+	return max_t(int, -READ_ONCE(dev->num_tc), 0);
 }
 
 static inline
@@ -3378,7 +3424,6 @@ static inline struct net_device *first_net_device(struct net *net)
 		net_device_entry(net->dev_base_head.next);
 }
 
-int netdev_boot_setup_check(struct net_device *dev);
 struct net_device *dev_getbyhwaddr(struct net *net, unsigned short type,
 				   const char *hwaddr);
 struct net_device *dev_getbyhwaddr_rcu(struct net *net, unsigned short type,
@@ -3392,8 +3437,9 @@ void dev_remove_offload(struct packet_offload *po);
 
 int dev_get_iflink(const struct net_device *dev);
 int dev_fill_metadata_dst(struct net_device *dev, struct sk_buff *skb);
-int dev_fill_forward_path(const struct net_device *dev, const u8 *daddr,
+int dev_fill_forward_path(struct net_device_path_ctx *ctx,
 			  struct net_device_path_stack *stack);
+void dev_fill_forward_path_release(struct net_device_path_stack *stack);
 struct net_device *dev_get_by_name(struct net *net, const char *name);
 struct net_device *dev_get_by_name_rcu(struct net *net, const char *name);
 struct net_device *__dev_get_by_name(struct net *net, const char *name);
@@ -3443,6 +3489,25 @@ static inline void unregister_netdevice(struct net_device *dev)
 {
 	unregister_netdevice_queue(dev, NULL);
 }
+
+#ifdef CONFIG_DEBUG_NET_SMALL_RTNL
+void unregister_netdevice_queue_net(struct net *net, struct net_device *dev,
+				    struct list_head *head);
+void unregister_netdevice_many_net(struct net *net);
+void unregister_netdevice_queue_many_net(struct net *net, struct list_head *head);
+#else
+static inline void unregister_netdevice_queue_net(struct net *net,
+						  struct net_device *dev,
+						  struct list_head *head)
+{
+	unregister_netdevice_queue(dev, head);
+}
+
+static inline void unregister_netdevice_queue_many_net(struct net *net,
+						       struct list_head *head)
+{
+}
+#endif
 
 int netdev_refcnt_read(const struct net_device *dev);
 void free_netdev(struct net_device *dev);
@@ -3502,11 +3567,6 @@ static inline bool dev_validate_header(const struct net_device *dev,
 		return true;
 	if (len < dev->min_header_len)
 		return false;
-
-	if (capable(CAP_SYS_RAWIO)) {
-		memset(ll_header + len, 0, dev->hard_header_len - len);
-		return true;
-	}
 
 	if (dev->header_ops && dev->header_ops->validate)
 		return dev->header_ops->validate(ll_header, len);
@@ -5138,6 +5198,7 @@ static inline void __dev_mc_unsync(struct net_device *dev,
 
 /* Functions used for secondary unicast and multicast support */
 void dev_set_rx_mode(struct net_device *dev);
+void netif_rx_mode_schedule_retry(struct net_device *dev);
 int netif_set_promiscuity(struct net_device *dev, int inc);
 int dev_set_promiscuity(struct net_device *dev, int inc);
 int netif_set_allmulti(struct net_device *dev, int inc, bool notify);
@@ -5156,6 +5217,9 @@ void netdev_stats_to_stats64(struct rtnl_link_stats64 *stats64,
 void dev_fetch_sw_netstats(struct rtnl_link_stats64 *s,
 			   const struct pcpu_sw_netstats __percpu *netstats);
 void dev_get_tstats64(struct net_device *dev, struct rtnl_link_stats64 *s);
+
+void netdev_work_sched(struct net_device *dev, unsigned long events);
+unsigned long netdev_work_cancel(struct net_device *dev, unsigned long mask);
 
 enum {
 	NESTED_SYNC_IMM_BIT,

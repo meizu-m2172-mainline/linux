@@ -1836,9 +1836,7 @@ static const struct msm_pinctrl_soc_data x1e80100_pinctrl = {
 	.ngroups = ARRAY_SIZE(x1e80100_groups),
 	.ngpios = 239,
 	.wakeirq_map = x1e80100_pdc_map,
-	/* TODO: Enabling PDC currently breaks GPIO interrupts */
-	.nwakeirq_map = 0,
-	/* .nwakeirq_map = ARRAY_SIZE(x1e80100_pdc_map), */
+	.nwakeirq_map = ARRAY_SIZE(x1e80100_pdc_map),
 	.egpio_func = 9,
 };
 
@@ -1851,6 +1849,7 @@ static const struct of_device_id x1e80100_pinctrl_of_match[] = {
 	{ .compatible = "qcom,x1e80100-tlmm", },
 	{ },
 };
+MODULE_DEVICE_TABLE(of, x1e80100_pinctrl_of_match);
 
 static struct platform_driver x1e80100_pinctrl_driver = {
 	.driver = {
@@ -1874,4 +1873,3 @@ module_exit(x1e80100_pinctrl_exit);
 
 MODULE_DESCRIPTION("QTI X1E80100 TLMM pinctrl driver");
 MODULE_LICENSE("GPL");
-MODULE_DEVICE_TABLE(of, x1e80100_pinctrl_of_match);

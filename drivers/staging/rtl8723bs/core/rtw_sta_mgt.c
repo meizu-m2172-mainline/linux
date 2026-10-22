@@ -67,7 +67,6 @@ u32 _rtw_init_sta_priv(struct	sta_priv *pstapriv)
 
 	spin_lock_init(&pstapriv->sta_hash_lock);
 
-	/* _rtw_init_queue(&pstapriv->asoc_q); */
 	pstapriv->asoc_sta_count = 0;
 	INIT_LIST_HEAD(&pstapriv->sleep_q.queue);
 	spin_lock_init(&pstapriv->sleep_q.lock);
@@ -249,7 +248,7 @@ struct	sta_info *rtw_alloc_stainfo(struct	sta_priv *pstapriv, u8 *hwaddr)
 
 		/* init recv timer */
 		timer_setup(&preorder_ctrl->reordering_ctrl_timer,
-				rtw_reordering_ctrl_timeout_handler, 0);
+			    rtw_reordering_ctrl_timeout_handler, 0);
 	}
 
 	/* init for DM */
@@ -257,7 +256,7 @@ struct	sta_info *rtw_alloc_stainfo(struct	sta_priv *pstapriv, u8 *hwaddr)
 	psta->rssi_stat.UndecoratedSmoothedCCK = (-1);
 
 	/* init for the sequence number of received management frame */
-	psta->RxMgmtFrameSeqNum = 0xffff;
+	psta->rx_mgmt_frame_seq_num = 0xffff;
 	spin_unlock_bh(&pstapriv->sta_hash_lock);
 	/* alloc mac id for non-bc/mc station, */
 	rtw_alloc_macid(pstapriv->padapter, psta);
@@ -455,7 +454,7 @@ void rtw_free_all_stainfo(struct adapter *padapter)
 /* any station allocated can be searched by hash list */
 struct sta_info *rtw_get_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
 {
-	struct list_head	*plist, *phead;
+	struct list_head *plist, *phead;
 	struct sta_info *psta = NULL;
 	u32 index;
 	u8 *addr;
@@ -531,7 +530,7 @@ u8 rtw_access_ctrl(struct adapter *padapter, u8 *mac_addr)
 		paclnode = list_entry(plist, struct rtw_wlan_acl_node, list);
 
 		if (!memcmp(paclnode->addr, mac_addr, ETH_ALEN))
-			if (paclnode->valid == true) {
+			if (paclnode->valid) {
 				match = true;
 				break;
 			}

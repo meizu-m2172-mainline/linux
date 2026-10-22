@@ -5,7 +5,6 @@
  * Author: Mark A. Greer <mgreer@animalcreek.com>
  */
 
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
@@ -243,7 +242,6 @@ struct bq24190_dev_info {
 	struct mutex			f_reg_lock;
 	u8				f_reg;
 	u8				ss_reg;
-	u8				watchdog;
 	const struct bq24190_chip_info	*info;
 };
 
@@ -752,13 +750,6 @@ static int bq24190_set_config(struct bq24190_dev_info *bdi)
 	int ret;
 	u8 v;
 
-	ret = bq24190_read(bdi, BQ24190_REG_CTTC, &v);
-	if (ret < 0)
-		return ret;
-
-	bdi->watchdog = ((v & BQ24190_REG_CTTC_WATCHDOG_MASK) >>
-					BQ24190_REG_CTTC_WATCHDOG_SHIFT);
-
 	/*
 	 * According to the "Host Mode and default Mode" section of the
 	 * manual, a write to any register causes the bq24190 to switch
@@ -767,9 +758,9 @@ static int bq24190_set_config(struct bq24190_dev_info *bdi)
 	 * So, by simply turning off the WDT, we accomplish both with the
 	 * same write.
 	 */
-	v &= ~BQ24190_REG_CTTC_WATCHDOG_MASK;
-
-	ret = bq24190_write(bdi, BQ24190_REG_CTTC, v);
+	ret = bq24190_write_mask(bdi, BQ24190_REG_CTTC,
+				 BQ24190_REG_CTTC_WATCHDOG_MASK,
+				 BQ24190_REG_CTTC_WATCHDOG_SHIFT, 0);
 	if (ret < 0)
 		return ret;
 
@@ -2170,10 +2161,8 @@ static int bq24190_probe(struct i2c_client *client)
 			bq24190_irq_handler_thread,
 			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 			"bq24190-charger", bdi);
-	if (ret < 0) {
-		dev_err(dev, "Can't set up irq handler\n");
+	if (ret < 0)
 		goto out_charger;
-	}
 
 	ret = bq24190_register_vbus_regulator(bdi);
 	if (ret < 0)
@@ -2308,14 +2297,14 @@ static const struct dev_pm_ops bq24190_pm_ops = {
 };
 
 static const struct i2c_device_id bq24190_i2c_ids[] = {
-	{ "bq24190", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24190] },
-	{ "bq24192", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24192] },
-	{ "bq24192i", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24192i] },
-	{ "bq24193", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24193] },
-	{ "bq24196", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24196] },
-	{ "bq24296", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24296] },
-	{ "bq24297", (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24297] },
-	{ },
+	{ .name = "bq24190", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24190] },
+	{ .name = "bq24192", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24192] },
+	{ .name = "bq24192i", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24192i] },
+	{ .name = "bq24193", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24193] },
+	{ .name = "bq24196", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24196] },
+	{ .name = "bq24296", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24296] },
+	{ .name = "bq24297", .driver_data = (kernel_ulong_t)&bq24190_chip_info_tbl[BQ24297] },
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bq24190_i2c_ids);
 

@@ -663,8 +663,11 @@ static netdev_tx_t mlxsw_sp_port_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
-static void mlxsw_sp_set_rx_mode(struct net_device *dev)
+static int mlxsw_sp_set_rx_mode_async(struct net_device *dev,
+				      struct netdev_hw_addr_list *uc,
+				      struct netdev_hw_addr_list *mc)
 {
+	return 0;
 }
 
 static int mlxsw_sp_port_set_mac_address(struct net_device *dev, void *p)
@@ -1191,7 +1194,7 @@ static const struct net_device_ops mlxsw_sp_port_netdev_ops = {
 	.ndo_stop		= mlxsw_sp_port_stop,
 	.ndo_start_xmit		= mlxsw_sp_port_xmit,
 	.ndo_setup_tc           = mlxsw_sp_setup_tc,
-	.ndo_set_rx_mode	= mlxsw_sp_set_rx_mode,
+	.ndo_set_rx_mode_async	= mlxsw_sp_set_rx_mode_async,
 	.ndo_set_mac_address	= mlxsw_sp_port_set_mac_address,
 	.ndo_change_mtu		= mlxsw_sp_port_change_mtu,
 	.ndo_get_stats64	= mlxsw_sp_port_get_stats64,
@@ -1549,6 +1552,7 @@ static int mlxsw_sp_port_create(struct mlxsw_sp *mlxsw_sp, u16 local_port,
 	dev->vlan_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
 	dev->lltx = true;
 	dev->netns_immutable = true;
+	dev->request_ops_lock = true;
 
 	dev->min_mtu = ETH_MIN_MTU;
 	dev->max_mtu = MLXSW_PORT_MAX_MTU - MLXSW_PORT_ETH_FRAME_HDR;
@@ -4360,7 +4364,7 @@ static int mlxsw_sp_port_lag_join(struct mlxsw_sp_port *mlxsw_sp_port,
 	lag_id = lag->lag_id;
 	err = mlxsw_sp_port_lag_index_get(mlxsw_sp, lag_id, &port_index);
 	if (err)
-		return err;
+		goto err_lag_uppers_bridge_join;
 
 	err = mlxsw_sp_lag_uppers_bridge_join(mlxsw_sp_port, lag_dev,
 					      extack);
@@ -5277,8 +5281,8 @@ static int mlxsw_sp_netdevice_event(struct notifier_block *nb,
 }
 
 static const struct pci_device_id mlxsw_sp1_pci_id_table[] = {
-	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM), 0},
-	{0, },
+	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM) },
+	{ },
 };
 
 static struct pci_driver mlxsw_sp1_pci_driver = {
@@ -5287,8 +5291,8 @@ static struct pci_driver mlxsw_sp1_pci_driver = {
 };
 
 static const struct pci_device_id mlxsw_sp2_pci_id_table[] = {
-	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM2), 0},
-	{0, },
+	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM2) },
+	{ },
 };
 
 static struct pci_driver mlxsw_sp2_pci_driver = {
@@ -5297,8 +5301,8 @@ static struct pci_driver mlxsw_sp2_pci_driver = {
 };
 
 static const struct pci_device_id mlxsw_sp3_pci_id_table[] = {
-	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM3), 0},
-	{0, },
+	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM3) },
+	{ },
 };
 
 static struct pci_driver mlxsw_sp3_pci_driver = {
@@ -5307,8 +5311,8 @@ static struct pci_driver mlxsw_sp3_pci_driver = {
 };
 
 static const struct pci_device_id mlxsw_sp4_pci_id_table[] = {
-	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM4), 0},
-	{0, },
+	{PCI_VDEVICE(MELLANOX, PCI_DEVICE_ID_MELLANOX_SPECTRUM4) },
+	{ },
 };
 
 static struct pci_driver mlxsw_sp4_pci_driver = {

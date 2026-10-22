@@ -61,15 +61,15 @@
  * support that.  So, if an abort is received before trf7970a_send_cmd()
  * has sent the command to the tag, it simply returns -ECANCELED.  If the
  * command has already been sent to the tag, then the driver continues
- * normally and recieves the response data (or error) but just before
+ * normally and receives the response data (or error) but just before
  * sending the data upstream, it frees the rx_skb and sends -ECANCELED
  * upstream instead.  If the command failed, that error will be sent
  * upstream.
  *
- * When recieving data from a tag and the interrupt status register has
+ * When receiving data from a tag and the interrupt status register has
  * only the SRX bit set, it means that all of the data has been received
  * (once what's in the fifo has been read).  However, depending on timing
- * an interrupt status with only the SRX bit set may not be recived.  In
+ * an interrupt status with only the SRX bit set may not be received.  In
  * those cases, the timeout mechanism is used to wait 20 ms in case more
  * data arrives.  After 20 ms, it is assumed that all of the data has been
  * received and the accumulated rx data is sent upstream.  The
@@ -938,7 +938,7 @@ static irqreturn_t trf7970a_irq(int irq, void *dev_id)
 			if (!trf->timeout) {
 				trf->ignore_timeout =
 				    !cancel_delayed_work(&trf->timeout_work);
-				trf->rx_skb = ERR_PTR(0);
+				trf->rx_skb = NULL;
 				trf7970a_send_upstream(trf);
 				break;
 			}
@@ -1997,8 +1997,10 @@ static int trf7970a_startup(struct trf7970a *trf)
 		return ret;
 
 	ret = trf7970a_update_rx_gain_reduction(trf);
-	if (ret)
+	if (ret) {
+		trf7970a_power_down(trf);
 		return ret;
+	}
 
 	pm_runtime_set_active(trf->dev);
 	pm_runtime_enable(trf->dev);
@@ -2303,18 +2305,16 @@ static const struct dev_pm_ops trf7970a_pm_ops = {
 			   trf7970a_pm_runtime_resume, NULL)
 };
 
-static const struct of_device_id trf7970a_of_match[] __maybe_unused = {
-	{.compatible = "ti,trf7970a",},
-	{},
+static const struct of_device_id trf7970a_of_match[] = {
+	{ .compatible = "ti,trf7970a" },
+	{ }
 };
-
 MODULE_DEVICE_TABLE(of, trf7970a_of_match);
 
 static const struct spi_device_id trf7970a_id_table[] = {
-	{"trf7970a", 0},
-	{}
+	{ .name = "trf7970a" },
+	{ }
 };
-
 MODULE_DEVICE_TABLE(spi, trf7970a_id_table);
 
 static struct spi_driver trf7970a_spi_driver = {

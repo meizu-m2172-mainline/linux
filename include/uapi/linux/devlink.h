@@ -406,6 +406,7 @@ enum devlink_var_attr_type {
 	DEVLINK_VAR_ATTR_TYPE_BINARY,
 	__DEVLINK_VAR_ATTR_TYPE_CUSTOM_BASE = 0x80,
 	/* Any possible custom types, unrelated to NLA_* values go below */
+	DEVLINK_VAR_ATTR_TYPE_U64_ARRAY,
 };
 
 enum devlink_attr {
@@ -646,6 +647,8 @@ enum devlink_attr {
 
 	DEVLINK_ATTR_INDEX,			/* uint */
 	DEVLINK_ATTR_RESOURCE_SCOPE_MASK,	/* u32 */
+
+	DEVLINK_ATTR_PARENT_DEV,		/* nested */
 
 	/* Add new attributes above here, update the spec in
 	 * Documentation/netlink/specs/devlink.yaml and re-generate

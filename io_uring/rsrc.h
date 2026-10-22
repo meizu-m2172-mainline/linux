@@ -2,8 +2,10 @@
 #ifndef IOU_RSRC_H
 #define IOU_RSRC_H
 
+#include <linux/bvec.h>
 #include <linux/io_uring_types.h>
 #include <linux/lockdep.h>
+#include <linux/uio.h>
 
 #define IO_VEC_CACHE_SOFT_CAP		256
 
@@ -24,25 +26,19 @@ struct io_rsrc_node {
 };
 
 enum {
-	IO_IMU_DEST	= 1 << ITER_DEST,
-	IO_IMU_SOURCE	= 1 << ITER_SOURCE,
-};
-
-enum {
 	IO_REGBUF_F_KBUF		= 1,
 };
 
 struct io_mapped_ubuf {
 	u64		ubuf;
-	unsigned int	len;
+	size_t		len;
 	unsigned int	nr_bvecs;
 	unsigned int    folio_shift;
 	refcount_t	refs;
-	unsigned long	acct_pages;
-	void		(*release)(void *);
-	void		*priv;
 	u8		flags;
 	u8		dir;
+	void		(*release)(void *);
+	void		*priv;
 	struct bio_vec	bvec[] __counted_by(nr_bvecs);
 };
 

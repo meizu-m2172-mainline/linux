@@ -36,17 +36,23 @@ static void dml21_populate_pmo_options(struct dml2_pmo_options *pmo_options,
 	pmo_options->disable_drr_var_when_var_active = in_dc->debug.disable_fams_gaming == INGAME_FAMS_DISABLE ||
 			in_dc->debug.disable_fams_gaming == INGAME_FAMS_MULTI_DISP_CLAMPED_ONLY;
 	pmo_options->disable_drr_clamped_when_var_active = in_dc->debug.disable_fams_gaming == INGAME_FAMS_DISABLE;
+
+	pmo_options->force_mandatory_uclk_pstate_support = config->pmo.force_mandatory_uclk_pstate_support;
 }
 
-static enum dml2_project_id dml21_dcn_revision_to_dml2_project_id(enum dce_version dcn_version)
+static enum dml2_project_id dml21_dcn_revision_to_dml2_project_id(const struct dc *in_dc)
 {
 	enum dml2_project_id project_id;
-	switch (dcn_version) {
+	switch (in_dc->ctx->dce_version) {
 	case DCN_VERSION_4_01:
 		project_id = dml2_project_dcn4x_stage2_auto_drr_svp;
 		break;
 	case DCN_VERSION_4_2:
+	case DCN_VERSION_4_2B:
 		project_id = dml2_project_dcn42;
+		break;
+	case DCN_VERSION_6_0:
+		project_id = dml2_project_dcn6x_soc_var_a;
 		break;
 	default:
 		project_id = dml2_project_invalid;
@@ -61,7 +67,7 @@ void dml21_populate_dml_init_params(struct dml2_initialize_instance_in_out *dml_
 		const struct dml2_configuration_options *config,
 		const struct dc *in_dc)
 {
-	dml_init->options.project_id = dml21_dcn_revision_to_dml2_project_id(in_dc->ctx->dce_version);
+	dml_init->options.project_id = dml21_dcn_revision_to_dml2_project_id(in_dc);
 
 	if (config->use_native_soc_bb_construction) {
 		in_dc->soc_and_ip_translator->translator_funcs->get_soc_bb(&dml_init->soc_bb, in_dc, config);
@@ -72,6 +78,9 @@ void dml21_populate_dml_init_params(struct dml2_initialize_instance_in_out *dml_
 	}
 
 	dml21_populate_pmo_options(&dml_init->options.pmo_options, in_dc, config);
+
+	if (in_dc->clk_mgr && in_dc->clk_mgr->bw_params)
+		dml_init->overrides.explicit_qos_model = in_dc->clk_mgr->bw_params->utm_qos_model;
 }
 
 static unsigned int calc_max_hardware_v_total(const struct dc_stream_state *stream)
@@ -87,36 +96,39 @@ static unsigned int calc_max_hardware_v_total(const struct dc_stream_state *stre
 
 static void populate_dml21_timing_config_from_stream_state(struct dml2_timing_cfg *timing,
 		struct dc_stream_state *stream,
-		struct pipe_ctx *pipe_ctx,
+		struct pipe_ctx *otg_master_pipe,
 		struct dml2_context *dml_ctx)
 {
+	const unsigned int min_v_front_porch = (stream->timing.flags.INTERLACE != 0) ? 2 : 1;
+
 	unsigned int hblank_start, vblank_start;
 	uint64_t min_hardware_refresh_in_uhz;
 	uint32_t pix_clk_100hz;
 
-	timing->h_active = stream->timing.h_addressable + stream->timing.h_border_left + stream->timing.h_border_right + pipe_ctx->dsc_padding_params.dsc_hactive_padding;
+	timing->h_active = stream->timing.h_addressable + stream->timing.h_border_left + stream->timing.h_border_right + otg_master_pipe->dsc_padding_params.dsc_hactive_padding;
 	timing->v_active = stream->timing.v_addressable + stream->timing.v_border_bottom + stream->timing.v_border_top;
 	timing->h_front_porch = stream->timing.h_front_porch;
-	timing->v_front_porch = stream->timing.v_front_porch;
+	timing->v_front_porch = stream->timing.v_front_porch > min_v_front_porch ?
+			stream->timing.v_front_porch : min_v_front_porch;
 	timing->pixel_clock_khz = stream->timing.pix_clk_100hz / 10;
-	if (pipe_ctx->dsc_padding_params.dsc_hactive_padding != 0)
-		timing->pixel_clock_khz = pipe_ctx->dsc_padding_params.dsc_pix_clk_100hz / 10;
+	if (otg_master_pipe->dsc_padding_params.dsc_hactive_padding != 0)
+		timing->pixel_clock_khz = otg_master_pipe->dsc_padding_params.dsc_pix_clk_100hz / 10;
 	if (stream->timing.timing_3d_format == TIMING_3D_FORMAT_HW_FRAME_PACKING)
 		timing->pixel_clock_khz *= 2;
-	timing->h_total = stream->timing.h_total + pipe_ctx->dsc_padding_params.dsc_htotal_padding;
+	timing->h_total = stream->timing.h_total + otg_master_pipe->dsc_padding_params.dsc_htotal_padding;
 	timing->v_total = stream->timing.v_total;
 	timing->h_sync_width = stream->timing.h_sync_width;
 	timing->interlaced = (stream->timing.flags.INTERLACE != 0);
 
 	hblank_start = stream->timing.h_total - stream->timing.h_front_porch;
 
-	timing->h_blank_end = hblank_start - stream->timing.h_addressable - pipe_ctx->dsc_padding_params.dsc_hactive_padding
+	timing->h_blank_end = hblank_start - stream->timing.h_addressable - otg_master_pipe->dsc_padding_params.dsc_hactive_padding
 		- stream->timing.h_border_left - stream->timing.h_border_right;
 
 	if (hblank_start < stream->timing.h_addressable)
 		timing->h_blank_end = 0;
 
-	vblank_start = stream->timing.v_total - stream->timing.v_front_porch;
+	vblank_start = timing->v_total - timing->v_front_porch;
 
 	timing->v_blank_end = vblank_start - stream->timing.v_addressable
 		- stream->timing.v_border_top - stream->timing.v_border_bottom;
@@ -129,8 +141,8 @@ static void populate_dml21_timing_config_from_stream_state(struct dml2_timing_cf
 	/* limit min refresh rate to DC cap */
 	min_hardware_refresh_in_uhz = stream->timing.min_refresh_in_uhz;
 	if (stream->ctx->dc->caps.max_v_total != 0) {
-		if (pipe_ctx->dsc_padding_params.dsc_hactive_padding != 0) {
-			pix_clk_100hz = pipe_ctx->dsc_padding_params.dsc_pix_clk_100hz;
+		if (otg_master_pipe->dsc_padding_params.dsc_hactive_padding != 0) {
+			pix_clk_100hz = otg_master_pipe->dsc_padding_params.dsc_pix_clk_100hz;
 		} else {
 			pix_clk_100hz = stream->timing.pix_clk_100hz;
 		}
@@ -191,7 +203,7 @@ static void populate_dml21_timing_config_from_stream_state(struct dml2_timing_cf
 }
 
 static void populate_dml21_output_config_from_stream_state(struct dml2_link_output_cfg *output,
-		struct dc_stream_state *stream, const struct pipe_ctx *pipe)
+		struct dc_stream_state *stream, const struct pipe_ctx *otg_master_pipe)
 {
 	output->output_dp_lane_count = 4;
 
@@ -199,7 +211,7 @@ static void populate_dml21_output_config_from_stream_state(struct dml2_link_outp
 	case SIGNAL_TYPE_DISPLAY_PORT_MST:
 	case SIGNAL_TYPE_DISPLAY_PORT:
 		output->output_encoder = dml2_dp;
-		if (check_dp2p0_output_encoder(pipe))
+		if (check_dp2p0_output_encoder(otg_master_pipe))
 			output->output_encoder = dml2_dp2p0;
 		break;
 	case SIGNAL_TYPE_EDP:
@@ -209,6 +221,9 @@ static void populate_dml21_output_config_from_stream_state(struct dml2_link_outp
 	case SIGNAL_TYPE_DVI_SINGLE_LINK:
 	case SIGNAL_TYPE_DVI_DUAL_LINK:
 		output->output_encoder = dml2_hdmi;
+		break;
+	case SIGNAL_TYPE_HDMI_FRL:
+		output->output_encoder = dml2_hdmifrl;
 		break;
 	default:
 			output->output_encoder = dml2_dp;
@@ -244,6 +259,7 @@ static void populate_dml21_output_config_from_stream_state(struct dml2_link_outp
 	case SIGNAL_TYPE_DISPLAY_PORT_MST:
 	case SIGNAL_TYPE_EDP:
 	case SIGNAL_TYPE_VIRTUAL:
+	case SIGNAL_TYPE_HDMI_FRL:
 	default:
 		output->output_dp_link_rate = dml2_dp_rate_na;
 		break;
@@ -255,6 +271,61 @@ static void populate_dml21_output_config_from_stream_state(struct dml2_link_outp
 
 	//TODO : New to DML2.1. How do we populate this ?
 	// output->validate_output
+}
+
+static void populate_dml21_writeback_config_from_stream_state(struct dml2_writeback_cfg *writeback,
+		const struct dc_stream_state *stream)
+{
+	if (stream->num_wb_info > 0) {
+		writeback->active_writebacks_per_stream = stream->num_wb_info <= DML2_MAX_WRITEBACK ?
+				stream->num_wb_info : DML2_MAX_WRITEBACK;
+
+		ASSERT(stream->num_wb_info <= DML2_MAX_WRITEBACK);
+
+		for (unsigned int wb_index = 0; wb_index < stream->num_wb_info; wb_index++) {
+			const struct dc_writeback_info *dc_wb_info = &stream->writeback_info[wb_index];
+			struct dml2_writeback_info *wb_info = &writeback->writeback_stream[wb_index];
+
+			switch (dc_wb_info->dwb_params.cnv_params.fc_out_format) {
+			case DWB_OUT_FORMAT_64BPP_ARGB:
+			case DWB_OUT_FORMAT_64BPP_RGBA:
+				wb_info->pixel_format = dml2_444_64;
+				break;
+			case DWB_OUT_FORMAT_32BPP_ARGB:
+			case DWB_OUT_FORMAT_32BPP_RGBA:
+			default:
+				wb_info->pixel_format = dml2_444_32;
+				break;
+			}
+
+			wb_info->input_width = dc_wb_info->dwb_params.cnv_params.crop_en ?
+					dc_wb_info->dwb_params.cnv_params.crop_width :
+					dc_wb_info->dwb_params.cnv_params.src_width;
+			wb_info->input_height = dc_wb_info->dwb_params.cnv_params.crop_en ?
+					dc_wb_info->dwb_params.cnv_params.crop_height :
+					dc_wb_info->dwb_params.cnv_params.src_height;
+			wb_info->output_width = dc_wb_info->dwb_params.dest_width;
+			wb_info->output_height = dc_wb_info->dwb_params.dest_height;
+			wb_info->v_taps = dc_wb_info->dwb_params.scaler_taps.v_taps > 0 ?
+					dc_wb_info->dwb_params.scaler_taps.v_taps : 1;
+			wb_info->h_taps = dc_wb_info->dwb_params.scaler_taps.h_taps > 0 ?
+					dc_wb_info->dwb_params.scaler_taps.h_taps : 1;
+			wb_info->v_taps_chroma = dc_wb_info->dwb_params.scaler_taps.v_taps_c > 0 ?
+					dc_wb_info->dwb_params.scaler_taps.v_taps_c : 1;
+			wb_info->h_taps_chroma = dc_wb_info->dwb_params.scaler_taps.h_taps_c > 0 ?
+					dc_wb_info->dwb_params.scaler_taps.h_taps_c : 1;
+			wb_info->h_ratio = dc_wb_info->dwb_params.cnv_params.crop_en ?
+					(double)dc_wb_info->dwb_params.cnv_params.crop_width /
+					(double)dc_wb_info->dwb_params.dest_width :
+					(double)dc_wb_info->dwb_params.cnv_params.src_width /
+					(double)dc_wb_info->dwb_params.dest_width;
+			wb_info->v_ratio = dc_wb_info->dwb_params.cnv_params.crop_en ?
+					(double)dc_wb_info->dwb_params.cnv_params.crop_height /
+					(double)dc_wb_info->dwb_params.dest_height :
+					(double)dc_wb_info->dwb_params.cnv_params.src_height /
+					(double)dc_wb_info->dwb_params.dest_height;
+		}
+	}
 }
 
 static void populate_dml21_stream_overrides_from_stream_state(
@@ -382,8 +453,8 @@ static void populate_dml21_dummy_surface_cfg(struct dml2_surface_cfg *surface, c
 	surface->plane0.pitch = ((surface->plane0.width + 127) / 128) * 128;
 	surface->plane1.pitch = 0;
 	surface->dcc.enable = false;
-	surface->dcc.informative.dcc_rate_plane0 = 1.0;
-	surface->dcc.informative.dcc_rate_plane1 = 1.0;
+	surface->dcc.informative.dcc_rate_plane0 = 2.0;
+	surface->dcc.informative.dcc_rate_plane1 = 2.0;
 	surface->dcc.informative.fraction_of_zero_size_request_plane0 = 0;
 	surface->dcc.informative.fraction_of_zero_size_request_plane1 = 0;
 	surface->tiling = dml2_sw_64kb_2d;
@@ -452,8 +523,8 @@ static void populate_dml21_surface_config_from_plane_state(
 	surface->plane1.height = plane_state->plane_size.chroma_size.height;
 	surface->plane1.width = plane_state->plane_size.chroma_size.width;
 	surface->dcc.enable = plane_state->dcc.enable;
-	surface->dcc.informative.dcc_rate_plane0 = 1.0;
-	surface->dcc.informative.dcc_rate_plane1 = 1.0;
+	surface->dcc.informative.dcc_rate_plane0 = 2.0;
+	surface->dcc.informative.dcc_rate_plane1 = 2.0;
 	surface->dcc.informative.fraction_of_zero_size_request_plane0 = plane_state->dcc.independent_64b_blks;
 	surface->dcc.informative.fraction_of_zero_size_request_plane1 = plane_state->dcc.independent_64b_blks_c;
 	surface->dcc.plane0.pitch = plane_state->dcc.meta_pitch;
@@ -463,7 +534,6 @@ static void populate_dml21_surface_config_from_plane_state(
 	switch (plane_state->tiling_info.gfxversion) {
 	case DcGfxVersion7:
 	case DcGfxVersion8:
-		break;
 	case DcGfxVersion9:
 	case DcGfxVersion10:
 	case DcGfxVersion11:
@@ -541,6 +611,36 @@ static void populate_dml21_plane_config_from_plane_state(struct dml2_context *dm
 	case SURFACE_PIXEL_FORMAT_GRPH_RGBE_ALPHA:
 		plane->pixel_format = dml2_rgbe_alpha;
 		break;
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CrCb_P208:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CbCr_P208:
+		plane->pixel_format = dml2_422_planar_8;
+		break;
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CrCb_P210:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CbCr_P210:
+		plane->pixel_format = dml2_422_planar_10;
+		break;
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CrCb_P212:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CbCr_P212:
+		plane->pixel_format = dml2_422_planar_12;
+		break;
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_YCrYCb:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_YCbYCr:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CrYCbY:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_CbYCrY:
+		plane->pixel_format = dml2_422_packed_8;
+		break;
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrYCb:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbYCr:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CrYCbY:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CbYCrY:
+		plane->pixel_format = dml2_422_packed_10;
+		break;
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrYCb:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbYCr:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CrYCbY:
+	case SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CbYCrY:
+		plane->pixel_format = dml2_422_packed_12;
+		break;
 	default:
 		plane->pixel_format = dml2_444_32;
 		break;
@@ -574,6 +674,8 @@ static void populate_dml21_plane_config_from_plane_state(struct dml2_context *dm
 			(scaler_data->taps.h_taps_c > 1) || (scaler_data->taps.v_taps_c > 1))
 			plane->composition.scaler_info.enabled = true;
 	}
+
+	plane->composition.scaler_info.upsp_enabled = (scaler_data->upsp != UPSP_BYPASS);
 
 	/* always_scale is only used for debug purposes not used in production but has to be
 	 * maintained for certain complainces. */
@@ -610,6 +712,7 @@ static void populate_dml21_plane_config_from_plane_state(struct dml2_context *dm
 
 	plane->composition.viewport.stationary = false;
 
+#ifndef TRIM_CM2
 	if (plane_state->mcm_luts.lut3d_data.lut3d_src == DC_CM2_TRANSFER_FUNC_SOURCE_VIDMEM) {
 		plane->tdlut.setup_for_tdlut = true;
 
@@ -640,7 +743,39 @@ static void populate_dml21_plane_config_from_plane_state(struct dml2_context *dm
 			break;
 		}
 	}
+#else
+	if (plane_state->cm.flags.bits.lut3d_dma_enable) {
+		plane->tdlut.setup_for_tdlut = true;
 
+		switch (plane_state->cm.lut3d_dma.swizzle) {
+		case CM_LUT_3D_SWIZZLE_LINEAR_RGB:
+		case CM_LUT_3D_SWIZZLE_LINEAR_BGR:
+			plane->tdlut.tdlut_addressing_mode = dml2_tdlut_sw_linear;
+			break;
+		case CM_LUT_1D_PACKED_LINEAR:
+			plane->tdlut.tdlut_addressing_mode = dml2_tdlut_simple_linear;
+			break;
+		}
+
+		switch (plane_state->cm.lut3d_dma.size) {
+		case CM_LUT_SIZE_171717:
+			plane->tdlut.tdlut_width_mode = dml2_tdlut_width_17_cube;
+			break;
+		case CM_LUT_SIZE_333333:
+			plane->tdlut.tdlut_width_mode = dml2_tdlut_width_33_cube;
+			break;
+		// handling when use case and HW support available
+		case CM_LUT_SIZE_454545:
+		case CM_LUT_SIZE_656565:
+			break;
+		case CM_LUT_SIZE_NONE:
+		case CM_LUT_SIZE_999:
+		default:
+			//plane->tdlut.tdlut_width_mode = dml2_tdlut_width_flatten; // dml2_tdlut_width_flatten undefined
+			break;
+		}
+	}
+#endif // TRIM_CM2
 	plane->tdlut.setup_for_tdlut |= dml_ctx->config.force_tdlut_enable;
 
 	plane->dynamic_meta_data.enable = false;
@@ -654,7 +789,8 @@ static void populate_dml21_plane_config_from_plane_state(struct dml2_context *dm
 	plane->overrides.gpuvm_min_page_size_kbytes = soc_bb->gpuvm_min_page_size_kbytes;
 	plane->overrides.hostvm_min_page_size_kbytes = soc_bb->hostvm_min_page_size_kbytes;
 
-	plane->immediate_flip = plane_state->flip_immediate;
+	//Always true for DAL, we want to validate the worst case scenario as we have to switch b/w the two without possibility of failure.
+	plane->immediate_flip = true;
 
 	plane->composition.rect_out_height_spans_vactive =
 		plane_state->dst_rect.height >= stream->src.height &&
@@ -737,6 +873,9 @@ static enum dml2_uclk_pstate_change_strategy dml21_force_pstate_method_to_uclk_s
 	case dml2_force_pstate_method_subvp:
 		val = dml2_uclk_pstate_change_strategy_force_mall_svp;
 		break;
+	case dml2_force_pstate_method_alternate:
+		val = dml2_uclk_pstate_change_strategy_force_alternate;
+		break;
 	case dml2_force_pstate_method_auto:
 	default:
 		val = dml2_uclk_pstate_change_strategy_auto;
@@ -751,6 +890,7 @@ bool dml21_map_dc_state_into_dml_display_cfg(const struct dc *in_dc, struct dc_s
 	int disp_cfg_stream_location, disp_cfg_plane_location;
 	struct dml2_display_cfg *dml_dispcfg = &dml_ctx->v21.display_config;
 	unsigned int plane_count = 0;
+	struct pipe_ctx *otg_master_pipe;
 
 	memset(&dml_ctx->v21.dml_to_dc_pipe_mapping, 0, sizeof(struct dml2_dml_to_dc_pipe_mapping));
 
@@ -775,9 +915,13 @@ bool dml21_map_dc_state_into_dml_display_cfg(const struct dc *in_dc, struct dc_s
 		if (disp_cfg_stream_location < 0)
 			disp_cfg_stream_location = dml_dispcfg->num_streams++;
 
+		otg_master_pipe = dml_ctx->config.callbacks.get_otg_master_for_stream(&context->res_ctx, context->streams[stream_index]);
+		ASSERT(otg_master_pipe);
+
 		ASSERT(disp_cfg_stream_location >= 0 && disp_cfg_stream_location < __DML2_WRAPPER_MAX_STREAMS_PLANES__);
-		populate_dml21_timing_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].timing, context->streams[stream_index], &context->res_ctx.pipe_ctx[stream_index], dml_ctx);
-		populate_dml21_output_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].output, context->streams[stream_index], &context->res_ctx.pipe_ctx[stream_index]);
+		populate_dml21_timing_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].timing, context->streams[stream_index], otg_master_pipe, dml_ctx);
+		populate_dml21_output_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].output, context->streams[stream_index], otg_master_pipe);
+		populate_dml21_writeback_config_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location].writeback, context->streams[stream_index]);
 		populate_dml21_stream_overrides_from_stream_state(&dml_dispcfg->stream_descriptors[disp_cfg_stream_location], context->streams[stream_index], &context->stream_status[stream_index]);
 
 		dml_dispcfg->stream_descriptors[disp_cfg_stream_location].overrides.hw.twait_budgeting.fclk_pstate = dml2_twait_budgeting_setting_if_needed;
@@ -848,10 +992,13 @@ void dml21_copy_clocks_to_dc_state(struct dml2_context *in_ctx, struct dc_state 
 	context->bw_ctx.bw.dcn.clk.socclk_khz = in_ctx->v21.mode_programming.programming->min_clocks.dcn4x.socclk_khz;
 	context->bw_ctx.bw.dcn.clk.subvp_prefetch_dramclk_khz = in_ctx->v21.mode_programming.programming->min_clocks.dcn4x.svp_prefetch_no_throttle.uclk_khz;
 	context->bw_ctx.bw.dcn.clk.subvp_prefetch_fclk_khz = in_ctx->v21.mode_programming.programming->min_clocks.dcn4x.svp_prefetch_no_throttle.fclk_khz;
-	context->bw_ctx.bw.dcn.clk.stutter_efficiency.base_efficiency = in_ctx->v21.mode_programming.programming->stutter.base_percent_efficiency;
-	context->bw_ctx.bw.dcn.clk.stutter_efficiency.low_power_efficiency = in_ctx->v21.mode_programming.programming->stutter.low_power_percent_efficiency;
-	context->bw_ctx.bw.dcn.clk.stutter_efficiency.z8_stutter_efficiency = in_ctx->v21.mode_programming.programming->informative.power_management.z8.stutter_efficiency;
-	context->bw_ctx.bw.dcn.clk.stutter_efficiency.z8_stutter_period = in_ctx->v21.mode_programming.programming->informative.power_management.z8.stutter_period;
+	context->bw_ctx.bw.dcn.clk.utm_latency_ub_index = 0; /* TODO - derive from qos model */
+	context->bw_ctx.bw.dcn.clk.utm_nominal_bandwidth_lb_Kbps = (unsigned int) in_ctx->v21.mode_programming.programming->qos_bound.bandwidth_lb.dcn5.non_urgent_bandwidth_kbps;
+	context->bw_ctx.bw.dcn.clk.utm_urgent_bandwidth_lb_Kbps = (unsigned int) in_ctx->v21.mode_programming.programming->qos_bound.bandwidth_lb.dcn5.urgent_bandwidth_kbps;
+	context->bw_ctx.bw.dcn.clk.stutter_efficiency.base_efficiency = (uint8_t)in_ctx->v21.mode_programming.programming->stutter.base_percent_efficiency;
+	context->bw_ctx.bw.dcn.clk.stutter_efficiency.low_power_efficiency = (uint8_t)in_ctx->v21.mode_programming.programming->stutter.low_power_percent_efficiency;
+	context->bw_ctx.bw.dcn.clk.stutter_efficiency.z8_stutter_efficiency = (uint8_t)in_ctx->v21.mode_programming.programming->informative.power_management.z8.stutter_efficiency;
+	context->bw_ctx.bw.dcn.clk.stutter_efficiency.z8_stutter_period = (int)in_ctx->v21.mode_programming.programming->informative.power_management.z8.stutter_period;
 	context->bw_ctx.bw.dcn.clk.zstate_support = in_ctx->v21.mode_programming.programming->z8_stutter.supported_in_blank; /*ignore meets_eco since it is not used*/
 }
 
@@ -956,6 +1103,9 @@ void dml21_set_dc_p_state_type(
 		else
 			pipe_ctx->p_state_type = P_STATE_FPO;
 		break;
+	case dml2_pstate_method_alternate:
+		pipe_ctx->p_state_type = P_STATE_ALT;
+		break;
 	default:
 		pipe_ctx->p_state_type = P_STATE_UNKNOWN;
 		break;
@@ -983,6 +1133,9 @@ void dml21_init_min_clocks_for_dc_state(struct dml2_context *in_ctx, struct dc_s
 	min_clocks->subvp_prefetch_dramclk_khz = 0;
 	min_clocks->subvp_prefetch_fclk_khz = 0;
 	min_clocks->phyclk_khz = in_ctx->v21.dml_init.soc_bb.clk_table.phyclk.clk_values_khz[lowest_dpm_state_index];
+	min_clocks->utm_latency_ub_index = 0; /* TODO - derive from qos model */
+	min_clocks->utm_nominal_bandwidth_lb_Kbps = 0;
+	min_clocks->utm_urgent_bandwidth_lb_Kbps = 0;
 	min_clocks->stutter_efficiency.base_efficiency = 1;
 	min_clocks->stutter_efficiency.low_power_efficiency = 1;
 	min_clocks->stutter_efficiency.z8_stutter_efficiency = 1;

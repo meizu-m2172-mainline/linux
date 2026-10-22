@@ -322,7 +322,8 @@ static const struct panel_desc pipa_csot_desc = {
 	},
 	.lanes = 4,
 	.format = MIPI_DSI_FMT_RGB888,
-	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |
+		      MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_DSC_ALL_SLICES_IN_PKT,
 	.display_mode = pipa_display_mode,
 	.dsc_cfg = &pipa_dsc_cfg,
 	.init_sequence = pipa_init_sequence,
@@ -335,7 +336,8 @@ static const struct panel_desc pipa_tianma_desc = {
 	},
 	.lanes = 4,
 	.format = MIPI_DSI_FMT_RGB888,
-	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |
+		      MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_DSC_ALL_SLICES_IN_PKT,
 	.display_mode = pipa_display_mode,
 	.dsc_cfg = &pipa_dsc_cfg,
 	.init_sequence = pipa_init_sequence,
@@ -557,7 +559,6 @@ static int nt36532_probe(struct mipi_dsi_device *dsi)
 
 		/* This panel only supports DSC; unconditionally enable it */
 		ctx->dsi[i]->dsc = ctx->desc->dsc_cfg;
-		ctx->dsi[i]->dsc_slice_per_pkt = 2;
 
 		ctx->dsi[i]->lanes = ctx->desc->lanes;
 		ctx->dsi[i]->format = ctx->desc->format;

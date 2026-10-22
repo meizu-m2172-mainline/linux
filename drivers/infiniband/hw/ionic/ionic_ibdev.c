@@ -25,6 +25,11 @@ static int ionic_query_device(struct ib_device *ibdev,
 {
 	struct ionic_ibdev *dev = to_ionic_ibdev(ibdev);
 	struct net_device *ndev;
+	int err;
+
+	err = ib_no_udata_io(udata);
+	if (err)
+		return err;
 
 	ndev = ib_device_get_netdev(ibdev, 1);
 	addrconf_ifid_eui48((u8 *)&attr->sys_image_guid, ndev);
@@ -211,6 +216,7 @@ static const struct ib_device_ops ionic_dev_ops = {
 	.owner = THIS_MODULE,
 	.driver_id = RDMA_DRIVER_IONIC,
 	.uverbs_abi_ver = IONIC_ABI_VERSION,
+	.uverbs_robust_udata = true,
 
 	.alloc_ucontext = ionic_alloc_ucontext,
 	.dealloc_ucontext = ionic_dealloc_ucontext,

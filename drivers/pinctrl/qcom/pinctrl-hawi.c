@@ -47,6 +47,7 @@
 		.intr_wakeup_present_bit = 6,	\
 		.intr_wakeup_enable_bit = 7,	\
 		.intr_target_bit = 8,			\
+		.intr_target_width = 4,		\
 		.intr_target_kpss_val = 3,		\
 		.intr_raw_status_bit = 4,		\
 		.intr_polarity_bit = 1,			\
@@ -1584,6 +1585,7 @@ static const struct of_device_id hawi_tlmm_of_match[] = {
 	{ .compatible = "qcom,hawi-tlmm", },
 	{},
 };
+MODULE_DEVICE_TABLE(of, hawi_tlmm_of_match);
 
 static struct platform_driver hawi_tlmm_driver = {
 	.driver = {
@@ -1607,4 +1609,3 @@ module_exit(hawi_tlmm_exit);
 
 MODULE_DESCRIPTION("QTI Hawi TLMM driver");
 MODULE_LICENSE("GPL");
-MODULE_DEVICE_TABLE(of, hawi_tlmm_of_match);

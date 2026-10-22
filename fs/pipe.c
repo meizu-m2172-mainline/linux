@@ -111,30 +111,105 @@ void pipe_double_lock(struct pipe_inode_info *pipe1,
 	pipe_lock(pipe2);
 }
 
-static struct page *anon_pipe_get_page(struct pipe_inode_info *pipe)
+static struct page *anon_pipe_prealloc_pop(struct anon_pipe_prealloc *prealloc)
 {
-	for (int i = 0; i < ARRAY_SIZE(pipe->tmp_page); i++) {
-		if (pipe->tmp_page[i]) {
-			struct page *page = pipe->tmp_page[i];
-			pipe->tmp_page[i] = NULL;
-			return page;
-		}
+	if (!prealloc->count)
+		return NULL;
+
+	prealloc->count--;
+
+	return prealloc->pages[prealloc->count];
+}
+
+/* Push a page to the prealloc pool. Returns true if added, false if full. */
+static bool anon_pipe_prealloc_push(struct anon_pipe_prealloc *prealloc,
+				    struct page *page)
+{
+	if (prealloc->count >= PIPE_PREALLOC_MAX)
+		return false;
+	prealloc->pages[prealloc->count++] = page;
+	return true;
+}
+
+/*
+ * Top up the pipe's own pool, then take pipe->mutex and return with it held.
+ * The shortfall is allocated outside the lock; the push and the caller's write
+ * then run under a single lock acquisition, avoiding a separate prefill
+ * lock/unlock cycle. anon_pipe_get_page() drains the pool instead of allocating
+ * under the lock.
+ */
+static void anon_pipe_prefill_and_lock(struct pipe_inode_info *pipe, size_t total_len)
+{
+	struct page *pages[PIPE_PREALLOC_MAX];
+	unsigned int want, have, need, n = 0;
+
+	want = min_t(unsigned int, DIV_ROUND_UP(total_len, PAGE_SIZE),
+		     PIPE_PREALLOC_MAX);
+	/* Unlocked read; the pool is refilled under the lock below. */
+	have = min_t(unsigned int, READ_ONCE(pipe->prealloc.count), want);
+	need = want - have;
+
+	if (!need) {
+		mutex_lock(&pipe->mutex);
+		return;
 	}
 
+	while (n < need) {
+		struct page *page = alloc_page(GFP_HIGHUSER | __GFP_ACCOUNT);
+
+		if (!page)
+			break;
+		pages[n++] = page;
+	}
+
+	mutex_lock(&pipe->mutex);
+	while (n && anon_pipe_prealloc_push(&pipe->prealloc, pages[n - 1]))
+		n--;
+
+	/*
+	 * Just flush any extra page that got affected by the TOCTOU
+	 * effect
+	 */
+	while (n)
+		put_page(pages[--n]);
+}
+
+/*
+ * Called with pipe->mutex held. Trim the pool down to PIPE_PREALLOC_KEEP under
+ * the lock, drop it, then free the excess outside the critical section.
+ */
+static void anon_pipe_trim_and_unlock(struct pipe_inode_info *pipe)
+{
+	struct page *excess[PIPE_PREALLOC_MAX];
+	unsigned int nexcess = 0;
+
+	while (pipe->prealloc.count > PIPE_PREALLOC_KEEP)
+		excess[nexcess++] = anon_pipe_prealloc_pop(&pipe->prealloc);
+	mutex_unlock(&pipe->mutex);
+
+	while (nexcess)
+		put_page(excess[--nexcess]);
+}
+
+static struct page *anon_pipe_get_page(struct pipe_inode_info *pipe)
+{
+	struct page *page;
+
+	/* Drain the prealloc pool before allocating. Called with mutex held. */
+	page = anon_pipe_prealloc_pop(&pipe->prealloc);
+	if (page)
+		return page;
+
+	/* FWIW: This is called with pipe->mutex held */
 	return alloc_page(GFP_HIGHUSER | __GFP_ACCOUNT);
 }
 
 static void anon_pipe_put_page(struct pipe_inode_info *pipe,
 			       struct page *page)
 {
-	if (page_count(page) == 1) {
-		for (int i = 0; i < ARRAY_SIZE(pipe->tmp_page); i++) {
-			if (!pipe->tmp_page[i]) {
-				pipe->tmp_page[i] = page;
-				return;
-			}
-		}
-	}
+	if (page_count(page) == 1 &&
+	    anon_pipe_prealloc_push(&pipe->prealloc, page))
+		return;
 
 	put_page(page);
 }
@@ -393,7 +468,8 @@ anon_pipe_read(struct kiocb *iocb, struct iov_iter *to)
 	}
 	if (pipe_is_empty(pipe))
 		wake_next_reader = false;
-	mutex_unlock(&pipe->mutex);
+	/* Consumed buffers may have refilled the pool; trim it and unlock. */
+	anon_pipe_trim_and_unlock(pipe);
 
 	if (wake_writer)
 		wake_up_interruptible_sync_poll(&pipe->wr_wait, EPOLLOUT | EPOLLWRNORM);
@@ -455,7 +531,7 @@ anon_pipe_write(struct kiocb *iocb, struct iov_iter *from)
 	if (unlikely(total_len == 0))
 		return 0;
 
-	mutex_lock(&pipe->mutex);
+	anon_pipe_prefill_and_lock(pipe, total_len);
 
 	if (!pipe->readers) {
 		if ((iocb->ki_flags & IOCB_NOSIGNAL) == 0)
@@ -578,7 +654,7 @@ anon_pipe_write(struct kiocb *iocb, struct iov_iter *from)
 out:
 	if (pipe_is_full(pipe))
 		wake_next_writer = false;
-	mutex_unlock(&pipe->mutex);
+	anon_pipe_trim_and_unlock(pipe);
 
 	/*
 	 * If we do do a wakeup event, we do a 'sync' wakeup, because we
@@ -589,10 +665,9 @@ out:
 	 * how (for example) the GNU make jobserver uses small writes to
 	 * wake up pending jobs
 	 *
-	 * Epoll nonsensically wants a wakeup whether the pipe
-	 * was already empty or not.
+	 * ->pseudo_edgetrigger enables per-write wakeups, see pipe_poll()
 	 */
-	if (was_empty || pipe->poll_usage)
+	if (was_empty || READ_ONCE(pipe->pseudo_edgetrigger))
 		wake_up_interruptible_sync_poll(&pipe->rd_wait, EPOLLIN | EPOLLRDNORM);
 	kill_fasync(&pipe->fasync_readers, SIGIO, POLL_IN);
 	if (wake_next_writer)
@@ -655,7 +730,6 @@ static long pipe_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 }
 
-/* No kernel lock held - fine */
 static __poll_t
 pipe_poll(struct file *filp, poll_table *wait)
 {
@@ -663,8 +737,17 @@ pipe_poll(struct file *filp, poll_table *wait)
 	struct pipe_inode_info *pipe = filp->private_data;
 	union pipe_index idx;
 
-	/* Epoll has some historical nasty semantics, this enables them */
-	WRITE_ONCE(pipe->poll_usage, true);
+	/*
+	 * Legacy epoll(EPOLLET) users depend on historical per-write wakeups,
+	 * see 3a34b13a88ca ("pipe: make pipe writes always wake up readers")
+	 * and the ->pseudo_edgetrigger check in anon_pipe_write().
+	 * Currently io_uring sets EPOLLET for multishot polls, so it gets the
+	 * same behaviour.
+	 */
+	if ((filp->f_mode & FMODE_READ) &&
+	    wait && (wait->_key & EPOLLET) &&
+	    unlikely(!READ_ONCE(pipe->pseudo_edgetrigger)))
+		WRITE_ONCE(pipe->pseudo_edgetrigger, true);
 
 	/*
 	 * Reading pipe state only -- no need for acquiring the semaphore.
@@ -755,9 +838,11 @@ pipe_fasync(int fd, struct file *filp, int on)
 	if (filp->f_mode & FMODE_READ)
 		retval = fasync_helper(fd, filp, on, &pipe->fasync_readers);
 	if ((filp->f_mode & FMODE_WRITE) && retval >= 0) {
+		int read_ret = retval;
+
 		retval = fasync_helper(fd, filp, on, &pipe->fasync_writers);
-		if (retval < 0 && (filp->f_mode & FMODE_READ))
-			/* this can happen only if on == T */
+		/* Undo only a reader entry added by this call. */
+		if (retval < 0 && read_ret > 0)
 			fasync_helper(-1, filp, 0, &pipe->fasync_readers);
 	}
 	mutex_unlock(&pipe->mutex);
@@ -858,10 +943,8 @@ void free_pipe_info(struct pipe_inode_info *pipe)
 	if (pipe->watch_queue)
 		put_watch_queue(pipe->watch_queue);
 #endif
-	for (i = 0; i < ARRAY_SIZE(pipe->tmp_page); i++) {
-		if (pipe->tmp_page[i])
-			__free_page(pipe->tmp_page[i]);
-	}
+	for (i = 0; i < pipe->prealloc.count; i++)
+		__free_page(pipe->prealloc.pages[i]);
 	kfree(pipe->bufs);
 	kfree(pipe);
 }
@@ -1491,7 +1574,7 @@ static int u2k_pipe_maxsz(const ulong *u_ptr, uint *k_ptr)
 	return proc_uint_u2k_conv_uop(u_ptr, k_ptr, round_pipe_size_ul);
 }
 
-static int do_proc_uint_conv_pipe_maxsz(ulong *u_ptr, uint *k_ptr,
+static int do_proc_uint_conv_pipe_maxsz(bool *negp, ulong *u_ptr, uint *k_ptr,
 					int dir, const struct ctl_table *table)
 {
 	return proc_uint_conv(u_ptr, k_ptr, dir, table, true,

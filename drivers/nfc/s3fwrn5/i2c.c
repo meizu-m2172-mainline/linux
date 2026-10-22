@@ -205,14 +205,14 @@ static void s3fwrn5_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id s3fwrn5_i2c_id_table[] = {
-	{ S3FWRN5_I2C_DRIVER_NAME },
-	{}
+	{ .name = S3FWRN5_I2C_DRIVER_NAME },
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, s3fwrn5_i2c_id_table);
 
-static const struct of_device_id of_s3fwrn5_i2c_match[] __maybe_unused = {
-	{ .compatible = "samsung,s3fwrn5-i2c", },
-	{}
+static const struct of_device_id of_s3fwrn5_i2c_match[] = {
+	{ .compatible = "samsung,s3fwrn5-i2c" },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, of_s3fwrn5_i2c_match);
 

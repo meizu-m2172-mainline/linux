@@ -10,8 +10,8 @@
 #include <linux/types.h>
 
 struct vs_formats {
-	const u32 *array;
-	unsigned int num;
+	const u32 *primary_array;
+	unsigned int primary_num;
 };
 
 struct vs_chip_identity {
@@ -20,6 +20,11 @@ struct vs_chip_identity {
 	u32 customer_id;
 
 	u32 display_count;
+	/*
+	 * The hardware only supports square cursor planes, so this field
+	 * is both the maximum width and height in pixels.
+	 */
+	int32_t max_cursor_size;
 	const struct vs_formats *formats;
 };
 

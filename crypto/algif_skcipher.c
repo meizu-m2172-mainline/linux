@@ -32,7 +32,26 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/net.h>
+#include <linux/string.h>
 #include <net/sock.h>
+
+static const struct af_alg_allowlist_entry skcipher_allowlist[] = {
+	{ "adiantum(xchacha12,aes)", AF_ALG_UNPRIVILEGED }, /* cryptsetup */
+	{ "adiantum(xchacha20,aes)", AF_ALG_UNPRIVILEGED }, /* cryptsetup */
+	{ "cbc(aes)" }, /* iwd */
+	{ "cbc(des)" }, /* iwd */
+	{ "cbc(des3_ede)" }, /* iwd */
+	{ "cbc(paes)" }, /* caam and others */
+	{ "ctr(aes)" }, /* iwd */
+	{ "ecb(aes)" }, /* iwd, bluez */
+	{ "ecb(des)" }, /* iwd */
+	{ "hctr2(aes)", AF_ALG_UNPRIVILEGED }, /* cryptsetup */
+	{ "xts(aes)", AF_ALG_UNPRIVILEGED }, /* cryptsetup benchmark */
+	{ "xts(camellia)", AF_ALG_UNPRIVILEGED }, /* cryptsetup */
+	{ "xts(serpent)", AF_ALG_UNPRIVILEGED }, /* cryptsetup */
+	{ "xts(twofish)", AF_ALG_UNPRIVILEGED }, /* cryptsetup */
+	{},
+};
 
 static int skcipher_sendmsg(struct socket *sock, struct msghdr *msg,
 			    size_t size)
@@ -77,20 +96,6 @@ static int algif_skcipher_export(struct sock *sk, struct skcipher_request *req)
 	}
 
 	return err;
-}
-
-static void algif_skcipher_done(void *data, int err)
-{
-	struct af_alg_async_req *areq = data;
-	struct sock *sk = areq->sk;
-
-	if (err)
-		goto out;
-
-	err = algif_skcipher_export(sk, &areq->cra_u.skcipher_req);
-
-out:
-	af_alg_async_cb(data, err);
 }
 
 static int _skcipher_recvmsg(struct socket *sock, struct msghdr *msg,
@@ -171,43 +176,19 @@ static int _skcipher_recvmsg(struct socket *sock, struct msghdr *msg,
 		cflags |= CRYPTO_SKCIPHER_REQ_CONT;
 	}
 
-	if (msg->msg_iocb && !is_sync_kiocb(msg->msg_iocb)) {
-		/* AIO operation */
-		sock_hold(sk);
-		areq->iocb = msg->msg_iocb;
+	skcipher_request_set_callback(&areq->cra_u.skcipher_req,
+				      cflags |
+				      CRYPTO_TFM_REQ_MAY_SLEEP |
+				      CRYPTO_TFM_REQ_MAY_BACKLOG,
+				      crypto_req_done, &ctx->wait);
+	err = crypto_wait_req(ctx->enc ?
+		crypto_skcipher_encrypt(&areq->cra_u.skcipher_req) :
+		crypto_skcipher_decrypt(&areq->cra_u.skcipher_req),
+					 &ctx->wait);
 
-		/* Remember output size that will be generated. */
-		areq->outlen = len;
-
-		skcipher_request_set_callback(&areq->cra_u.skcipher_req,
-					      cflags |
-					      CRYPTO_TFM_REQ_MAY_SLEEP,
-					      algif_skcipher_done, areq);
-		err = ctx->enc ?
-			crypto_skcipher_encrypt(&areq->cra_u.skcipher_req) :
-			crypto_skcipher_decrypt(&areq->cra_u.skcipher_req);
-
-		/* AIO operation in progress */
-		if (err == -EINPROGRESS)
-			return -EIOCBQUEUED;
-
-		sock_put(sk);
-	} else {
-		/* Synchronous operation */
-		skcipher_request_set_callback(&areq->cra_u.skcipher_req,
-					      cflags |
-					      CRYPTO_TFM_REQ_MAY_SLEEP |
-					      CRYPTO_TFM_REQ_MAY_BACKLOG,
-					      crypto_req_done, &ctx->wait);
-		err = crypto_wait_req(ctx->enc ?
-			crypto_skcipher_encrypt(&areq->cra_u.skcipher_req) :
-			crypto_skcipher_decrypt(&areq->cra_u.skcipher_req),
-						 &ctx->wait);
-
-		if (!err)
-			err = algif_skcipher_export(
-				sk, &areq->cra_u.skcipher_req);
-	}
+	if (!err)
+		err = algif_skcipher_export(
+			sk, &areq->cra_u.skcipher_req);
 
 free:
 	af_alg_free_resources(areq);
@@ -345,9 +326,19 @@ static struct proto_ops algif_skcipher_ops_nokey = {
 	.poll		=	af_alg_poll,
 };
 
-static void *skcipher_bind(const char *name, u32 type, u32 mask)
+static void *skcipher_bind(const char *name)
 {
-	return crypto_alloc_skcipher(name, type, mask);
+	u32 mask = AF_ALG_CRYPTOAPI_MASK;
+	int err;
+
+	err = af_alg_check_restriction(name, skcipher_allowlist);
+	if (err)
+		return ERR_PTR(err);
+
+	if (strcmp(name, "cbc(paes)") == 0)
+		mask = 0;
+
+	return crypto_alloc_skcipher(name, 0, mask);
 }
 
 static void skcipher_release(void *private)

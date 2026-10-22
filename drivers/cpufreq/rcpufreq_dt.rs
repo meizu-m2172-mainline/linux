@@ -4,12 +4,19 @@
 
 use kernel::{
     clk::Clk,
-    cpu, cpufreq,
+    cpu,
+    cpufreq, //
     cpumask::CpumaskVar,
-    device::{Core, Device},
+    device::{
+        Core,
+        Device, //
+    },
     error::code::*,
     macros::vtable,
-    module_platform_driver, of, opp, platform,
+    module_platform_driver,
+    of,
+    opp,
+    platform, //
     prelude::*,
     str::CString,
     sync::Arc,
@@ -194,19 +201,19 @@ impl cpufreq::Driver for CPUFreqDTDriver {
 
 kernel::of_device_table!(
     OF_TABLE,
-    MODULE_OF_TABLE,
     <CPUFreqDTDriver as platform::Driver>::IdInfo,
     [(of::DeviceId::new(c"operating-points-v2"), ())]
 );
 
 impl platform::Driver for CPUFreqDTDriver {
     type IdInfo = ();
+    type Data<'bound> = Self;
     const OF_ID_TABLE: Option<of::IdTable<Self::IdInfo>> = Some(&OF_TABLE);
 
-    fn probe(
-        pdev: &platform::Device<Core>,
-        _id_info: Option<&Self::IdInfo>,
-    ) -> impl PinInit<Self, Error> {
+    fn probe<'bound>(
+        pdev: &'bound platform::Device<Core<'_>>,
+        _id_info: Option<&'bound Self::IdInfo>,
+    ) -> impl PinInit<Self, Error> + 'bound {
         cpufreq::Registration::<CPUFreqDTDriver>::new_foreign_owned(pdev.as_ref())?;
         Ok(Self {})
     }

@@ -37,6 +37,7 @@
 
 #include <kunit/test.h>
 #include <kunit/static_stub.h>
+#include <linux/fs_context.h>
 #include <linux/gfp_types.h>
 #include <linux/stddef.h>
 
@@ -125,19 +126,20 @@ struct kunit_ext_test_param {
 	struct kunit_ext_data_state exp_data_state[3];
 };
 
-static void ext_kill_sb(struct super_block *sb)
-{
-	generic_shutdown_super(sb);
-}
-
-static int ext_set(struct super_block *sb, void *data)
+static int ext_init_fs_context(struct fs_context *fc)
 {
 	return 0;
 }
 
+static int ext_set(struct super_block *sb, struct fs_context *fc)
+{
+	return set_anon_super_fc(sb, fc);
+}
+
 static struct file_system_type ext_fs_type = {
-	.name = "extents test",
-	.kill_sb = ext_kill_sb,
+	.name		 = "extents test",
+	.init_fs_context = ext_init_fs_context,
+	.kill_sb	 = kill_anon_super,
 };
 
 static void extents_kunit_exit(struct kunit *test)
@@ -149,6 +151,7 @@ static void extents_kunit_exit(struct kunit *test)
 
 	sbi = k_ctx.k_ei->vfs_inode.i_sb->s_fs_info;
 	ext4_es_unregister_shrinker(sbi);
+	ext4_es_destroy_stats(sbi);
 	deactivate_super(sbi->s_sb);
 	kfree(sbi);
 	kfree(k_ctx.k_ei);
@@ -223,6 +226,7 @@ static int extents_kunit_init(struct kunit *test)
 	struct ext4_inode_info *ei;
 	struct inode *inode;
 	struct super_block *sb;
+	struct fs_context *fc;
 	struct ext4_sb_info *sbi = NULL;
 	struct kunit_ext_test_param *param =
 		(struct kunit_ext_test_param *)(test->param_value);
@@ -232,7 +236,13 @@ static int extents_kunit_init(struct kunit *test)
 	if (sbi == NULL)
 		return -ENOMEM;
 
-	sb = sget(&ext_fs_type, NULL, ext_set, 0, NULL);
+	fc = fs_context_for_mount(&ext_fs_type, 0);
+	if (IS_ERR(fc)) {
+		kfree(sbi);
+		return PTR_ERR(fc);
+	}
+	sb = sget_fc(fc, NULL, ext_set);
+	put_fs_context(fc);
 	if (IS_ERR(sb)) {
 		kfree(sbi);
 		return PTR_ERR(sb);
@@ -331,6 +341,7 @@ out:
 	k_ctx.k_data = NULL;
 
 	ext4_es_unregister_shrinker(sbi);
+	ext4_es_destroy_stats(sbi);
 out_deactivate:
 	deactivate_locked_super(sb);
 	kfree(sbi);

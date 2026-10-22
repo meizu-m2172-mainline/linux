@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 config SND_HDA_INTEL
 	tristate "HD Audio PCI"
-	depends on SND_PCI
+	depends on PCI
 	select SND_HDA
 	select SND_INTEL_DSP_CONFIG
 	help
@@ -33,6 +33,7 @@ config SND_HDA_TEGRA
 config SND_HDA_CIX_IPBLOQ
 	tristate "CIX IPBLOQ HD Audio"
 	depends on ARCH_CIX || COMPILE_TEST
+	depends on ARCH_DMA_ADDR_T_64BIT
 	select SND_HDA
 	select SND_HDA_ALIGNED_MMIO
 	help

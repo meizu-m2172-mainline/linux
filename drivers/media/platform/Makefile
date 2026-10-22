@@ -6,6 +6,7 @@
 # Place here, alphabetically sorted by directory
 # (e. g. LC_ALL=C sort Makefile)
 obj-y += allegro-dvt/
+obj-y += amd/
 obj-y += amlogic/
 obj-y += amphion/
 obj-y += arm/
@@ -14,6 +15,7 @@ obj-y += atmel/
 obj-y += broadcom/
 obj-y += cadence/
 obj-y += chips-media/
+obj-y += dreamchip/
 obj-y += imagination/
 obj-y += intel/
 obj-y += marvell/

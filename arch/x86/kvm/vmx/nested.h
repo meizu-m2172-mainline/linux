@@ -2,7 +2,7 @@
 #ifndef __KVM_X86_VMX_NESTED_H
 #define __KVM_X86_VMX_NESTED_H
 
-#include "kvm_cache_regs.h"
+#include "regs.h"
 #include "hyperv.h"
 #include "vmcs12.h"
 #include "vmx.h"
@@ -57,16 +57,14 @@ bool nested_vmx_check_io_bitmaps(struct kvm_vcpu *vcpu, unsigned int port,
 
 static inline struct vmcs12 *get_vmcs12(struct kvm_vcpu *vcpu)
 {
-	lockdep_assert_once(lockdep_is_held(&vcpu->mutex) ||
-			    !refcount_read(&vcpu->kvm->users_count));
+	kvm_lockdep_assert_vcpu_is_locked_or_unreachable(vcpu);
 
 	return to_vmx(vcpu)->nested.cached_vmcs12;
 }
 
 static inline struct vmcs12 *get_shadow_vmcs12(struct kvm_vcpu *vcpu)
 {
-	lockdep_assert_once(lockdep_is_held(&vcpu->mutex) ||
-			    !refcount_read(&vcpu->kvm->users_count));
+	kvm_lockdep_assert_vcpu_is_locked_or_unreachable(vcpu);
 
 	return to_vmx(vcpu)->nested.cached_shadow_vmcs12;
 }

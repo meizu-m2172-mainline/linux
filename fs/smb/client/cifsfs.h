@@ -54,7 +54,7 @@ void cifs_sb_deactive(struct super_block *sb);
 extern const struct inode_operations cifs_dir_inode_ops;
 struct inode *cifs_root_iget(struct super_block *sb);
 int cifs_create(struct mnt_idmap *idmap, struct inode *dir,
-		struct dentry *direntry, umode_t mode, bool excl);
+		struct dentry *direntry, umode_t mode);
 int cifs_atomic_open(struct inode *dir, struct dentry *direntry,
 		     struct file *file, unsigned int oflags, umode_t mode);
 int cifs_tmpfile(struct mnt_idmap *idmap, struct inode *dir,
@@ -89,6 +89,9 @@ extern const struct inode_operations cifs_file_inode_ops;
 extern const struct inode_operations cifs_symlink_inode_ops;
 extern const struct inode_operations cifs_namespace_inode_operations;
 
+struct file_kattr;
+int cifs_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
+
 
 /* Functions related to files and directories */
 extern const struct netfs_request_ops cifs_req_ops;
@@ -104,6 +107,7 @@ int cifs_closedir(struct inode *inode, struct file *file);
 ssize_t cifs_strict_readv(struct kiocb *iocb, struct iov_iter *to);
 ssize_t cifs_strict_writev(struct kiocb *iocb, struct iov_iter *from);
 ssize_t cifs_file_write_iter(struct kiocb *iocb, struct iov_iter *from);
+ssize_t cifs_direct_write_iter(struct kiocb *iocb, struct iov_iter *from);
 ssize_t cifs_loose_read_iter(struct kiocb *iocb, struct iov_iter *iter);
 int cifs_flock(struct file *file, int cmd, struct file_lock *fl);
 int cifs_lock(struct file *file, int cmd, struct file_lock *flock);
@@ -142,10 +146,13 @@ ssize_t cifs_file_copychunk_range(unsigned int xid, struct file *src_file,
 				  unsigned int flags);
 
 long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg);
-void cifs_setsize(struct inode *inode, loff_t offset);
+void cifs_setsize(struct inode *inode, loff_t old_size, loff_t offset);
+void cifs_resize_file_locked(struct inode *inode, loff_t old_size,
+			     loff_t offset);
 
+struct fs_context;
 struct smb3_fs_context;
-struct dentry *cifs_smb3_do_mount(struct file_system_type *fs_type, int flags,
+struct dentry *cifs_smb3_do_mount(struct fs_context *fc,
 				  struct smb3_fs_context *old_ctx);
 
 char *cifs_silly_fullpath(struct dentry *dentry);
@@ -161,6 +168,6 @@ extern const struct export_operations cifs_export_ops;
 #endif /* CONFIG_CIFS_NFSD_EXPORT */
 
 /* when changing internal version - update following two lines at same time */
-#define SMB3_PRODUCT_BUILD 60
-#define CIFS_VERSION   "2.60"
+#define SMB3_PRODUCT_BUILD 61
+#define CIFS_VERSION   "2.61"
 #endif				/* _CIFSFS_H */

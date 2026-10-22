@@ -2387,9 +2387,7 @@ static int ahash_hmac_setkey(struct crypto_ahash *ahash, const u8 *key,
 	 * outer hashing in software.
 	 */
 	if (iproc_priv.spu.spu_type == SPU_TYPE_SPUM) {
-		memcpy(ctx->ipad, ctx->authkey, ctx->authkeylen);
-		memset(ctx->ipad + ctx->authkeylen, 0,
-		       blocksize - ctx->authkeylen);
+		memcpy_and_pad(ctx->ipad, blocksize, ctx->authkey, ctx->authkeylen, 0);
 		ctx->authkeylen = 0;
 		unsafe_memcpy(ctx->opad, ctx->ipad, blocksize,
 			      "fortified memcpy causes -Wrestrict warning");
@@ -4698,9 +4696,9 @@ static void bcm_spu_remove(struct platform_device *pdev)
 
 static struct platform_driver bcm_spu_pdriver = {
 	.driver = {
-		   .name = "brcm-spu-crypto",
-		   .of_match_table = of_match_ptr(bcm_spu_dt_ids),
-		   },
+		.name = "brcm-spu-crypto",
+		.of_match_table = bcm_spu_dt_ids,
+	},
 	.probe = bcm_spu_probe,
 	.remove = bcm_spu_remove,
 };

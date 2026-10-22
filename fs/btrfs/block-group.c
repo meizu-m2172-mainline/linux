@@ -22,6 +22,34 @@
 #include "accessors.h"
 #include "extent-tree.h"
 
+static struct kmem_cache *block_group_cache;
+static struct kmem_cache *free_space_ctl_cache;
+
+int __init btrfs_init_block_group(void)
+{
+	block_group_cache = kmem_cache_create("btrfs_block_group",
+					      sizeof(struct btrfs_block_group),
+					      0, 0, NULL);
+	if (!block_group_cache)
+		return -ENOMEM;
+
+	free_space_ctl_cache = kmem_cache_create("btrfs_free_space_ctl",
+						 sizeof(struct btrfs_free_space_ctl),
+						 0, 0, NULL);
+	if (!free_space_ctl_cache) {
+		kmem_cache_destroy(block_group_cache);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+void __cold btrfs_exit_block_group(void)
+{
+	kmem_cache_destroy(block_group_cache);
+	kmem_cache_destroy(free_space_ctl_cache);
+}
+
 #ifdef CONFIG_BTRFS_DEBUG
 int btrfs_should_fragment_free_space(const struct btrfs_block_group *block_group)
 {
@@ -180,9 +208,9 @@ void btrfs_put_block_group(struct btrfs_block_group *cache)
 			btrfs_discard_cancel_work(&cache->fs_info->discard_ctl,
 						  cache);
 
-		kfree(cache->free_space_ctl);
+		kmem_cache_free(free_space_ctl_cache, cache->free_space_ctl);
 		btrfs_free_chunk_map(cache->physical_map);
-		kfree(cache);
+		kmem_cache_free(block_group_cache, cache);
 	}
 }
 
@@ -2019,6 +2047,11 @@ static int btrfs_reclaim_block_group(struct btrfs_block_group *bg, int *reclaime
 
 	trace_btrfs_reclaim_block_group(bg);
 	ret = btrfs_relocate_chunk(fs_info, bg->start, false);
+	if (btrfs_is_zoned(fs_info) && ret == -EAGAIN) {
+		btrfs_dec_block_group_ro(bg);
+		btrfs_debug(fs_info, "deferring reclaim of chunk %llu", bg->start);
+		return ret;
+	}
 	if (ret) {
 		btrfs_dec_block_group_ro(bg);
 		btrfs_err(fs_info, "error relocating chunk %llu",
@@ -2085,7 +2118,8 @@ void btrfs_reclaim_block_groups(struct btrfs_fs_info *fs_info, unsigned int limi
 		spin_unlock(&fs_info->unused_bgs_lock);
 		ret = btrfs_reclaim_block_group(bg, &reclaimed);
 
-		if (ret && !READ_ONCE(space_info->periodic_reclaim))
+		if ((btrfs_is_zoned(fs_info) && ret == -EAGAIN) ||
+		    (ret && !READ_ONCE(space_info->periodic_reclaim)))
 			btrfs_link_bg_list(bg, &retry_list);
 		btrfs_put_block_group(bg);
 
@@ -2371,13 +2405,13 @@ static struct btrfs_block_group *btrfs_create_block_group(
 {
 	struct btrfs_block_group *cache;
 
-	cache = kzalloc_obj(*cache, GFP_NOFS);
+	cache = kmem_cache_zalloc(block_group_cache, GFP_NOFS);
 	if (!cache)
 		return NULL;
 
-	cache->free_space_ctl = kzalloc_obj(*cache->free_space_ctl, GFP_NOFS);
+	cache->free_space_ctl = kmem_cache_zalloc(free_space_ctl_cache, GFP_NOFS);
 	if (!cache->free_space_ctl) {
-		kfree(cache);
+		kmem_cache_free(block_group_cache, cache);
 		return NULL;
 	}
 
@@ -2454,7 +2488,7 @@ static int check_chunk_block_group_mappings(struct btrfs_fs_info *fs_info)
 static int read_one_block_group(struct btrfs_fs_info *info,
 				struct btrfs_block_group_item_v2 *bgi,
 				const struct btrfs_key *key,
-				int need_clear)
+				bool need_clear)
 {
 	struct btrfs_block_group *cache;
 	const bool mixed = btrfs_fs_incompat(info, MIXED_GROUPS);
@@ -2596,10 +2630,9 @@ static int fill_dummy_bgs(struct btrfs_fs_info *fs_info)
 
 		/* Fill dummy cache as FULL */
 		bg->length = map->chunk_len;
-		bg->flags = map->type;
+		bg->flags = map->on_disk_type;
 		bg->cached = BTRFS_CACHE_FINISHED;
 		bg->used = map->chunk_len;
-		bg->flags = map->type;
 		bg->space_info = btrfs_find_space_info(fs_info, bg->flags);
 		ret = btrfs_add_block_group_cache(bg);
 		/*
@@ -2635,7 +2668,7 @@ int btrfs_read_block_groups(struct btrfs_fs_info *info)
 	struct btrfs_block_group *cache;
 	struct btrfs_space_info *space_info;
 	struct btrfs_key key;
-	int need_clear = 0;
+	bool need_clear = false;
 	u64 cache_gen;
 
 	/*
@@ -2660,9 +2693,9 @@ int btrfs_read_block_groups(struct btrfs_fs_info *info)
 	cache_gen = btrfs_super_cache_generation(info->super_copy);
 	if (btrfs_test_opt(info, SPACE_CACHE) &&
 	    btrfs_super_generation(info->super_copy) != cache_gen)
-		need_clear = 1;
+		need_clear = true;
 	if (btrfs_test_opt(info, CLEAR_CACHE))
-		need_clear = 1;
+		need_clear = true;
 
 	while (1) {
 		struct btrfs_block_group_item_v2 bgi;
@@ -3041,20 +3074,24 @@ struct btrfs_block_group *btrfs_make_block_group(struct btrfs_trans_handle *tran
 		return ERR_PTR(ret);
 	}
 
+	/*
+	 * Ensure the corresponding space_info object is created and
+	 * assigned to our block group. We want our bg to be added to the rbtree
+	 * with its ->space_info set.
+	 *
+	 * On a zoned filesystem btrfs_add_new_free_space() ends up in
+	 * __btrfs_add_free_space_zoned(), which dereferences
+	 * block_group->space_info, so it has to be set beforehand.
+	 */
+	cache->space_info = space_info;
+	ASSERT(cache->space_info);
+
 	ret = btrfs_add_new_free_space(cache, chunk_offset, chunk_offset + size, NULL);
 	btrfs_free_excluded_extents(cache);
 	if (ret) {
 		btrfs_put_block_group(cache);
 		return ERR_PTR(ret);
 	}
-
-	/*
-	 * Ensure the corresponding space_info object is created and
-	 * assigned to our block group. We want our bg to be added to the rbtree
-	 * with its ->space_info set.
-	 */
-	cache->space_info = space_info;
-	ASSERT(cache->space_info);
 
 	ret = btrfs_add_block_group_cache(cache);
 	if (ret) {
@@ -3888,7 +3925,7 @@ int btrfs_update_block_group(struct btrfs_trans_handle *trans,
 		old_val += num_bytes;
 		cache->used = old_val;
 		cache->reserved -= num_bytes;
-		cache->reclaim_mark = 0;
+		cache->reclaim_mark = false;
 		space_info->bytes_reserved -= num_bytes;
 		space_info->bytes_used += num_bytes;
 		space_info->disk_used += num_bytes * factor;
@@ -4089,7 +4126,7 @@ int btrfs_force_chunk_alloc(struct btrfs_trans_handle *trans, u64 type)
 	struct btrfs_space_info *space_info;
 
 	space_info = btrfs_find_space_info(trans->fs_info, type);
-	if (!space_info) {
+	if (unlikely(!space_info)) {
 		DEBUG_WARN();
 		return -EINVAL;
 	}
@@ -4504,25 +4541,29 @@ static void reserve_chunk_space(struct btrfs_trans_handle *trans,
 		if (IS_ERR(bg)) {
 			ret = PTR_ERR(bg);
 		} else {
+			int activate_ret;
+
 			/*
 			 * We have a new chunk. We also need to activate it for
 			 * zoned filesystem.
 			 */
-			ret = btrfs_zoned_activate_one_bg(info, true);
-			if (ret < 0)
-				return;
-
-			/*
-			 * If we fail to add the chunk item here, we end up
-			 * trying again at phase 2 of chunk allocation, at
-			 * btrfs_create_pending_block_groups(). So ignore
-			 * any error here. An ENOSPC here could happen, due to
-			 * the cases described at do_chunk_alloc() - the system
-			 * block group we just created was just turned into RO
-			 * mode by a scrub for example, or a running discard
-			 * temporarily removed its free space entries, etc.
-			 */
-			btrfs_chunk_alloc_add_chunk_item(trans, bg);
+			activate_ret = btrfs_zoned_activate_one_bg(info, true);
+			if (activate_ret < 0) {
+				ret = activate_ret;
+			} else {
+				/*
+				 * If we fail to add the chunk item here, we end
+				 * up trying again at phase 2 of chunk allocation,
+				 * at btrfs_create_pending_block_groups(). So
+				 * ignore any error here. An ENOSPC here could
+				 * happen, due to the cases described at
+				 * do_chunk_alloc() - the system block group we
+				 * just created was just turned into RO mode by a
+				 * scrub for example, or a running discard
+				 * temporarily removed its free space entries, etc.
+				 */
+				btrfs_chunk_alloc_add_chunk_item(trans, bg);
+			}
 		}
 	}
 

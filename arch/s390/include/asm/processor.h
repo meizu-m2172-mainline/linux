@@ -14,12 +14,10 @@
 
 #include <linux/bits.h>
 
-#define CIF_NOHZ_DELAY		2	/* delay HZ disable for a tick */
 #define CIF_ENABLED_WAIT	5	/* in enabled wait state */
 #define CIF_MCCK_GUEST		6	/* machine check happening in guest */
 #define CIF_DEDICATED_CPU	7	/* this CPU is dedicated */
 
-#define _CIF_NOHZ_DELAY		BIT(CIF_NOHZ_DELAY)
 #define _CIF_ENABLED_WAIT	BIT(CIF_ENABLED_WAIT)
 #define _CIF_MCCK_GUEST		BIT(CIF_MCCK_GUEST)
 #define _CIF_DEDICATED_CPU	BIT(CIF_DEDICATED_CPU)
@@ -33,6 +31,7 @@
 #include <linux/irqflags.h>
 #include <linux/instruction_pointer.h>
 #include <linux/bitops.h>
+#include <asm/vdso/processor.h>
 #include <asm/fpu-types.h>
 #include <asm/cpu.h>
 #include <asm/page.h>
@@ -47,7 +46,6 @@ struct pcpu {
 	unsigned long ec_mask;		/* bit mask for ec_xxx functions */
 	unsigned long ec_clk;		/* sigp timestamp for ec_xxx */
 	unsigned long flags;		/* per CPU flags */
-	unsigned long capacity;		/* cpu capacity for scheduler */
 	signed char state;		/* physical cpu state */
 	signed char polarization;	/* physical polarization */
 	u16 address;			/* physical cpu address */
@@ -95,8 +93,6 @@ static __always_inline bool test_cpu_flag_of(int flag, int cpu)
 {
 	return test_bit(flag, &per_cpu(pcpu_devices, cpu).flags);
 }
-
-#define arch_needs_cpu() test_cpu_flag(CIF_NOHZ_DELAY)
 
 static inline void get_cpu_id(struct cpuid *ptr)
 {
@@ -281,8 +277,6 @@ static __always_inline unsigned short stap(void)
 	asm volatile("stap %0" : "=Q" (cpu_address));
 	return cpu_address;
 }
-
-#define cpu_relax() barrier()
 
 #define ECAG_CACHE_ATTRIBUTE	0
 #define ECAG_CPU_ATTRIBUTE	1

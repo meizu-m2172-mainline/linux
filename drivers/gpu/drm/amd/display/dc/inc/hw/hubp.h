@@ -133,7 +133,7 @@ struct surface_flip_registers {
 	uint32_t DCSURF_SECONDARY_META_SURFACE_ADDRESS;
 	uint32_t DCSURF_SECONDARY_SURFACE_ADDRESS_HIGH;
 	uint32_t DCSURF_SECONDARY_SURFACE_ADDRESS;
-	bool tmz_surface;
+	uint8_t tmz_surface;
 	bool immediate;
 	uint8_t vmid;
 	bool grph_stereo;
@@ -281,7 +281,7 @@ struct hubp_funcs {
 	void (*hubp_enable_3dlut_fl)(struct hubp *hubp, bool enable);
 	void (*hubp_program_3dlut_fl_crossbar)(struct hubp *hubp,
 			enum dc_cm_lut_pixel_format format);
-	int (*hubp_get_3dlut_fl_done)(struct hubp *hubp);
+	uint32_t (*hubp_get_3dlut_fl_done)(struct hubp *hubp);
 	void (*hubp_clear_tiling)(struct hubp *hubp);
 	uint32_t (*hubp_get_current_read_line)(struct hubp *hubp);
 	uint32_t (*hubp_get_det_config_error)(struct hubp *hubp);

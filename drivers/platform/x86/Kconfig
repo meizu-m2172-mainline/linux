@@ -346,6 +346,7 @@ config AYANEO_EC
 config MERAKI_MX100
 	tristate "Cisco Meraki MX100 Platform Driver"
 	depends on GPIOLIB
+	depends on LPC_ICH
 	depends on GPIO_ICH
 	depends on LEDS_CLASS
 	select LEDS_GPIO
@@ -801,7 +802,6 @@ config LG_LAPTOP
 	tristate "LG Laptop Extras"
 	depends on ACPI
 	depends on ACPI_BATTERY
-	depends on ACPI_WMI
 	depends on INPUT
 	select INPUT_SPARSEKMAP
 	select NEW_LEDS

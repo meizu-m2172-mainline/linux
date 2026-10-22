@@ -55,6 +55,7 @@ static void test_exceptions_success(void)
 	RUN_SUCCESS(exception_ext, 0);
 	RUN_SUCCESS(exception_ext_mod_cb_runtime, 35);
 	RUN_SUCCESS(exception_throw_subprog, 1);
+	RUN_SUCCESS(exception_throw_subprog_stack_cb, 0x1234);
 	RUN_SUCCESS(exception_assert_nz_gfunc, 1);
 	RUN_SUCCESS(exception_assert_zero_gfunc, 1);
 	RUN_SUCCESS(exception_assert_neg_gfunc, 1);
@@ -84,6 +85,13 @@ static void test_exceptions_success(void)
 	RUN_SUCCESS(exception_bad_assert_range, 0);
 	RUN_SUCCESS(exception_bad_assert_range_with, 10);
 	RUN_SUCCESS(exception_throw_from_void_global, 11);
+
+	if (skel->rodata->has_stack_arg) {
+		RUN_SUCCESS(exception_throw_stack_arg, 56);
+		RUN_SUCCESS(exception_throw_after_stack_arg, 56);
+		RUN_SUCCESS(exception_throw_subprog_stack_arg, 56);
+		RUN_SUCCESS(exception_throw_subprog_after_stack_arg, 56);
+	}
 
 #define RUN_EXT(load_ret, attach_err, expr, msg, after_link)			  \
 	{									  \

@@ -1871,10 +1871,8 @@ static int ad7768_probe(struct spi_device *spi)
 		return ret;
 
 	ret = ad7768_setup(indio_dev);
-	if (ret < 0) {
-		dev_err(&spi->dev, "AD7768 setup failed\n");
-		return ret;
-	}
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "AD7768 setup failed\n");
 
 	init_completion(&st->completion);
 	ret = devm_mutex_init(&spi->dev, &st->pga_lock);
@@ -1920,10 +1918,10 @@ static int ad7768_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id ad7768_id_table[] = {
-	{ "ad7768-1", (kernel_ulong_t)&ad7768_chip_info },
-	{ "adaq7767-1", (kernel_ulong_t)&adaq7767_chip_info },
-	{ "adaq7768-1", (kernel_ulong_t)&adaq7768_chip_info },
-	{ "adaq7769-1", (kernel_ulong_t)&adaq7769_chip_info },
+	{ .name = "ad7768-1", .driver_data = (kernel_ulong_t)&ad7768_chip_info },
+	{ .name = "adaq7767-1", .driver_data = (kernel_ulong_t)&adaq7767_chip_info },
+	{ .name = "adaq7768-1", .driver_data = (kernel_ulong_t)&adaq7768_chip_info },
+	{ .name = "adaq7769-1", .driver_data = (kernel_ulong_t)&adaq7769_chip_info },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ad7768_id_table);

@@ -172,6 +172,8 @@ LIBBPF_API __s32 btf__find_by_name(const struct btf *btf,
 				   const char *type_name);
 LIBBPF_API __s32 btf__find_by_name_kind(const struct btf *btf,
 					const char *type_name, __u32 kind);
+LIBBPF_API __s32 btf__find_by_name_kind_own(const struct btf *btf,
+					    const char *type_name, __u32 kind);
 LIBBPF_API __u32 btf__type_cnt(const struct btf *btf);
 LIBBPF_API const struct btf *btf__base_btf(const struct btf *btf);
 LIBBPF_API const struct btf_type *btf__type_by_id(const struct btf *btf,
@@ -435,7 +437,7 @@ static inline __u16 btf_kind(const struct btf_type *t)
 	return BTF_INFO_KIND(t->info);
 }
 
-static inline __u16 btf_vlen(const struct btf_type *t)
+static inline __u32 btf_vlen(const struct btf_type *t)
 {
 	return BTF_INFO_VLEN(t->info);
 }

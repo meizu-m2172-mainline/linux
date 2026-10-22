@@ -1,11 +1,12 @@
 #ifndef IO_URING_TYPES_H
 #define IO_URING_TYPES_H
 
-#include <linux/blkdev.h>
+#include <linux/blk_plug.h>
 #include <linux/hashtable.h>
 #include <linux/task_work.h>
 #include <linux/bitmap.h>
 #include <linux/llist.h>
+#include <linux/uio.h>
 #include <uapi/linux/io_uring.h>
 
 struct iou_loop_params;
@@ -20,6 +21,14 @@ enum {
 	 * It's also ignored unless IORING_SETUP_DEFER_TASKRUN is set.
 	 */
 	IOU_F_TWQ_LAZY_WAKE			= 1,
+
+	/*
+	 * Set when task_work is queued from a waitqueue wakeup handler, where
+	 * an arbitrary provider waitqueue lock is held. Signaling the CQ ring
+	 * eventfd inline from there can recurse back into that lock through
+	 * epoll, so the eventfd signal must be deferred.
+	 */
+	IOU_F_TWQ_IN_WAKE			= 2,
 };
 
 enum io_uring_cmd_flags {
@@ -44,6 +53,11 @@ enum io_uring_cmd_flags {
 	IO_URING_F_COMPAT		= (1 << 12),
 };
 
+enum {
+	IO_BUF_DEST	= 1 << ITER_DEST,
+	IO_BUF_SOURCE	= 1 << ITER_SOURCE,
+};
+
 struct iou_loop_params;
 
 struct io_wq_work_node {
@@ -53,6 +67,18 @@ struct io_wq_work_node {
 struct io_wq_work_list {
 	struct io_wq_work_node *first;
 	struct io_wq_work_node *last;
+};
+
+/*
+ * Lockless multi-producer, single-consumer FIFO queue, see
+ * io_uring/mpscq.h for the implementation and rules. Defined here so
+ * that it can be embedded in io_ring_ctx. This is the producer side
+ * only - the consumer cursor is kept separately, on a cacheline that
+ * isn't dirtied by the producers.
+ */
+struct mpscq {
+	struct llist_node	*tail;		/* producers */
+	struct llist_node	stub;
 };
 
 struct io_wq_work {
@@ -119,6 +145,11 @@ struct io_uring_task {
 	const struct io_ring_ctx 	*last;
 	struct task_struct		*task;
 	struct io_wq			*io_wq;
+	/*
+	 * Consumer cursor for ->task_list. Only popped by the task itself,
+	 * or by ->fallback_work once the task can no longer run task_work.
+	 */
+	struct llist_node		*task_head;
 	struct file			*registered_rings[IO_RINGFD_REG_MAX];
 
 	struct xarray			xa;
@@ -127,8 +158,11 @@ struct io_uring_task {
 	atomic_t			inflight_tracked;
 	struct percpu_counter		inflight;
 
+	/* drains ->task_list once the task can no longer run task_work */
+	struct work_struct		fallback_work;
+
 	struct { /* task_work */
-		struct llist_head	task_list;
+		struct mpscq		task_list;
 		struct callback_head	task_work;
 	} ____cacheline_aligned_in_smp;
 };
@@ -288,7 +322,11 @@ enum {
 	IO_RING_F_DRAIN_DISABLED	= BIT(10),
 	IO_RING_F_COMPAT		= BIT(11),
 	IO_RING_F_IOWQ_LIMITS_SET	= BIT(12),
+	/* restrictions were inherited from the task that created the ring */
+	IO_RING_F_RESTRICT_INHERITED	= BIT(13),
 };
+
+struct iou_ctx {};
 
 struct io_ring_ctx {
 	/* const or read-mostly hot data */
@@ -346,6 +384,14 @@ struct io_ring_ctx {
 		bool			poll_multi_queue;
 		struct list_head	iopoll_list;
 
+		/*
+		 * Consumer cursor for ->work_list, protected by ->uring_lock.
+		 * Deliberately kept away from the producer side of the queue,
+		 * as it's written for every popped entry, and the producer
+		 * cacheline is contended enough as it is.
+		 */
+		struct llist_node	*work_head;
+
 		struct io_file_table	file_table;
 		struct io_rsrc_data	buf_table;
 		struct io_alloc_cache	node_cache;
@@ -366,7 +412,7 @@ struct io_ring_ctx {
 		struct io_alloc_cache	rw_cache;
 		struct io_alloc_cache	cmd_cache;
 
-		int (*loop_step)(struct io_ring_ctx *ctx,
+		int (*loop_step)(struct iou_ctx *,
 				 struct iou_loop_params *);
 
 		/*
@@ -403,8 +449,7 @@ struct io_ring_ctx {
 	 */
 	struct {
 		struct io_rings	__rcu	*rings_rcu;
-		struct llist_head	work_llist;
-		struct llist_head	retry_llist;
+		struct mpscq		work_list;
 		unsigned long		check_cq;
 		atomic_t		cq_wait_nr;
 		atomic_t		cq_timeouts;
@@ -446,6 +491,9 @@ struct io_ring_ctx {
 	/* Stores zcrx object pointers of type struct io_zcrx_ifq */
 	struct xarray			zcrx_ctxs;
 
+	/* Used for accounting references on pages in registered buffers */
+	struct xarray		hpage_acct;
+
 	u32			pers_next;
 	struct xarray		personalities;
 
@@ -464,8 +512,6 @@ struct io_ring_ctx {
 	struct mutex			tctx_lock;
 
 	/* ctx exit and cancelation */
-	struct llist_head		fallback_llist;
-	struct delayed_work		fallback_work;
 	struct work_struct		exit_work;
 	struct completion		ref_comp;
 
@@ -504,6 +550,8 @@ struct io_ring_ctx {
 	struct io_mapped_region		ring_region;
 	/* used for optimised request parameter and wait argument passing  */
 	struct io_mapped_region		param_region;
+
+	struct kcov_common_handle_id	kcov_handle;
 };
 
 /*
@@ -724,8 +772,6 @@ struct io_kiocb {
 	 * For the latter, it points to the selected buffer ID.
 	 */
 	u16				buf_index;
-
-	unsigned			nr_tw;
 
 	/* REQ_F_* flags */
 	io_req_flags_t			flags;

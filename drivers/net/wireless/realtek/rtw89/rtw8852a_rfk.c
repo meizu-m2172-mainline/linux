@@ -334,8 +334,8 @@ static void _check_addc(struct rtw89_dev *rtwdev, enum rtw89_rf_path path)
 
 	for (i = 0; i < ADDC_T_AVG; i++) {
 		tmp = rtw89_phy_read32_mask(rtwdev, R_DBG32_D, MASKDWORD);
-		dc_re += sign_extend32(FIELD_GET(0xfff000, tmp), 11);
-		dc_im += sign_extend32(FIELD_GET(0xfff, tmp), 11);
+		dc_re += FIELD_GET_SIGNED(0xfff000, tmp);
+		dc_im += FIELD_GET_SIGNED(0xfff, tmp);
 	}
 
 	dc_re /= ADDC_T_AVG;
@@ -2910,6 +2910,7 @@ static void _tssi_set_tmeter_tbl(struct rtw89_dev *rtwdev, enum rtw89_phy_idx ph
 	}						\
 	__val;						\
 })
+	const struct rtw89_fw_txpwr_track_cfg *trk = rtwdev->fw.elm_info.txpwr_trk;
 	struct rtw89_tssi_info *tssi_info = &rtwdev->tssi;
 	u8 ch = chan->channel;
 	u8 subband = chan->subband_type;
@@ -2922,31 +2923,34 @@ static void _tssi_set_tmeter_tbl(struct rtw89_dev *rtwdev, enum rtw89_phy_idx ph
 	u32 tmp = 0;
 	u8 i, j;
 
+	if (!trk)
+		trk = &rtw89_8852a_trk_cfg;
+
 	switch (subband) {
 	default:
 	case RTW89_CH_2G:
-		thm_up_a = rtw89_8852a_trk_cfg.delta_swingidx_2ga_p;
-		thm_down_a = rtw89_8852a_trk_cfg.delta_swingidx_2ga_n;
-		thm_up_b = rtw89_8852a_trk_cfg.delta_swingidx_2gb_p;
-		thm_down_b = rtw89_8852a_trk_cfg.delta_swingidx_2gb_n;
+		thm_up_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_2GA_P][0];
+		thm_down_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_2GA_N][0];
+		thm_up_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_2GB_P][0];
+		thm_down_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_2GB_N][0];
 		break;
 	case RTW89_CH_5G_BAND_1:
-		thm_up_a = rtw89_8852a_trk_cfg.delta_swingidx_5ga_p[0];
-		thm_down_a = rtw89_8852a_trk_cfg.delta_swingidx_5ga_n[0];
-		thm_up_b = rtw89_8852a_trk_cfg.delta_swingidx_5gb_p[0];
-		thm_down_b = rtw89_8852a_trk_cfg.delta_swingidx_5gb_n[0];
+		thm_up_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GA_P][0];
+		thm_down_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GA_N][0];
+		thm_up_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GB_P][0];
+		thm_down_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GB_N][0];
 		break;
 	case RTW89_CH_5G_BAND_3:
-		thm_up_a = rtw89_8852a_trk_cfg.delta_swingidx_5ga_p[1];
-		thm_down_a = rtw89_8852a_trk_cfg.delta_swingidx_5ga_n[1];
-		thm_up_b = rtw89_8852a_trk_cfg.delta_swingidx_5gb_p[1];
-		thm_down_b = rtw89_8852a_trk_cfg.delta_swingidx_5gb_n[1];
+		thm_up_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GA_P][1];
+		thm_down_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GA_N][1];
+		thm_up_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GB_P][1];
+		thm_down_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GB_N][1];
 		break;
 	case RTW89_CH_5G_BAND_4:
-		thm_up_a = rtw89_8852a_trk_cfg.delta_swingidx_5ga_p[2];
-		thm_down_a = rtw89_8852a_trk_cfg.delta_swingidx_5ga_n[2];
-		thm_up_b = rtw89_8852a_trk_cfg.delta_swingidx_5gb_p[2];
-		thm_down_b = rtw89_8852a_trk_cfg.delta_swingidx_5gb_n[2];
+		thm_up_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GA_P][2];
+		thm_down_a = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GA_N][2];
+		thm_up_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GB_P][2];
+		thm_down_b = trk->delta[RTW89_FW_TXPWR_TRK_TYPE_5GB_N][2];
 		break;
 	}
 

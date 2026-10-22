@@ -266,6 +266,7 @@
 
 struct dcn_optc_registers {
 	OPTC_REG_VARIABLE_LIST_DCN;
+	uint32_t OTG_DRR_V_TOTAL_REACH_RANGE;
 	OPTC_REG_VARIABLE_LIST_DCN42;
 };
 
@@ -595,7 +596,9 @@ struct dcn_optc_registers {
 	type MANUAL_FLOW_CONTROL;\
 	type MANUAL_FLOW_CONTROL_SEL;
 
-#define V_TOTAL_REGS(type)
+#define V_TOTAL_REGS(type) \
+	type OTG_DRR_V_TOTAL_REACH_LOWER_RANGE;\
+	type OTG_DRR_V_TOTAL_REACH_UPPER_RANGE;
 
 #define TG_REG_FIELD_LIST(type) \
 	TG_REG_FIELD_LIST_DCN1_0(type)\
@@ -652,7 +655,8 @@ struct dcn_optc_registers {
 	type OTG0_IHC_OTG_VERTICAL_INTERRUPT2_DEST;
 
 #define TG_REG_FIELD_LIST_DCN3_2(type) \
-	type OTG_H_TIMING_DIV_MODE_MANUAL;
+	type OTG_H_TIMING_DIV_MODE_MANUAL;\
+	type OTG_CRC1_EN;
 
 #define TG_REG_FIELD_LIST_DCN3_5(type) \
 	type OTG_CRC0_WINDOWA_X_START_READBACK;\

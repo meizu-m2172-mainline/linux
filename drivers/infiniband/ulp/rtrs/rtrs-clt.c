@@ -1536,7 +1536,7 @@ static struct rtrs_clt_path *alloc_path(struct rtrs_clt_sess *clt,
 	int cpu;
 	size_t total_con;
 
-	clt_path = kzalloc_obj(*clt_path);
+	clt_path = kzalloc_flex(*clt_path, stats, 1);
 	if (!clt_path)
 		goto err;
 
@@ -1551,10 +1551,6 @@ static struct rtrs_clt_path *alloc_path(struct rtrs_clt_sess *clt,
 
 	clt_path->s.con_num = total_con;
 	clt_path->s.irq_con_num = con_num + 1;
-
-	clt_path->stats = kzalloc_obj(*clt_path->stats);
-	if (!clt_path->stats)
-		goto err_free_con;
 
 	mutex_init(&clt_path->init_mutex);
 	uuid_gen(&clt_path->s.uuid);
@@ -1583,7 +1579,7 @@ static struct rtrs_clt_path *alloc_path(struct rtrs_clt_sess *clt,
 
 	clt_path->mp_skip_entry = alloc_percpu(typeof(*clt_path->mp_skip_entry));
 	if (!clt_path->mp_skip_entry)
-		goto err_free_stats;
+		goto err_free_con;
 
 	for_each_possible_cpu(cpu)
 		INIT_LIST_HEAD(per_cpu_ptr(clt_path->mp_skip_entry, cpu));
@@ -1596,8 +1592,6 @@ static struct rtrs_clt_path *alloc_path(struct rtrs_clt_sess *clt,
 
 err_free_percpu:
 	free_percpu(clt_path->mp_skip_entry);
-err_free_stats:
-	kfree(clt_path->stats);
 err_free_con:
 	kfree(clt_path->s.con);
 err_free_path:
@@ -1681,8 +1675,7 @@ static int create_con_cq_qp(struct rtrs_clt_con *con)
 		 * + 2 for drain and heartbeat
 		 * in case qp gets into error state.
 		 */
-		max_send_wr =
-			min_t(int, wr_limit, SERVICE_CON_QUEUE_DEPTH * 2 + 2);
+		max_send_wr = min(wr_limit, SERVICE_CON_QUEUE_DEPTH * 2 + 2);
 		max_recv_wr = max_send_wr;
 	} else {
 		/*
@@ -1698,11 +1691,9 @@ static int create_con_cq_qp(struct rtrs_clt_con *con)
 		wr_limit = clt_path->s.dev->ib_dev->attrs.max_qp_wr;
 		/* Shared between connections */
 		clt_path->s.dev_ref++;
-		max_send_wr = min_t(int, wr_limit,
-			      /* QD * (REQ + RSP + FR REGS or INVS) + drain */
-			      clt_path->queue_depth * 4 + 1);
-		max_recv_wr = min_t(int, wr_limit,
-			      clt_path->queue_depth * 3 + 1);
+		/* QD * (REQ + RSP + FR REGS or INVS) + drain */
+		max_send_wr = min(wr_limit, clt_path->queue_depth * 4 + 1);
+		max_recv_wr = min(wr_limit, clt_path->queue_depth * 3 + 1);
 		max_send_sge = 2;
 	}
 	atomic_set(&con->c.sq_wr_avail, max_send_wr);
@@ -1741,6 +1732,8 @@ static void destroy_con_cq_qp(struct rtrs_clt_con *con)
 	/*
 	 * Be careful here: destroy_con_cq_qp() can be called even
 	 * create_con_cq_qp() failed, see comments there.
+	 * Caller must set con->destroyed under this lock first so a
+	 * racing ADDR_RESOLVED cannot ib_cq_pool_get() after we PUT/SKIP.
 	 */
 	lockdep_assert_held(&con->con_mutex);
 	rtrs_cq_qp_destroy(&con->c);
@@ -1775,6 +1768,10 @@ static int rtrs_rdma_addr_resolved(struct rtrs_clt_con *con)
 	int err;
 
 	mutex_lock(&con->con_mutex);
+	if (con->destroyed) {
+		mutex_unlock(&con->con_mutex);
+		return -ECONNABORTED;
+	}
 	err = create_con_cq_qp(con);
 	mutex_unlock(&con->con_mutex);
 	if (err) {
@@ -2230,6 +2227,7 @@ static void rtrs_clt_stop_and_destroy_conns(struct rtrs_clt_path *clt_path)
 			break;
 		con = to_clt_con(clt_path->s.con[cid]);
 		mutex_lock(&con->con_mutex);
+		con->destroyed = true;
 		destroy_con_cq_qp(con);
 		mutex_unlock(&con->con_mutex);
 		destroy_cm(con);
@@ -2396,6 +2394,7 @@ destroy:
 		if (con->c.cm_id) {
 			stop_cm(con);
 			mutex_lock(&con->con_mutex);
+			con->destroyed = true;
 			destroy_con_cq_qp(con);
 			mutex_unlock(&con->con_mutex);
 			destroy_cm(con);
@@ -2863,7 +2862,6 @@ struct rtrs_clt_sess *rtrs_clt_open(struct rtrs_clt_ops *ops,
 			list_del_rcu(&clt_path->s.entry);
 			rtrs_clt_close_conns(clt_path, true);
 			free_percpu(clt_path->stats->pcpu_stats);
-			kfree(clt_path->stats);
 			free_path(clt_path);
 			goto close_all_path;
 		}
@@ -2873,7 +2871,6 @@ struct rtrs_clt_sess *rtrs_clt_open(struct rtrs_clt_ops *ops,
 			list_del_rcu(&clt_path->s.entry);
 			rtrs_clt_close_conns(clt_path, true);
 			free_percpu(clt_path->stats->pcpu_stats);
-			kfree(clt_path->stats);
 			free_path(clt_path);
 			goto close_all_path;
 		}
@@ -3166,7 +3163,6 @@ close_path:
 	rtrs_clt_remove_path_from_arr(clt_path);
 	rtrs_clt_close_conns(clt_path, true);
 	free_percpu(clt_path->stats->pcpu_stats);
-	kfree(clt_path->stats);
 	free_path(clt_path);
 
 	return err;

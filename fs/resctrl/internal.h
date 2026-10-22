@@ -335,8 +335,9 @@ __printf(1, 2)
 void rdt_last_cmd_printf(const char *fmt, ...);
 
 struct rdtgroup *rdtgroup_kn_lock_live(struct kernfs_node *kn);
-
 void rdtgroup_kn_unlock(struct kernfs_node *kn);
+bool info_kn_lock(struct kernfs_node *kn);
+void info_kn_unlock(struct kernfs_node *kn);
 
 int rdtgroup_kn_mode_restrict(struct rdtgroup *r, const char *name);
 
@@ -407,6 +408,8 @@ bool has_busy_rmid(struct rdt_l3_mon_domain *d);
 void __check_limbo(struct rdt_l3_mon_domain *d, bool force_free);
 
 void resctrl_file_fflags_init(const char *config, unsigned long fflags);
+
+void resctrl_file_mode_init(const char *config, umode_t mode);
 
 void rdt_staged_configs_clear(void);
 

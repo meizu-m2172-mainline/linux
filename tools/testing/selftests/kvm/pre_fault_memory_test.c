@@ -11,6 +11,7 @@
 #include <kvm_util.h>
 #include <processor.h>
 #include <pthread.h>
+#include <ucall_common.h>
 
 /* Arbitrarily chosen values */
 #define TEST_SIZE		(SZ_2M + PAGE_SIZE)
@@ -83,7 +84,7 @@ static void pre_fault_memory(struct kvm_vcpu *vcpu, u64 base_gpa, u64 offset,
 	 * Concurrently delete (and recreate) the slot to test KVM's handling
 	 * of a racing memslot deletion with prefaulting.
 	 */
-	pthread_create(&slot_worker, NULL, delete_slot_worker, &data);
+	kvm_pthread_create(&slot_worker, NULL, delete_slot_worker, &data);
 
 	while (!READ_ONCE(data.worker_ready))
 		cpu_relax();
@@ -115,7 +116,7 @@ static void pre_fault_memory(struct kvm_vcpu *vcpu, u64 base_gpa, u64 offset,
 		 */
 		if (!slot_recreated) {
 			WRITE_ONCE(data.recreate_slot, true);
-			pthread_join(slot_worker, NULL);
+			kvm_pthread_join(slot_worker, NULL);
 			slot_recreated = true;
 
 			/*
@@ -167,7 +168,6 @@ static void __test_pre_fault_memory(unsigned long vm_type, bool private)
 		.type = vm_type,
 	};
 	struct kvm_vcpu *vcpu;
-	struct kvm_run *run;
 	struct kvm_vm *vm;
 	struct ucall uc;
 
@@ -192,11 +192,6 @@ static void __test_pre_fault_memory(unsigned long vm_type, bool private)
 
 	vcpu_args_set(vcpu, 1, gva);
 	vcpu_run(vcpu);
-
-	run = vcpu->run;
-	TEST_ASSERT(run->exit_reason == KVM_EXIT_IO,
-		    "Wanted KVM_EXIT_IO, got exit reason: %u (%s)",
-		    run->exit_reason, exit_reason_str(run->exit_reason));
 
 	switch (get_ucall(vcpu, &uc)) {
 	case UCALL_ABORT:

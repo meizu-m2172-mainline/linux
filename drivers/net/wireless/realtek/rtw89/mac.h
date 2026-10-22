@@ -926,19 +926,27 @@ struct rtw89_mac_size_set {
 	const struct rtw89_hfc_prec_cfg hfc_preccfg_pcie;
 	const struct rtw89_hfc_prec_cfg hfc_prec_cfg_c0;
 	const struct rtw89_hfc_prec_cfg hfc_prec_cfg_c2;
+	const struct rtw89_hfc_prec_cfg hfc_prec_cfg_c3;
+	const struct rtw89_hfc_prec_cfg hfc_prec_cfg_c5;
+	const struct rtw89_hfc_prec_cfg hfc_prec_cfg_c6;
 	const struct rtw89_dle_size wde_size0;
 	const struct rtw89_dle_size wde_size1;
 	const struct rtw89_dle_size wde_size0_v1;
+	const struct rtw89_dle_size wde_size3_v1;
 	const struct rtw89_dle_size wde_size4;
 	const struct rtw89_dle_size wde_size4_v1;
+	const struct rtw89_dle_size wde_size5_v1;
 	const struct rtw89_dle_size wde_size6;
 	const struct rtw89_dle_size wde_size7;
+	const struct rtw89_dle_size wde_size7_v1;
+	const struct rtw89_dle_size wde_size8_v1;
 	const struct rtw89_dle_size wde_size9;
 	const struct rtw89_dle_size wde_size16_v1;
 	const struct rtw89_dle_size wde_size17;
 	const struct rtw89_dle_size wde_size18;
 	const struct rtw89_dle_size wde_size18_v1;
 	const struct rtw89_dle_size wde_size19;
+	const struct rtw89_dle_size wde_size22_v1;
 	const struct rtw89_dle_size wde_size23;
 	const struct rtw89_dle_size wde_size30;
 	const struct rtw89_dle_size wde_size31;
@@ -946,8 +954,11 @@ struct rtw89_mac_size_set {
 	const struct rtw89_dle_size ple_size1;
 	const struct rtw89_dle_size ple_size0_v1;
 	const struct rtw89_dle_size ple_size3_v1;
+	const struct rtw89_dle_size ple_size4_v1;
 	const struct rtw89_dle_size ple_size4;
 	const struct rtw89_dle_size ple_size6;
+	const struct rtw89_dle_size ple_size6_v1;
+	const struct rtw89_dle_size ple_size7_v1;
 	const struct rtw89_dle_size ple_size8;
 	const struct rtw89_dle_size ple_size9;
 	const struct rtw89_dle_size ple_size17;
@@ -956,6 +967,7 @@ struct rtw89_mac_size_set {
 	const struct rtw89_dle_size ple_size20_v1;
 	const struct rtw89_dle_size ple_size22_v1;
 	const struct rtw89_dle_size ple_size27;
+	const struct rtw89_dle_size ple_size29_v1;
 	const struct rtw89_dle_size ple_size31;
 	const struct rtw89_dle_size ple_size34;
 	const struct rtw89_wde_quota wde_qt0;
@@ -963,13 +975,18 @@ struct rtw89_mac_size_set {
 	const struct rtw89_wde_quota wde_qt0_v1;
 	const struct rtw89_wde_quota wde_qt3;
 	const struct rtw89_wde_quota wde_qt4;
+	const struct rtw89_wde_quota wde_qt4_v1;
+	const struct rtw89_wde_quota wde_qt5_v1;
 	const struct rtw89_wde_quota wde_qt6;
 	const struct rtw89_wde_quota wde_qt7;
+	const struct rtw89_wde_quota wde_qt7_v1;
+	const struct rtw89_wde_quota wde_qt8_v1;
 	const struct rtw89_wde_quota wde_qt16;
 	const struct rtw89_wde_quota wde_qt17;
 	const struct rtw89_wde_quota wde_qt18;
 	const struct rtw89_wde_quota wde_qt19_v1;
 	const struct rtw89_wde_quota wde_qt23;
+	const struct rtw89_wde_quota wde_qt23_v1;
 	const struct rtw89_wde_quota wde_qt30;
 	const struct rtw89_wde_quota wde_qt31;
 	const struct rtw89_ple_quota ple_qt0;
@@ -977,26 +994,37 @@ struct rtw89_mac_size_set {
 	const struct rtw89_ple_quota ple_qt4;
 	const struct rtw89_ple_quota ple_qt5;
 	const struct rtw89_ple_quota ple_qt5_v2;
+	const struct rtw89_ple_quota ple_qt6_v1;
+	const struct rtw89_ple_quota ple_qt7_v1;
+	const struct rtw89_ple_quota ple_qt8_v1;
 	const struct rtw89_ple_quota ple_qt9;
+	const struct rtw89_ple_quota ple_qt9_v1;
+	const struct rtw89_ple_quota ple_qt12_v1;
 	const struct rtw89_ple_quota ple_qt13;
+	const struct rtw89_ple_quota ple_qt13_v1;
+	const struct rtw89_ple_quota ple_qt14_v1;
+	const struct rtw89_ple_quota ple_qt15_v1;
 	const struct rtw89_ple_quota ple_qt18;
 	const struct rtw89_ple_quota ple_qt25;
 	const struct rtw89_ple_quota ple_qt26;
 	const struct rtw89_ple_quota ple_qt27;
 	const struct rtw89_ple_quota ple_qt28;
 	const struct rtw89_ple_quota ple_qt42;
-	const struct rtw89_ple_quota ple_qt42_v2;
 	const struct rtw89_ple_quota ple_qt43;
-	const struct rtw89_ple_quota ple_qt43_v2;
 	const struct rtw89_ple_quota ple_qt44;
+	const struct rtw89_ple_quota ple_qt44_v2;
 	const struct rtw89_ple_quota ple_qt45;
+	const struct rtw89_ple_quota ple_qt45_v2;
 	const struct rtw89_ple_quota ple_qt46;
 	const struct rtw89_ple_quota ple_qt47;
+	const struct rtw89_ple_quota ple_qt47_v2;
 	const struct rtw89_ple_quota ple_qt57;
 	const struct rtw89_ple_quota ple_qt58;
 	const struct rtw89_ple_quota ple_qt59;
 	const struct rtw89_ple_quota ple_qt61;
 	const struct rtw89_ple_quota ple_qt62;
+	const struct rtw89_ple_quota ple_qt64_v2;
+	const struct rtw89_ple_quota ple_qt65_v2;
 	const struct rtw89_ple_quota ple_qt78;
 	const struct rtw89_ple_quota ple_qt79;
 	const struct rtw89_ple_quota ple_qt_52a_wow;
@@ -1006,13 +1034,19 @@ struct rtw89_mac_size_set {
 	const struct rtw89_rsvd_quota ple_rsvd_qt0;
 	const struct rtw89_rsvd_quota ple_rsvd_qt1;
 	const struct rtw89_rsvd_quota ple_rsvd_qt1_v1;
+	const struct rtw89_rsvd_quota ple_rsvd_qt2;
 	const struct rtw89_rsvd_quota ple_rsvd_qt9;
 	const struct rtw89_dle_rsvd_size rsvd0_size0;
+	const struct rtw89_dle_rsvd_size rsvd0_size3;
+	const struct rtw89_dle_rsvd_size rsvd0_size5;
 	const struct rtw89_dle_rsvd_size rsvd0_size6;
+	const struct rtw89_dle_rsvd_size rsvd0_size17;
 	const struct rtw89_dle_rsvd_size rsvd1_size0;
 	const struct rtw89_dle_rsvd_size rsvd1_size2;
+	const struct rtw89_dle_rsvd_size rsvd1_size3;
 	const struct rtw89_dle_input dle_input3;
-	const struct rtw89_dle_input dle_input18;
+	const struct rtw89_dle_input dle_input20;
+	const struct rtw89_dle_input dle_input28;
 };
 
 extern const struct rtw89_mac_size_set rtw89_mac_size;
@@ -1029,10 +1063,12 @@ struct rtw89_mac_gen_def {
 	const u32 *mem_base_addrs;
 	u32 mem_page_size;
 	u32 rx_fltr;
+	u32 default_rx_fltr;
 	const struct rtw89_port_reg *port_base;
 	u32 agg_len_ht;
 	u32 ps_status;
 	const struct rtw89_mac_mu_gid_addr *mu_gid;
+	u32 boot_dbg;
 
 	struct rtw89_reg_def muedca_ctrl;
 	struct rtw89_reg_def bfee_ctrl;
@@ -1066,6 +1102,7 @@ struct rtw89_mac_gen_def {
 	int (*cfg_ppdu_status)(struct rtw89_dev *rtwdev, u8 mac_idx, bool enable);
 	void (*cfg_phy_rpt)(struct rtw89_dev *rtwdev, u8 mac_idx, bool enable);
 	void (*set_edcca_mode)(struct rtw89_dev *rtwdev, u8 mac_idx, bool normal);
+	void (*set_vcore_cfg)(struct rtw89_dev *rtwdev, u8 vlv);
 
 	int (*dle_mix_cfg)(struct rtw89_dev *rtwdev, const struct rtw89_dle_mem *cfg);
 	int (*chk_dle_rdy)(struct rtw89_dev *rtwdev, bool wde_or_ple);
@@ -1087,6 +1124,7 @@ struct rtw89_mac_gen_def {
 
 	int (*reset_pwr_state)(struct rtw89_dev *rtwdev);
 	void (*disable_cpu)(struct rtw89_dev *rtwdev);
+	void (*fwdl_preconfig)(struct rtw89_dev *rtwdev);
 	int (*fwdl_enable_wcpu)(struct rtw89_dev *rtwdev, u8 boot_reason,
 				bool dlfw, bool include_bb);
 	u8 (*fwdl_get_status)(struct rtw89_dev *rtwdev, enum rtw89_fwdl_check_type type);
@@ -1097,6 +1135,8 @@ struct rtw89_mac_gen_def {
 	int (*cnv_efuse_state)(struct rtw89_dev *rtwdev, bool idle);
 	int (*efuse_read_fw_secure)(struct rtw89_dev *rtwdev);
 	int (*efuse_read_ecv)(struct rtw89_dev *rtwdev);
+	int (*efuse_read_thermal_k)(struct rtw89_dev *rtwdev);
+	int (*efuse_read_pwr_data)(struct rtw89_dev *rtwdev);
 
 	int (*cfg_plt)(struct rtw89_dev *rtwdev, struct rtw89_mac_ax_plt *plt);
 	u16 (*get_plt_cnt)(struct rtw89_dev *rtwdev, u8 band);
@@ -1263,7 +1303,8 @@ rtw89_write32_port_set(struct rtw89_dev *rtwdev, struct rtw89_vif_link *rtwvif_l
 
 int rtw89_mac_pwr_on(struct rtw89_dev *rtwdev);
 void rtw89_mac_pwr_off(struct rtw89_dev *rtwdev);
-int rtw89_mac_partial_init(struct rtw89_dev *rtwdev, bool include_bb);
+int rtw89_mac_partial_init(struct rtw89_dev *rtwdev, bool include_bb,
+			   bool bb_preinit);
 int rtw89_mac_preinit(struct rtw89_dev *rtwdev);
 int rtw89_mac_init(struct rtw89_dev *rtwdev);
 int rtw89_mac_dle_init(struct rtw89_dev *rtwdev, enum rtw89_qta_mode mode,
@@ -1420,6 +1461,29 @@ void rtw89_mac_set_edcca_mode(struct rtw89_dev *rtwdev, u8 mac_idx, bool normal)
 		return;
 
 	mac->set_edcca_mode(rtwdev, mac_idx, normal);
+}
+
+static inline
+void rtw89_mac_set_vcore_cfg(struct rtw89_dev *rtwdev, u8 vlv)
+{
+	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
+
+	if (!mac->set_vcore_cfg)
+		return;
+
+	mac->set_vcore_cfg(rtwdev, vlv);
+}
+
+static inline
+void rtw89_mac_set_vcore_reset(struct rtw89_dev *rtwdev)
+{
+	struct rtw89_hal *hal = &rtwdev->hal;
+
+	if (hal->thermal_prot_vlv == 0)
+		return;
+
+	hal->thermal_prot_vlv = 0;
+	rtw89_mac_set_vcore_cfg(rtwdev, 0);
 }
 
 static inline
@@ -1619,6 +1683,7 @@ enum rtw89_mac_xtal_si_offset {
 	XTAL_SI_PWR_CUT = 0x10,
 #define XTAL_SI_SMALL_PWR_CUT	BIT(0)
 #define XTAL_SI_BIG_PWR_CUT	BIT(1)
+	XTAL_SI_AONLDO_CTRL = 0x10,
 	XTAL_SI_XTAL_DRV = 0x15,
 #define XTAL_SI_DRV_LATCH	BIT(4)
 	XTAL_SI_XTAL_PLL = 0x16,
@@ -1698,6 +1763,37 @@ static inline int rtw89_mac_efuse_read_ecv(struct rtw89_dev *rtwdev)
 		return -ENOENT;
 
 	return mac->efuse_read_ecv(rtwdev);
+}
+
+static inline int rtw89_mac_efuse_read_thermal_k(struct rtw89_dev *rtwdev)
+{
+	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
+
+	if (!mac->efuse_read_thermal_k)
+		return -ENOENT;
+
+	return mac->efuse_read_thermal_k(rtwdev);
+}
+
+static inline int rtw89_mac_efuse_read_pwr_data(struct rtw89_dev *rtwdev)
+{
+	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
+
+	if (!mac->efuse_read_pwr_data)
+		return -ENOENT;
+
+	return mac->efuse_read_pwr_data(rtwdev);
+}
+
+static inline
+void rtw89_mac_fwdl_preconfig(struct rtw89_dev *rtwdev)
+{
+	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
+
+	if (!mac->fwdl_preconfig)
+		return;
+
+	mac->fwdl_preconfig(rtwdev);
 }
 
 static inline

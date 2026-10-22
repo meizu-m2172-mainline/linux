@@ -12,6 +12,7 @@
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/limits.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
@@ -921,7 +922,8 @@ static int tasdevice_process_block(void *context, unsigned char *data,
 						data[subblk_offset + 1],
 						data[subblk_offset + 2]),
 					data[subblk_offset + 3]);
-				if (rc < 0) {
+				if (rc < 0 &&
+				    !(tas_priv->isspi && rc == -EXDEV)) {
 					is_err = true;
 					dev_err(tas_priv->dev,
 					"process_block: single write error\n");
@@ -953,7 +955,7 @@ static int tasdevice_process_block(void *context, unsigned char *data,
 				data[subblk_offset + 1],
 				data[subblk_offset + 2]),
 				&(data[subblk_offset + 4]), len);
-			if (rc < 0) {
+			if (rc < 0 && !(tas_priv->isspi && rc == -EXDEV)) {
 				is_err = true;
 				dev_err(tas_priv->dev,
 					"%s: bulk_write error = %d\n",
@@ -991,7 +993,7 @@ static int tasdevice_process_block(void *context, unsigned char *data,
 				data[subblk_offset + 4]),
 				data[subblk_offset + 1],
 				data[subblk_offset + 5]);
-			if (rc < 0) {
+			if (rc < 0 && !(tas_priv->isspi && rc == -EXDEV)) {
 				is_err = true;
 				dev_err(tas_priv->dev,
 					"%s: update_bits error = %d\n",
@@ -1099,13 +1101,42 @@ static int tasdevice_load_block_kernel(
 	return 0;
 }
 
+static int tasdevice_fw_strnlen(const struct firmware *fmw, int offset)
+{
+	const u8 *start;
+	const u8 *nul;
+	size_t remaining;
+	size_t len;
+
+	if (offset < 0 || offset >= fmw->size)
+		return -EINVAL;
+
+	start = fmw->data + offset;
+	remaining = fmw->size - offset;
+	nul = memchr(start, '\0', remaining);
+	if (!nul)
+		return -EINVAL;
+
+	len = nul - start;
+	if (len > INT_MAX)
+		return -EOVERFLOW;
+
+	return len;
+}
+
 static int fw_parse_variable_hdr(struct tasdevice_priv
 	*tas_priv, struct tasdevice_dspfw_hdr *fw_hdr,
 	const struct firmware *fmw, int offset)
 {
 	const unsigned char *buf = fmw->data;
-	int len = strlen((char *)&buf[offset]);
+	int len;
 
+	len = tasdevice_fw_strnlen(fmw, offset);
+	if (len < 0) {
+		dev_err(tas_priv->dev, "%s: Description error\n", __func__);
+		offset = len;
+		goto out;
+	}
 	len++;
 
 	if (offset + len + 8 > fmw->size) {
@@ -1237,7 +1268,12 @@ static int fw_parse_data(struct tasdevice_fw *tas_fmw,
 	memcpy(img_data->name, &data[offset], 64);
 	offset += 64;
 
-	n = strlen((char *)&data[offset]);
+	n = tasdevice_fw_strnlen(fmw, offset);
+	if (n < 0) {
+		dev_err(tas_fmw->dev, "%s: Description error\n", __func__);
+		offset = n;
+		goto out;
+	}
 	n++;
 	if (offset + n + 2 > fmw->size) {
 		dev_err(tas_fmw->dev, "%s: Description error\n", __func__);
@@ -1308,7 +1344,12 @@ static int fw_parse_program_data(struct tasdevice_priv *tas_priv,
 		}
 		offset += 64;
 
-		n = strlen((char *)&buf[offset]);
+		n = tasdevice_fw_strnlen(fmw, offset);
+		if (n < 0) {
+			dev_err(tas_priv->dev, "Description err\n");
+			offset = n;
+			goto out;
+		}
 		/* skip '\0' and 5 unused bytes */
 		n += 6;
 		if (offset + n > fmw->size) {
@@ -1371,7 +1412,12 @@ static int fw_parse_configuration_data(
 		memcpy(config->name, &data[offset], 64);
 		offset += 64;
 
-		n = strlen((char *)&data[offset]);
+		n = tasdevice_fw_strnlen(fmw, offset);
+		if (n < 0) {
+			dev_err(tas_priv->dev, "Description err\n");
+			offset = n;
+			goto out;
+		}
 		n += 15;
 		if (offset + n > fmw->size) {
 			dev_err(tas_priv->dev, "Description err\n");
@@ -1803,16 +1849,26 @@ static int tasdev_load_blk(struct tasdevice_priv *tas_priv,
 			}
 		}
 		if (ret == -EAGAIN) {
-			if (block->nr_retry > 0)
+			if (block->nr_retry > 0) {
+				/* Give the hardware time to stabilize before
+				 * next block re-transmission attempt.
+				 */
+				usleep_range(2000, 2500);
 				continue;
+			}
 		} else if (ret < 0) /*err in current device, skip it*/
 			break;
 
 		if (block->is_pchksum_present) {
 			ret = tasdev_block_chksum(tas_priv, block, chn);
 			if (ret == -EAGAIN) {
-				if (block->nr_retry > 0)
+				if (block->nr_retry > 0) {
+					/* Give the bus time to recover after
+					 * a checksum mismatch error.
+					 */
+					usleep_range(2000, 2500);
 					continue;
+				}
 			} else if (ret < 0) /*err in current device, skip it*/
 				break;
 		}
@@ -2133,7 +2189,8 @@ static int fw_parse_calibration_data(struct tasdevice_priv *tas_priv,
 {
 	struct tasdevice_calibration *calibration;
 	unsigned char *data = (unsigned char *)fmw->data;
-	unsigned int i, n;
+	unsigned int i;
+	int n;
 
 	if (offset + 2 > fmw->size) {
 		dev_err(tas_priv->dev, "%s: Calibrations error\n", __func__);
@@ -2165,7 +2222,12 @@ static int fw_parse_calibration_data(struct tasdevice_priv *tas_priv,
 		calibration = &(tas_fmw->calibrations[i]);
 		offset += 64;
 
-		n = strlen((char *)&data[offset]);
+		n = tasdevice_fw_strnlen(fmw, offset);
+		if (n < 0) {
+			dev_err(tas_priv->dev, "Description err\n");
+			offset = n;
+			goto out;
+		}
 		/* skip '\0' and 2 unused bytes */
 		n += 3;
 		if (offset + n > fmw->size) {
@@ -2191,7 +2253,7 @@ int tas2781_load_calibration(void *context, char *file_name,
 {
 	struct tasdevice_priv *tas_priv = (struct tasdevice_priv *)context;
 	struct tasdevice *tasdev = &(tas_priv->tasdevice[i]);
-	const struct firmware *fw_entry = NULL;
+	const struct firmware *fw_entry __free(firmware) = NULL;
 	struct tasdevice_fw *tas_fmw;
 	struct firmware fmw;
 	int offset = 0;
@@ -2201,60 +2263,50 @@ int tas2781_load_calibration(void *context, char *file_name,
 	if (ret) {
 		dev_err(tas_priv->dev, "%s: Request firmware %s failed\n",
 			__func__, file_name);
-		goto out;
+		return ret;
 	}
 
 	if (!fw_entry->size) {
 		dev_err(tas_priv->dev, "%s: file read error: size = %lu\n",
 			__func__, (unsigned long)fw_entry->size);
-		ret = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 	fmw.size = fw_entry->size;
 	fmw.data = fw_entry->data;
 
 	tas_fmw = tasdev->cali_data_fmw = kzalloc_obj(struct tasdevice_fw);
-	if (!tasdev->cali_data_fmw) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	if (!tasdev->cali_data_fmw)
+		return -ENOMEM;
+
 	tas_fmw->dev = tas_priv->dev;
 	offset = fw_parse_header(tas_priv, tas_fmw, &fmw, offset);
 	if (offset == -EINVAL) {
 		dev_err(tas_priv->dev, "fw_parse_header EXIT!\n");
-		ret = offset;
-		goto out;
+		return -EINVAL;
 	}
 	offset = fw_parse_variable_hdr_cal(tas_priv, tas_fmw, &fmw, offset);
 	if (offset == -EINVAL) {
 		dev_err(tas_priv->dev,
 			"%s: fw_parse_variable_header_cal EXIT!\n", __func__);
-		ret = offset;
-		goto out;
+		return -EINVAL;
 	}
 	offset = fw_parse_program_data(tas_priv, tas_fmw, &fmw, offset);
 	if (offset < 0) {
 		dev_err(tas_priv->dev, "fw_parse_program_data EXIT!\n");
-		ret = offset;
-		goto out;
+		return offset;
 	}
 	offset = fw_parse_configuration_data(tas_priv, tas_fmw, &fmw, offset);
 	if (offset < 0) {
 		dev_err(tas_priv->dev, "fw_parse_configuration_data EXIT!\n");
-		ret = offset;
-		goto out;
+		return offset;
 	}
 	offset = fw_parse_calibration_data(tas_priv, tas_fmw, &fmw, offset);
 	if (offset < 0) {
 		dev_err(tas_priv->dev, "fw_parse_calibration_data EXIT!\n");
-		ret = offset;
-		goto out;
+		return offset;
 	}
 
-out:
-	release_firmware(fw_entry);
-
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL_NS_GPL(tas2781_load_calibration, "SND_SOC_TAS2781_FMWLIB");
 
@@ -2347,7 +2399,7 @@ static int tasdevice_dspfw_ready(const struct firmware *fmw,
 int tasdevice_dsp_parser(void *context)
 {
 	struct tasdevice_priv *tas_priv = (struct tasdevice_priv *)context;
-	const struct firmware *fw_entry;
+	const struct firmware *fw_entry __free(firmware) = NULL;
 	int ret;
 
 	ret = request_firmware(&fw_entry, tas_priv->coef_binaryname,
@@ -2355,15 +2407,10 @@ int tasdevice_dsp_parser(void *context)
 	if (ret) {
 		dev_err(tas_priv->dev, "%s: load %s error\n", __func__,
 			tas_priv->coef_binaryname);
-		goto out;
+		return ret;
 	}
 
-	ret = tasdevice_dspfw_ready(fw_entry, tas_priv);
-	release_firmware(fw_entry);
-	fw_entry = NULL;
-
-out:
-	return ret;
+	return tasdevice_dspfw_ready(fw_entry, tas_priv);
 }
 EXPORT_SYMBOL_NS_GPL(tasdevice_dsp_parser, "SND_SOC_TAS2781_FMWLIB");
 
@@ -2745,11 +2792,12 @@ out:
 }
 EXPORT_SYMBOL_NS_GPL(tasdevice_prmg_load, "SND_SOC_TAS2781_FMWLIB");
 
-void tasdevice_tuning_switch(void *context, int state)
+void tasdevice_tuning_switch(void *context, int state, bool is_cap)
 {
 	struct tasdevice_priv *tas_priv = (struct tasdevice_priv *) context;
 	struct tasdevice_fw *tas_fmw = tas_priv->fmw;
-	int profile_cfg_id = tas_priv->rcabin.profile_cfg_id;
+	int profile_cfg_id = is_cap ? tas_priv->rcabin.capture_profile_id :
+				tas_priv->rcabin.profile_cfg_id;
 
 	/*
 	 * Only RCA-based Playback can still work with no dsp program running
@@ -2766,7 +2814,6 @@ void tasdevice_tuning_switch(void *context, int state)
 	if (state == 0) {
 		if (tas_fmw && tas_priv->cur_prog < tas_fmw->nr_programs) {
 			/* dsp mode or tuning mode */
-			profile_cfg_id = tas_priv->rcabin.profile_cfg_id;
 			tasdevice_select_tuningprm_cfg(tas_priv,
 				tas_priv->cur_prog, tas_priv->cur_conf,
 				profile_cfg_id);

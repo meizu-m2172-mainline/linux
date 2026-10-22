@@ -88,6 +88,8 @@ EXPORT_SYMBOL_GPL(css_set_lock);
 
 struct blocking_notifier_head cgroup_lifetime_notifier =
 	BLOCKING_NOTIFIER_INIT(cgroup_lifetime_notifier);
+struct blocking_notifier_head cgroup_task_notifier =
+	BLOCKING_NOTIFIER_INIT(cgroup_task_notifier);
 
 DEFINE_SPINLOCK(trace_cgroup_path_lock);
 char trace_cgroup_path[TRACE_CGROUP_PATH_LEN];
@@ -104,7 +106,7 @@ DEFINE_PERCPU_RWSEM(cgroup_threadgroup_rwsem);
 #define cgroup_assert_mutex_or_rcu_locked()				\
 	RCU_LOCKDEP_WARN(!rcu_read_lock_held() &&			\
 			   !lockdep_is_held(&cgroup_mutex),		\
-			   "cgroup_mutex or RCU read lock required");
+			   "cgroup_mutex or RCU read lock required")
 
 /*
  * cgroup destruction makes heavy use of work items and there can be a lot
@@ -197,6 +199,14 @@ static u32 cgrp_dfl_implicit_ss_mask;
 /* some controllers can be threaded on the default hierarchy */
 static u32 cgrp_dfl_threaded_ss_mask;
 
+/*
+ * Set across rebind_subsystems() to the controllers leaving a hierarchy.
+ * Guarded by cgroup_mutex. Makes find_existing_css_set() resolve them to the
+ * root css so the affected tasks are migrated there before
+ * cgroup_apply_control_disable() kills the per-cgroup csses.
+ */
+static u32 cgroup_rebind_ss_mask;
+
 /* The list of hierarchy roots */
 LIST_HEAD(cgroup_roots);
 static int cgroup_root_count;
@@ -264,7 +274,6 @@ static void cgroup_finalize_control(struct cgroup *cgrp, int ret);
 static void css_task_iter_skip(struct css_task_iter *it,
 			       struct task_struct *task);
 static int cgroup_destroy_locked(struct cgroup *cgrp);
-static void cgroup_finish_destroy(struct cgroup *cgrp);
 static void kill_css_sync(struct cgroup_subsys_state *css);
 static void kill_css_finish(struct cgroup_subsys_state *css);
 static struct cgroup_subsys_state *css_create(struct cgroup *cgrp,
@@ -376,11 +385,6 @@ static void cgroup_idr_remove(struct idr *idr, int id)
 	spin_unlock_bh(&cgroup_idr_lock);
 }
 
-static bool cgroup_has_tasks(struct cgroup *cgrp)
-{
-	return cgrp->nr_populated_csets;
-}
-
 static bool cgroup_is_threaded(struct cgroup *cgrp)
 {
 	return cgrp->dom_cgrp != cgrp;
@@ -409,7 +413,7 @@ static bool cgroup_can_be_thread_root(struct cgroup *cgrp)
 		return false;
 
 	/* can only have either domain or threaded children */
-	if (cgrp->nr_populated_domain_children)
+	if (READ_ONCE(cgrp->nr_populated_domain_children))
 		return false;
 
 	/* and no domain controllers can be enabled */
@@ -761,62 +765,76 @@ static bool css_set_populated(struct css_set *cset)
 }
 
 /**
- * cgroup_update_populated - update the populated count of a cgroup
- * @cgrp: the target cgroup
- * @populated: inc or dec populated count
+ * css_update_populated - update the populated state of a css and ancestors
+ * @css: leaf css whose own populated count is changing
+ * @populated: inc or dec
  *
- * One of the css_sets associated with @cgrp is either getting its first
- * task or losing the last.  Update @cgrp->nr_populated_* accordingly.  The
- * count is propagated towards root so that a given cgroup's
- * nr_populated_children is zero iff none of its descendants contain any
- * tasks.
+ * One of the css_sets pinned by @css is getting its first task or losing the
+ * last. Propagate the transition up the parent chain so that a css's
+ * nr_populated_children is zero iff none of its descendants contain any tasks.
  *
- * @cgrp's interface file "cgroup.populated" is zero if both
- * @cgrp->nr_populated_csets and @cgrp->nr_populated_children are zero and
- * 1 otherwise.  When the sum changes from or to zero, userland is notified
- * that the content of the interface file has changed.  This can be used to
- * detect when @cgrp and its descendants become populated or empty.
+ * For a cgroup->self walk, also runs cgroup-side bookkeeping at each level:
+ * domain/threaded child split, deferred-destroy trigger, and notification via
+ * "cgroup.populated" (zero iff cgrp->self has neither populated csets nor
+ * populated children; userland is notified on transitions).
  */
-static void cgroup_update_populated(struct cgroup *cgrp, bool populated)
+static void css_update_populated(struct cgroup_subsys_state *css, bool populated)
 {
-	struct cgroup *child = NULL;
+	struct cgroup_subsys_state *child = NULL;
 	int adj = populated ? 1 : -1;
 
 	lockdep_assert_held(&css_set_lock);
 
 	do {
-		bool was_populated = cgroup_is_populated(cgrp);
+		/* non-NULL only on the cgroup->self walk */
+		struct cgroup *cgrp = css_is_self(css) ? css->cgroup : NULL;
+		bool was_populated = css_is_populated(css);
 
 		if (!child) {
-			cgrp->nr_populated_csets += adj;
+			WRITE_ONCE(css->nr_populated_csets,
+				   css->nr_populated_csets + adj);
 		} else {
-			if (cgroup_is_threaded(child))
-				cgrp->nr_populated_threaded_children += adj;
-			else
-				cgrp->nr_populated_domain_children += adj;
+			WRITE_ONCE(css->nr_populated_children,
+				   css->nr_populated_children + adj);
+			if (cgrp) {
+				if (cgroup_is_threaded(child->cgroup))
+					WRITE_ONCE(cgrp->nr_populated_threaded_children,
+						   cgrp->nr_populated_threaded_children + adj);
+				else
+					WRITE_ONCE(cgrp->nr_populated_domain_children,
+						   cgrp->nr_populated_domain_children + adj);
+			}
 		}
 
-		if (was_populated == cgroup_is_populated(cgrp))
+		if (was_populated == css_is_populated(css))
 			break;
 
 		/*
-		 * Subtree just emptied below an offlined cgrp. Fire deferred
-		 * destroy. The transition is one-shot.
+		 * Pair with smp_mb() in kill_css_sync(). Either we observe
+		 * CSS_DYING and queue, or the caller observes our decrement
+		 * and fires synchronously.
 		 */
-		if (was_populated && !css_is_online(&cgrp->self)) {
-			cgroup_get(cgrp);
-			WARN_ON_ONCE(!queue_work(cgroup_offline_wq,
-						 &cgrp->finish_destroy_work));
+		smp_mb();
+
+		/*
+		 * Subtree just emptied below a dying css. Fire deferred kill.
+		 * The transition is one-shot for a dying css.
+		 */
+		if (was_populated && css_is_dying(css)) {
+			css_get(css);
+			WARN_ON_ONCE(!queue_work(cgroup_offline_wq, &css->kill_finish_work));
 		}
 
-		cgroup1_check_for_release(cgrp);
-		TRACE_CGROUP_PATH(notify_populated, cgrp,
-				  cgroup_is_populated(cgrp));
-		cgroup_file_notify(&cgrp->events_file);
+		if (cgrp) {
+			cgroup1_check_for_release(cgrp);
+			TRACE_CGROUP_PATH(notify_populated, cgrp,
+					  cgroup_is_populated(cgrp));
+			cgroup_file_notify(&cgrp->events_file);
+		}
 
-		child = cgrp;
-		cgrp = cgroup_parent(cgrp);
-	} while (cgrp);
+		child = css;
+		css = css->parent;
+	} while (css);
 }
 
 /**
@@ -824,17 +842,27 @@ static void cgroup_update_populated(struct cgroup *cgrp, bool populated)
  * @cset: target css_set
  * @populated: whether @cset is populated or depopulated
  *
- * @cset is either getting the first task or losing the last.  Update the
- * populated counters of all associated cgroups accordingly.
+ * @cset is either getting the first task or losing the last. Update the
+ * populated counters along each linked cgroup's self chain and each
+ * subsystem css that @cset pins.
  */
 static void css_set_update_populated(struct css_set *cset, bool populated)
 {
 	struct cgrp_cset_link *link;
+	struct cgroup_subsys *ss;
+	int ssid;
 
 	lockdep_assert_held(&css_set_lock);
 
 	list_for_each_entry(link, &cset->cgrp_links, cgrp_link)
-		cgroup_update_populated(link->cgrp, populated);
+		css_update_populated(&link->cgrp->self, populated);
+
+	for_each_subsys(ss, ssid) {
+		struct cgroup_subsys_state *css = cset->subsys[ssid];
+
+		if (css)
+			css_update_populated(css, populated);
+	}
 }
 
 /*
@@ -1065,7 +1093,15 @@ static struct css_set *find_existing_css_set(struct css_set *old_cset,
 	 * won't change, so no need for locking.
 	 */
 	for_each_subsys(ss, i) {
-		if (root->subsys_mask & (1UL << i)) {
+		if (unlikely(cgroup_rebind_ss_mask & (1UL << i))) {
+			/*
+			 * @ss is leaving this hierarchy and its per-cgroup
+			 * csses are about to be killed. Resolve to the
+			 * surviving root css so the tasks are migrated there.
+			 */
+			template[i] = cgroup_css(&root->cgrp, ss);
+			WARN_ON_ONCE(!template[i]);
+		} else if (root->subsys_mask & (1UL << i)) {
 			/*
 			 * @ss is in this hierarchy, so we want the
 			 * effective css from @cgrp.
@@ -1835,11 +1871,17 @@ int rebind_subsystems(struct cgroup_root *dst_root, u32 ss_mask)
 		struct cgroup *scgrp = &cgrp_dfl_root.cgrp;
 
 		/*
-		 * Controllers from default hierarchy that need to be rebound
-		 * are all disabled together in one go.
+		 * Controllers leaving the default hierarchy are disabled
+		 * together. cgroup_rebind_ss_mask makes cgroup_apply_control()
+		 * migrate their tasks to the root css, so the per-cgroup csses
+		 * are unpopulated when cgroup_finalize_control() kills them.
+		 * Clear it before cgroup_finalize_control(), which does no
+		 * css_set lookup.
 		 */
 		cgrp_dfl_root.subsys_mask &= ~dfl_disable_ss_mask;
+		cgroup_rebind_ss_mask = dfl_disable_ss_mask;
 		WARN_ON(cgroup_apply_control(scgrp));
+		cgroup_rebind_ss_mask = 0;
 		cgroup_finalize_control(scgrp, 0);
 	}
 
@@ -1853,9 +1895,14 @@ int rebind_subsystems(struct cgroup_root *dst_root, u32 ss_mask)
 		WARN_ON(!css || cgroup_css(dcgrp, ss));
 
 		if (src_root != &cgrp_dfl_root) {
-			/* disable from the source */
+			/*
+			 * Disable from the source, migrating its tasks to the
+			 * root css first (see cgroup_rebind_ss_mask).
+			 */
 			src_root->subsys_mask &= ~(1 << ssid);
+			cgroup_rebind_ss_mask = 1 << ssid;
 			WARN_ON(cgroup_apply_control(scgrp));
+			cgroup_rebind_ss_mask = 0;
 			cgroup_finalize_control(scgrp, 0);
 		}
 
@@ -2051,16 +2098,6 @@ static int cgroup_reconfigure(struct fs_context *fc)
 	return 0;
 }
 
-static void cgroup_finish_destroy_work_fn(struct work_struct *work)
-{
-	struct cgroup *cgrp = container_of(work, struct cgroup, finish_destroy_work);
-
-	cgroup_lock();
-	cgroup_finish_destroy(cgrp);
-	cgroup_unlock();
-	cgroup_put(cgrp);
-}
-
 static void init_cgroup_housekeeping(struct cgroup *cgrp)
 {
 	struct cgroup_subsys *ss;
@@ -2087,7 +2124,6 @@ static void init_cgroup_housekeeping(struct cgroup *cgrp)
 #endif
 
 	init_waitqueue_head(&cgrp->offline_waitq);
-	INIT_WORK(&cgrp->finish_destroy_work, cgroup_finish_destroy_work_fn);
 	INIT_WORK(&cgrp->release_agent_work, cgroup1_release_agent);
 }
 
@@ -2192,7 +2228,7 @@ int cgroup_setup_root(struct cgroup_root *root, u32 ss_mask)
 	hash_for_each(css_set_table, i, cset, hlist) {
 		link_css_set(&tmp_links, cset, root_cgrp);
 		if (css_set_populated(cset))
-			cgroup_update_populated(root_cgrp, true);
+			css_update_populated(&root_cgrp->self, true);
 	}
 	spin_unlock_irq(&css_set_lock);
 
@@ -2642,14 +2678,27 @@ struct task_struct *cgroup_taskset_next(struct cgroup_taskset *tset,
 	return NULL;
 }
 
+static void cgroup_migrate_notify_canceled(struct css_set *src_cset,
+					   struct task_struct *task)
+{
+	struct cgroup_task_migrate_ctx ctx = {
+		.task = task,
+		.src_dcgrp = src_cset->dfl_cgrp,
+		.dst_dcgrp = src_cset->mg_dst_cset->dfl_cgrp,
+	};
+
+	blocking_notifier_call_chain(&cgroup_task_notifier,
+				     CGROUP_TASK_MIGRATE_CANCELED, &ctx);
+}
+
 /**
  * cgroup_migrate_execute - migrate a taskset
  * @mgctx: migration context
  *
- * Migrate tasks in @mgctx as setup by migration preparation functions.
- * This function fails iff one of the ->can_attach callbacks fails and
- * guarantees that either all or none of the tasks in @mgctx are migrated.
- * @mgctx is consumed regardless of success.
+ * Migrate tasks in @mgctx as setup by migration preparation functions. This
+ * function fails iff one of the ->can_attach callbacks or CGROUP_TASK_MIGRATING
+ * notifications fails and guarantees that either all or none of the tasks in
+ * @mgctx are migrated. @mgctx is consumed regardless of success.
  */
 static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 {
@@ -2657,6 +2706,7 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 	struct cgroup_subsys *ss;
 	struct task_struct *task, *tmp_task;
 	struct css_set *cset, *tmp_cset;
+	bool dfl_migration = false;
 	int ssid, failed_ssid, ret;
 
 	/* check that we can legitimately attach to the cgroup */
@@ -2671,6 +2721,33 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 				}
 			}
 		} while_each_subsys_mask();
+	}
+
+	/*
+	 * Notify each task about the impending migration. An error return fails
+	 * the migration. Only migrations on the default hierarchy are reported:
+	 * a migration modifies either every moved task's dfl cgroup or, on
+	 * cgroup1 or for subtree_control writes, none.
+	 */
+	list_for_each_entry(cset, &tset->src_csets, mg_node) {
+		if (cset->dfl_cgrp == cset->mg_dst_cset->dfl_cgrp)
+			continue;
+		dfl_migration = true;
+		list_for_each_entry(task, &cset->mg_tasks, cg_list) {
+			struct cgroup_task_migrate_ctx ctx = {
+				.task = task,
+				.src_dcgrp = cset->dfl_cgrp,
+				.dst_dcgrp = cset->mg_dst_cset->dfl_cgrp,
+			};
+
+			ret = blocking_notifier_call_chain_robust(&cgroup_task_notifier,
+								  CGROUP_TASK_MIGRATING,
+								  CGROUP_TASK_MIGRATE_CANCELED,
+								  &ctx);
+			ret = notifier_to_errno(ret);
+			if (ret)
+				goto out_cancel_migrating;
+		}
 	}
 
 	/*
@@ -2716,9 +2793,41 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 		} while_each_subsys_mask();
 	}
 
+	/*
+	 * Notify each task after successful migration. The operation can no
+	 * longer fail and the return value is ignored. The MIGRATING loop
+	 * above explains why only dfl migrations are reported. Per-task
+	 * sources are not tracked past the commit point, so src_dcgrp is
+	 * NULL.
+	 */
+	if (dfl_migration) {
+		list_for_each_entry(cset, &tset->dst_csets, mg_node) {
+			list_for_each_entry(task, &cset->mg_tasks, cg_list) {
+				struct cgroup_task_migrate_ctx ctx = {
+					.task = task,
+					.dst_dcgrp = cset->dfl_cgrp,
+				};
+
+				blocking_notifier_call_chain(
+					&cgroup_task_notifier,
+					CGROUP_TASK_MIGRATED, &ctx);
+			}
+		}
+	}
+
 	ret = 0;
 	goto out_release_tset;
 
+out_cancel_migrating:
+	list_for_each_entry_continue_reverse(task, &cset->mg_tasks, cg_list)
+		cgroup_migrate_notify_canceled(cset, task);
+	list_for_each_entry_continue_reverse(cset, &tset->src_csets, mg_node) {
+		if (cset->dfl_cgrp == cset->mg_dst_cset->dfl_cgrp)
+			continue;
+		list_for_each_entry_reverse(task, &cset->mg_tasks, cg_list)
+			cgroup_migrate_notify_canceled(cset, task);
+	}
+	failed_ssid = CGROUP_SUBSYS_COUNT;
 out_cancel_attach:
 	if (tset->nr_tasks) {
 		do_each_subsys_mask(ss, ssid, mgctx->ss_mask) {
@@ -2942,11 +3051,11 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
  * cgroup_migrate_prepare_dst() on the targets before invoking this
  * function and following up with cgroup_migrate_finish().
  *
- * As long as a controller's ->can_attach() doesn't fail, this function is
- * guaranteed to succeed.  This means that, excluding ->can_attach()
- * failure, when migrating multiple targets, the success or failure can be
- * decided for all targets by invoking group_migrate_prepare_dst() before
- * actually starting migrating.
+ * As long as a controller's ->can_attach() or a CGROUP_TASK_MIGRATING
+ * notification doesn't fail, this function is guaranteed to succeed.  This
+ * means that, excluding those failures, when migrating multiple targets,
+ * the success or failure can be decided for all targets by invoking
+ * group_migrate_prepare_dst() before actually starting migrating.
  */
 int cgroup_migrate(struct task_struct *leader, bool threadgroup,
 		   struct cgroup_mgctx *mgctx)
@@ -3230,7 +3339,7 @@ restart:
 			struct cgroup_subsys_state *css = cgroup_css(dsct, ss);
 			DEFINE_WAIT(wait);
 
-			if (!css || !percpu_ref_is_dying(&css->refcnt))
+			if (!css || !css_is_dying(css))
 				continue;
 
 			cgroup_get_live(dsct);
@@ -3398,7 +3507,8 @@ static void cgroup_apply_control_disable(struct cgroup *cgrp)
 			if (css->parent &&
 			    !(cgroup_ss_mask(dsct) & (1 << ss->id))) {
 				kill_css_sync(css);
-				kill_css_finish(css);
+				if (!css_is_populated(css))
+					kill_css_finish(css);
 			} else if (!css_visible(css)) {
 				css_clear_dir(css);
 				if (ss->css_reset)
@@ -3726,7 +3836,7 @@ static ssize_t cgroup_max_descendants_write(struct kernfs_open_file *of,
 	if (!cgrp)
 		return -ENOENT;
 
-	cgrp->max_descendants = descendants;
+	WRITE_ONCE(cgrp->max_descendants, descendants);
 
 	cgroup_kn_unlock(of->kn);
 
@@ -3769,7 +3879,7 @@ static ssize_t cgroup_max_depth_write(struct kernfs_open_file *of,
 	if (!cgrp)
 		return -ENOENT;
 
-	cgrp->max_depth = depth;
+	WRITE_ONCE(cgrp->max_depth, depth);
 
 	cgroup_kn_unlock(of->kn);
 
@@ -3961,6 +4071,7 @@ static ssize_t pressure_write(struct kernfs_open_file *of, char *buf,
 	struct psi_trigger *new;
 	struct cgroup *cgrp;
 	struct psi_group *psi;
+	bool need_rtpoll_worker;
 	ssize_t ret = 0;
 
 	cgrp = cgroup_kn_lock_live(of->kn, false);
@@ -3980,10 +4091,30 @@ static ssize_t pressure_write(struct kernfs_open_file *of, char *buf,
 	}
 
 	psi = cgroup_psi(cgrp);
-	new = psi_trigger_create(psi, buf, res, of->file, of);
+	new = psi_trigger_create(psi, buf, res, of->file, of,
+				 &need_rtpoll_worker);
 	if (IS_ERR(new)) {
 		ret = PTR_ERR(new);
 		goto out_unlock;
+	}
+
+	/*
+	 * The worker fork must run with neither cgroup_mutex nor the file's
+	 * kernfs active reference held. The latter is broken since
+	 * cgroup_kn_lock_live(). @of->priv may be released while unlocked, so
+	 * recheck before publishing @new.
+	 */
+	if (need_rtpoll_worker) {
+		cgroup_unlock();
+		ret = psi_trigger_create_rtpoll_worker(psi);
+		cgroup_lock();
+
+		if (!ret && !of->priv)
+			ret = -ENODEV;
+		if (ret) {
+			psi_trigger_destroy(new);
+			goto out_unlock;
+		}
 	}
 
 	smp_store_release(&ctx->psi.trigger, new);
@@ -5172,10 +5303,13 @@ struct task_struct *css_task_iter_next(struct css_task_iter *it)
 	if (it->flags & CSS_TASK_ITER_SKIPPED)
 		css_task_iter_advance(it);
 
-	if (it->task_pos) {
+	while (it->task_pos && !it->cur_task) {
 		it->cur_task = list_entry(it->task_pos, struct task_struct,
 					  cg_list);
-		get_task_struct(it->cur_task);
+		/* a task on dying_tasks with zero refcount is only valid for
+		 * RCU readers, not even interesting for
+		 * CSS_TASK_ITER_WITH_DEAD, find another one */
+		it->cur_task = tryget_task_struct(it->cur_task);
 		css_task_iter_advance(it);
 	}
 
@@ -5684,6 +5818,22 @@ static void css_release(struct percpu_ref *ref)
 	queue_work(cgroup_release_wq, &css->destroy_work);
 }
 
+/*
+ * Deferred kill_css_finish() fired from css_update_populated() once a dying
+ * css's hierarchical populated state drops to zero. Pinned by css_get() at the
+ * queue site; matched by css_put() here.
+ */
+static void kill_css_finish_work_fn(struct work_struct *work)
+{
+	struct cgroup_subsys_state *css =
+		container_of(work, struct cgroup_subsys_state, kill_finish_work);
+
+	cgroup_lock();
+	kill_css_finish(css);
+	cgroup_unlock();
+	css_put(css);
+}
+
 static void init_and_link_css(struct cgroup_subsys_state *css,
 			      struct cgroup_subsys *ss, struct cgroup *cgrp)
 {
@@ -5697,6 +5847,7 @@ static void init_and_link_css(struct cgroup_subsys_state *css,
 	css->id = -1;
 	INIT_LIST_HEAD(&css->sibling);
 	INIT_LIST_HEAD(&css->children);
+	INIT_WORK(&css->kill_finish_work, kill_css_finish_work_fn);
 	css->serial_nr = css_serial_nr_next++;
 	atomic_set(&css->online_cnt, 0);
 
@@ -6074,6 +6225,13 @@ static void kill_css_sync(struct cgroup_subsys_state *css)
 	css->flags |= CSS_DYING;
 
 	/*
+	 * Pair with smp_mb() in css_update_populated(). Either our
+	 * caller observes the walker's decrement and fires
+	 * synchronously, or the walker observes CSS_DYING and queues.
+	 */
+	smp_mb();
+
+	/*
 	 * This must happen before css is disassociated with its cgroup.
 	 * See seq_css() for details.
 	 */
@@ -6148,9 +6306,9 @@ static void kill_css_finish(struct cgroup_subsys_state *css)
  * - This function: synchronous user-visible state teardown plus kill_css_sync()
  *   on each subsystem css.
  *
- * - cgroup_finish_destroy(): kicks the percpu_ref kill via kill_css_finish() on
- *   each subsystem css. Fires once @cgrp's subtree is fully drained, either
- *   inline here or from cgroup_update_populated().
+ * - For each subsys css: fire kill_css_finish() synchronously if the subtree is
+ *   already drained, otherwise rely on css_update_populated() to queue
+ *   kill_finish_work when the last populated cset under the css empties.
  *
  * - The percpu_ref kill chain: css_killed_ref_fn -> css_killed_work_fn ->
  *   ->css_offline() -> release/free.
@@ -6228,28 +6386,13 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	/* put the base reference */
 	percpu_ref_kill(&cgrp->self.refcnt);
 
-	if (!cgroup_is_populated(cgrp))
-		cgroup_finish_destroy(cgrp);
+	for_each_css(css, ssid, cgrp) {
+		if (!css_is_populated(css))
+			kill_css_finish(css);
+	}
 
 	return 0;
 };
-
-/**
- * cgroup_finish_destroy - deferred half of @cgrp destruction
- * @cgrp: cgroup whose subtree just became empty
- *
- * See cgroup_destroy_locked() for the rationale.
- */
-static void cgroup_finish_destroy(struct cgroup *cgrp)
-{
-	struct cgroup_subsys_state *css;
-	int ssid;
-
-	lockdep_assert_held(&cgroup_mutex);
-
-	for_each_css(css, ssid, cgrp)
-		kill_css_finish(css);
-}
 
 int cgroup_rmdir(struct kernfs_node *kn)
 {
@@ -6733,10 +6876,7 @@ static int cgroup_css_set_fork(struct kernel_clone_args *kargs)
 	spin_lock_irq(&css_set_lock);
 	cset = task_css_set(current);
 	get_css_set(cset);
-	if (kargs->cgrp)
-		kargs->kill_seq = kargs->cgrp->kill_seq;
-	else
-		kargs->kill_seq = cset->dfl_cgrp->kill_seq;
+	kargs->kill_seq = cset->dfl_cgrp->kill_seq;
 	spin_unlock_irq(&css_set_lock);
 
 	if (!(kargs->flags & CLONE_INTO_CGROUP)) {
@@ -6800,6 +6940,7 @@ static int cgroup_css_set_fork(struct kernel_clone_args *kargs)
 
 	put_css_set(cset);
 	kargs->cgrp = dst_cgrp;
+	kargs->kill_seq = dst_cgrp->kill_seq;
 	return ret;
 
 err:

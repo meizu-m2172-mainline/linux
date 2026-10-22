@@ -298,30 +298,17 @@ notrace u64 sched_clock(void)
 	preempt_enable_notrace();
 	return now;
 }
-
 int check_tsc_unstable(void)
 {
 	return tsc_unstable;
 }
 EXPORT_SYMBOL_GPL(check_tsc_unstable);
 
-#ifdef CONFIG_X86_TSC
 int __init notsc_setup(char *str)
 {
 	mark_tsc_unstable("boot parameter notsc");
 	return 1;
 }
-#else
-/*
- * disable flag for tsc. Takes effect by clearing the TSC cpu flag
- * in cpu/common.c
- */
-int __init notsc_setup(char *str)
-{
-	setup_clear_cpu_cap(X86_FEATURE_TSC);
-	return 1;
-}
-#endif
 __setup("notsc", notsc_setup);
 
 enum {
@@ -1234,11 +1221,11 @@ static void __init check_system_tsc_reliable(void)
 	if (is_geode_lx()) {
 		/* RTSC counts during suspend */
 #define RTSC_SUSP 0x100
-		unsigned long res_low, res_high;
+		u64 res;
 
-		rdmsr_safe(MSR_GEODE_BUSCONT_CONF0, &res_low, &res_high);
+		rdmsrq_safe(MSR_GEODE_BUSCONT_CONF0, &res);
 		/* Geode_LX - the OLPC CPU has a very reliable TSC */
-		if (res_low & RTSC_SUSP)
+		if (res & RTSC_SUSP)
 			tsc_clocksource_reliable = 1;
 	}
 #endif

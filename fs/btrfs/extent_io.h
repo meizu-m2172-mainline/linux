@@ -55,7 +55,6 @@ enum {
 	/* Page starts writeback, clear dirty bit and set writeback bit */
 	ENUM_BIT(PAGE_START_WRITEBACK),
 	ENUM_BIT(PAGE_END_WRITEBACK),
-	ENUM_BIT(PAGE_SET_ORDERED),
 };
 
 /*
@@ -118,6 +117,25 @@ struct extent_buffer {
 	struct list_head leak_list;
 	pid_t lock_owner;
 #endif
+};
+
+/*
+ * Wrapper struct for managing preallocating an extent_buffer, its folios and a
+ * btrfs_folio_state if needed.
+ *
+ * Only used to mediate allocation, do not refer to the eb directly if not
+ * returned from a successful eb allocating API.
+ *
+ * The eb folios and bfs should generally not be fully attached, except briefly
+ * before they are NULLed in the struct after successful attachment.
+ */
+struct btrfs_eb_prealloc {
+	struct extent_buffer *eb;
+	struct btrfs_folio_state *bfs;
+	/* eb alloc may use GFP_NOWAIT; caller can drop locks and retry. */
+	bool supports_nowait;
+	/* GFP_NOWAIT eb alloc failed; preallocate again and retry. */
+	bool needs_prealloc;
 };
 
 struct btrfs_eb_write_context {
@@ -256,6 +274,11 @@ bool try_release_extent_mapping(struct folio *folio, gfp_t mask);
 int try_release_extent_buffer(struct folio *folio);
 
 int btrfs_read_folio(struct file *file, struct folio *folio);
+#ifdef CONFIG_BTRFS_DEBUG
+void btrfs_check_folio_write_protected(struct folio *folio);
+#else
+static inline void btrfs_check_folio_write_protected(struct folio *folio) { }
+#endif
 void extent_write_locked_range(struct inode *inode, const struct folio *locked_folio,
 			       u64 start, u64 end, struct writeback_control *wbc,
 			       bool pages_dirty);
@@ -267,7 +290,11 @@ int set_folio_extent_mapped(struct folio *folio);
 void clear_folio_extent_mapped(struct folio *folio);
 
 struct extent_buffer *alloc_extent_buffer(struct btrfs_fs_info *fs_info,
+					  struct btrfs_eb_prealloc *pa,
 					  u64 start, u64 owner_root, int level);
+int btrfs_init_eb_prealloc(struct btrfs_fs_info *fs_info,
+			   struct btrfs_eb_prealloc *pa, bool nowait);
+void btrfs_free_eb_prealloc(struct btrfs_eb_prealloc *pa);
 struct extent_buffer *alloc_dummy_extent_buffer(struct btrfs_fs_info *fs_info,
 						u64 start);
 struct extent_buffer *btrfs_clone_extent_buffer(const struct extent_buffer *src);
@@ -327,6 +354,12 @@ static inline bool extent_buffer_uptodate(const struct extent_buffer *eb)
 	return test_bit(EXTENT_BUFFER_UPTODATE, &eb->bflags);
 }
 
+static inline bool extent_buffer_under_io(const struct extent_buffer *eb)
+{
+	return (test_bit(EXTENT_BUFFER_WRITEBACK, &eb->bflags) ||
+		test_bit(EXTENT_BUFFER_DIRTY, &eb->bflags));
+}
+
 int memcmp_extent_buffer(const struct extent_buffer *eb, const void *ptrv,
 			 unsigned long start, unsigned long len);
 void read_extent_buffer(const struct extent_buffer *eb, void *dst,
@@ -381,15 +414,24 @@ void extent_clear_unlock_delalloc(struct btrfs_inode *inode, u64 start, u64 end,
 				  const struct folio *locked_folio,
 				  struct extent_state **cached,
 				  u32 bits_to_clear, unsigned long page_ops);
-int extent_invalidate_folio(struct extent_io_tree *tree,
-			    struct folio *folio, size_t offset);
 void btrfs_clear_buffer_dirty(struct btrfs_trans_handle *trans,
 			      struct extent_buffer *buf);
+void btrfs_zoned_release_dirty_metadata(struct btrfs_fs_info *fs_info);
 
-int btrfs_alloc_page_array(unsigned int nr_pages, struct page **page_array,
-			   bool nofail);
+static inline void btrfs_clear_folio_dirty_tag(struct folio *folio)
+{
+	ASSERT(!folio_test_dirty(folio));
+	ASSERT(folio_test_locked(folio));
+	ASSERT(folio->mapping);
+	xa_lock_irq(&folio->mapping->i_pages);
+	__xa_clear_mark(&folio->mapping->i_pages, folio->index,
+			PAGECACHE_TAG_DIRTY);
+	xa_unlock_irq(&folio->mapping->i_pages);
+}
+
+int btrfs_alloc_page_array(unsigned int nr_pages, struct page **page_array, gfp_t gfp);
 int btrfs_alloc_folio_array(unsigned int nr_folios, unsigned int order,
-			    struct folio **folio_array);
+			    struct folio **folio_array, gfp_t gfp);
 
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 bool find_lock_delalloc_range(struct inode *inode,
